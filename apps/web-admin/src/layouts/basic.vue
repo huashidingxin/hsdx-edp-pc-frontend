@@ -21,10 +21,10 @@ import { $t } from '#/locales';
 import { useAuthStore } from '#/store';
 import LoginForm from '#/views/_core/authentication/login.vue';
 
+import AppProject from '#/components/AppProject.vue'
 import {useAppStore} from '#/store'
 
 const appStore = useAppStore();
-const regionDialog = ref(false)
 
 const notifications = ref<NotificationItem[]>([
   {
@@ -60,19 +60,20 @@ const notifications = ref<NotificationItem[]>([
 const userStore = useUserStore();
 const authStore = useAuthStore();
 const accessStore = useAccessStore();
+
 const { destroyWatermark, updateWatermark } = useWatermark();
 const showDot = computed(() =>
   notifications.value.some((item) => !item.isRead),
 );
 
 const menus = computed(() => [
-  // {
-  //   handler: () => {
-  //     regionDialog.value = true
-  //   },
-  //   // icon: 'mdi-briefcase-outline',
-  //   text: appStore.defaultRegion?.name || '请设置默认辖区',
-  // },
+  {
+    handler: () => {
+      projectDialog.value = true
+    },
+    // icon: 'mdi-briefcase-outline',
+    text: appStore.defaultProject?.name || '全部项目',
+  },
 ]);
 
 const avatar = computed(() => {
@@ -105,17 +106,28 @@ watch(
     immediate: true,
   },
 );
+
+const projectDialog = ref(false)
 </script>
 
 <template>
   <div>
   <BasicLayout @clear-preferences-and-logout="handleLogout">
+    <template #notification>
+<!--      <Notification-->
+<!--        :dot="showDot"-->
+<!--        :notifications="notifications"-->
+<!--        @clear="handleNoticeClear"-->
+<!--        @make-all="handleMakeAll"-->
+<!--        @read="handleRead"-->
+<!--      />-->
+    </template>
     <template #user-dropdown>
       <UserDropdown
         :avatar
         :menus
         :text="userStore.userInfo?.name"
-        :description="appStore.defaultRegion.role?.display_name"
+        :description="appStore.defaultProject.role?.display_name"
         @logout="handleLogout"
       />
     </template>
@@ -126,11 +138,14 @@ watch(
       >
         <LoginForm />
       </AuthenticationLoginExpiredModal>
+
+
     </template>
     <template #lock-screen>
       <LockScreen :avatar @to-login="handleLogout" />
     </template>
   </BasicLayout>
+    <app-project v-model="projectDialog"></app-project>
   </div>
 </template>
 <style>
@@ -151,5 +166,4 @@ watch(
     transform: translateY(-50%);
   }
 }
-
 </style>
