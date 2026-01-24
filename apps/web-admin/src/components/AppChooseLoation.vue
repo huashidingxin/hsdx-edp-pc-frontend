@@ -1,109 +1,88 @@
 <template>
   <div>
-    <v-text-field 
-      :label="label" 
-      :model-value="viewFormat(editingItem)" 
-      :placeholder="placeholder" 
-      readonly
-      @click="openLocationPicker"
-    >
-      <template v-if="returnAddress && editingItem && editingItem.longitude" #details>
-        <div class="text-caption text-medium-emphasis">
-          {{editingItem.longitude}}, {{editingItem.latitude}}
-        </div>
+    <v-menu v-model="menu" :close-on-content-click="false">
+      <template v-slot:activator="{ props }">
+        <v-text-field  :label="label" :model-value="viewFormat(editingItem)" :placeholder="placeholder" v-bind="props" readonly >
+          <template v-if="returnAddress &&  editingItem && editingItem.longitude" #details>
+            <div>
+              {{editingItem.longitude}},{{editingItem.latitude}}
+            </div>
+          </template>
+        </v-text-field>
       </template>
-      <template #append-inner>
-        <v-btn
-          icon="mdi-map-marker"
-          variant="text"
-          size="small"
-          @click="openLocationPicker"
-        />
-      </template>
-    </v-text-field>
-
-    <v-dialog v-model="menu" max-width="90vw" width="900">
-      <v-card>
+      <v-card min-width="75vw">
         <v-card-title class="d-flex align-center pa-4">
-          <v-icon class="mr-2">mdi-map-marker</v-icon>
-          选择位置
+          <span>选择位置</span>
           <v-spacer />
-          <v-btn variant="text" size="small" @click="locateCurrentPosition">
-            <v-icon>mdi-crosshairs-gps</v-icon>
-            <span class="ml-1">定位</span>
-          </v-btn>
-          <v-btn icon="mdi-close" variant="text" @click="menu = false" />
+          <v-btn icon="mdi-close" variant="text" size="small" @click="menu = false" />
         </v-card-title>
-        
-        <v-card-text class="pa-0">
-          <!-- 搜索栏 -->
-          <div class="pa-4 border-b">
-            <v-text-field
-              v-model="searchKeyword"
-              label="搜索地址"
-              placeholder="输入地址或关键词搜索"
-              prepend-inner-icon="mdi-magnify"
-              clearable
-              @keyup.enter="searchAddress"
-              @click:clear="clearSearch"
-              :loading="searchLoading"
-              hide-details
-            >
-              <template #append>
-                <v-btn 
-                  variant="elevated" 
-                  color="primary"
-                  :disabled="!searchKeyword.trim()"
-                  @click="searchAddress"
-                  size="small"
-                >
-                  搜索
-                </v-btn>
-              </template>
-            </v-text-field>
-            
-            <!-- 搜索结果 -->
-            <div v-if="searchResults.length > 0" class="mt-3">
-              <v-list density="compact" max-height="200" class="overflow-y-auto">
-                <v-list-item
-                  v-for="(item, index) in searchResults"
-                  :key="index"
-                  @click="selectSearchResult(item)"
-                  class="cursor-pointer"
-                >
-                  <v-list-item-title>{{ item.name }}</v-list-item-title>
-                  <v-list-item-subtitle>{{ item.address }}</v-list-item-subtitle>
-                </v-list-item>
-              </v-list>
+        <v-card-text style="height: 500px" class="pa-0">
+          <div style="position: relative; height: 500px">
+            <!-- 搜索栏 - 悬浮在地图上 -->
+            <div style="position: absolute; top: 10px; left: 10px; right: 10px; z-index: 1000; max-width: 400px;">
+              <v-text-field
+                v-model="searchKeyword"
+                label="搜索地址"
+                placeholder="输入地址或关键词搜索"
+                prepend-inner-icon="mdi-magnify"
+                clearable
+                @keyup.enter="searchAddress"
+                @click:clear="clearSearch"
+                :loading="searchLoading"
+                hide-details
+                autocomplete="off"
+                density="compact"
+                bg-color="white"
+                rounded
+              >
+                <template #append>
+                  <v-btn
+                    variant="elevated"
+                    color="primary"
+                    :disabled="!searchKeyword.trim()"
+                    @click="searchAddress"
+                    size="small"
+                  >
+                    搜索
+                  </v-btn>
+                </template>
+              </v-text-field>
+
+              <!-- 搜索结果 -->
+              <v-card v-if="searchResults.length > 0" class="mt-2 elevation-4" rounded>
+                <div class="text-caption pa-2 pb-0">找到 {{ searchResults.length }} 个结果</div>
+                <v-list density="compact" max-height="250" class="overflow-y-auto">
+                  <v-list-item
+                    v-for="(item, index) in searchResults"
+                    :key="index"
+                    @click="selectSearchResult(item)"
+                    class="cursor-pointer"
+                  >
+                    <v-list-item-title>{{ item.name }}</v-list-item-title>
+                    <v-list-item-subtitle>{{ item.address }}</v-list-item-subtitle>
+                  </v-list-item>
+                </v-list>
+              </v-card>
+              <v-card v-else-if="searchKeyword && !searchLoading && searchAttempted" class="mt-2 elevation-4" rounded>
+                <v-list density="compact">
+                  <v-list-item>
+                    <v-list-item-title>未找到相关结果</v-list-item-title>
+                    <v-list-item-subtitle>请尝试其他关键词</v-list-item-subtitle>
+                  </v-list-item>
+                </v-list>
+              </v-card>
             </div>
-            <div v-else-if="searchKeyword && !searchLoading && searchAttempted" class="mt-3">
-              <v-list density="compact" max-height="200" class="overflow-y-auto">
-                <v-list-item>
-                  <v-list-item-title>未找到相关结果</v-list-item-title>
-                </v-list-item>
-              </v-list>
-            </div>
-          </div>
-          
-          <!-- 地图容器 -->
-          <div class="map-wrapper">
-            <div id="map-container"></div>
+
+            <div id="map-container" ></div>
             <div id="popup-box" class="popup-box">
               <button id="close-button" class="close-button">&times;</button>
               <div id="popup-content" class="popup-content"></div>
             </div>
           </div>
         </v-card-text>
-        
-        <v-card-actions class="pa-4">
-          <v-spacer />
-          <v-btn variant="outlined" @click="resetLocation">重置</v-btn>
-          <v-btn variant="elevated" color="primary" @click="confirmLocation">
-            确认选择
-          </v-btn>
-        </v-card-actions>
       </v-card>
-    </v-dialog>
+    </v-menu>
+
   </div>
 </template>
 <script setup>
@@ -137,7 +116,7 @@ const props = defineProps({
     type:String
   },
   layerType:{
-    default:'image',
+    default:'vector',
     type:String
   },
   viewFormat:{
@@ -183,13 +162,19 @@ const searchResults = ref([])
 const searchLoading = ref(false)
 const searchAttempted = ref(false)
 const tempLocation = ref(null)
-
 watch(()=>props.modelValue,(newVal)=>{
+  console.log(newVal)
+  // nextTick(()=>{
+  //   if(JSON.stringify(newVal) !== JSON.stringify(editingItem.value)){
+  //
+  //   }
+  // })
   editingItem.value = newVal
-  if(newVal && newVal.longitude && newVal.latitude){
-    addPoints([parseFloat(newVal.longitude), parseFloat(newVal.latitude)]);
+  if(newVal){
+    addPoints([newVal.longitude,newVal.latitude]);
   }
-},{immediate:true,deep:true})
+
+},{immediate:true,dep:true})
 
 watch(menu,(newVal)=>{
   if(newVal){
@@ -200,6 +185,7 @@ watch(menu,(newVal)=>{
     // 关闭时清空搜索结果
     searchResults.value = []
     searchKeyword.value = ''
+    searchAttempted.value = false
   }
 })
 
@@ -207,36 +193,18 @@ onMounted(() => {
   //initMap() // 加载矢量底图
 })
 
-// 打开位置选择器
-function openLocationPicker() {
-  menu.value = true
-}
-
-// 自动定位到当前位置
-function locateCurrentPosition() {
-  if (navigator.geolocation) {
-    navigator.geolocation.getCurrentPosition(position => {
-      const coords = [position.coords.longitude, position.coords.latitude];
-      addPoints(coords);
-      if (map.value) {
-        map.value.getView().setCenter(coords);
-        map.value.getView().setZoom(15);
-      }
-    }, error => {
-      console.error('获取当前位置失败:', error);
-    });
-  }
-}
-
 // 搜索地址
 async function searchAddress() {
   if (!searchKeyword.value.trim()) return
-  
+
+  console.log('开始搜索:', searchKeyword.value.trim())
+
   searchLoading.value = true
   searchAttempted.value = true
   try {
     const results = await geocodeSearch(searchKeyword.value.trim())
     searchResults.value = results
+    console.log('搜索结果数量:', results.length)
   } catch (error) {
     console.error('搜索失败:', error)
     searchResults.value = []
@@ -256,16 +224,15 @@ function clearSearch() {
 function selectSearchResult(item) {
   const coordinates = [parseFloat(item.lon), parseFloat(item.lat)]
   addPoints(coordinates)
-  
+
   if (map.value) {
     map.value.getView().setCenter(coordinates)
     map.value.getView().setZoom(15)
   }
-  
+
   tempLocation.value = item
   searchResults.value = []
-  searchKeyword.value = item.name
-  
+
   // 选中后自动关闭搜索结果列表
   setTimeout(() => {
     searchAttempted.value = false;
@@ -275,20 +242,19 @@ function selectSearchResult(item) {
 // 地理编码搜索
 async function geocodeSearch(keyword) {
   return new Promise((resolve, reject) => {
-    const params = {
-      postStr: JSON.stringify({
-        keyWord: keyword,
-        level: 12,
-        mapBound: "-180,-90,180,90",
-        queryType: 1,
-        start: 0,
-        count: 10
-      }),
-      type: 'query',
-      tk: TIAN_DI_KEY
-    }
-    
-    fetch('https://api.tianditu.gov.cn/v2/search?' + (new URLSearchParams(params)).toString())
+    const postStr = JSON.stringify({
+      keyWord: keyword,
+      level: 12,
+      mapBound: "-180,-90,180,90",
+      queryType: 1,
+      start: 0,
+      count: 10
+    })
+
+    const url = `https://api.tianditu.gov.cn/v2/search?postStr=${encodeURIComponent(postStr)}&type=query&tk=${TIAN_DI_KEY}`
+    console.log('搜索请求URL:', url)
+
+    fetch(url)
       .then(response => {
         if (!response.ok) {
           throw new Error('Network response was not ok')
@@ -296,15 +262,20 @@ async function geocodeSearch(keyword) {
         return response.json()
       })
       .then(data => {
-        if (data.status === '0' && data.pois) {
-          resolve(data.pois.map(poi => ({
+        console.log('搜索返回数据:', data)
+
+        if (data.status && data.status.infocode === 1000 && data.pois) {
+          const results = data.pois.map(poi => ({
             name: poi.name,
             address: poi.address,
-            lon: poi.lon,
-            lat: poi.lat,
+            lon: poi.lonlat.split(',')[0],
+            lat: poi.lonlat.split(',')[1],
             addressDetail: poi.address
-          })))
+          }))
+          console.log('处理后的结果:', results)
+          resolve(results)
         } else {
+          console.log('未找到结果，状态:', data.status)
           resolve([])
         }
       })
@@ -313,46 +284,6 @@ async function geocodeSearch(keyword) {
         reject(error)
       })
   })
-}
-
-// 重置位置
-function resetLocation() {
-  pointLayer.value.getSource().clear()
-  tempLocation.value = null
-  editingItem.value = {}
-  searchKeyword.value = ''
-  searchResults.value = []
-  searchAttempted.value = false
-  emit('update:model-value', {})
-  
-  // 重置地图视图
-  if (map.value) {
-    map.value.getView().setCenter([116.763598, 39.587285]);
-    map.value.getView().setZoom(10);
-  }
-}
-
-// 确认位置
-function confirmLocation() {
-  if (tempLocation.value) {
-    complete([parseFloat(tempLocation.value.lon), parseFloat(tempLocation.value.lat)])
-  } else if (feature.value) {
-    const geometry = feature.value.getGeometry()
-    const coordinates = geometry.getCoordinates()
-    complete(coordinates)
-  } else {
-    // 如果没有选择位置，使用当前编辑项
-    if (editingItem.value && editingItem.value.longitude) {
-      emit('update:model-value', editingItem.value)
-    }
-  }
-  
-  menu.value = false
-  
-  // 清除搜索状态
-  searchResults.value = []
-  searchKeyword.value = ''
-  searchAttempted.value = false
 }
 
 function initMap() {
@@ -439,36 +370,21 @@ function initMap() {
         duration: 250,
       },
     },
-    positioning: 'bottom-center',
-    offset: [0, -20],
   });
   map.value.addOverlay(overlay);
-  
-  // 初始隐藏弹窗
-  popupBox.style.display = 'none';
   // 添加地图点击事件
   map.value.on('singleclick', (evt) => {
     pointLayer.value.getSource().clear()
     addPoints(evt.coordinate)
     let lonLat = evt.coordinate;
-    popupContent.innerHTML = `<div>经度：${lonLat[0].toFixed(6)}</div><div>纬度：${lonLat[1].toFixed(6)}</div><div class="mt-2"><small>点击确认按钮保存位置</small></div>`;
+    popupContent.innerHTML = `<div>经度：${lonLat[0]}</div><div>纬度：${lonLat[1]}</div>`;
     overlay.setPosition(lonLat);
 
-    // 临时存储位置，等待确认
-    tempLocation.value = {
-      lon: lonLat[0],
-      lat: lonLat[1],
-      name: '手动选择位置',
-      address: `${lonLat[0].toFixed(6)}, ${lonLat[1].toFixed(6)}`
-    }
-    
-    // 显示弹窗
-    popupBox.style.display = 'block';
+    complete(lonLat)
   });
   // 关闭弹出框的事件处理
   closeButton.addEventListener('click', () => {
     overlay.setPosition(undefined); // 关闭弹出框
-    popupBox.style.display = 'none';
   });
 
 
@@ -488,7 +404,7 @@ function addPoints(coordinate) {
     new Style({
       // 设置图片效果
       image: new Icon({
-        src: 'http://api.tianditu.gov.cn/img/map/markerA.png',
+        src: 'https://api.tianditu.gov.cn/img/map/markerA.png',
         // anchor: [0.5, 0.5],
         scale: 1.2,
       }),
@@ -506,15 +422,31 @@ function addPoints(coordinate) {
 
 async function complete(coordinates) {
   try {
-    if(props.returnAddress){
+    if (tempLocation.value) {
+      // 使用搜索结果的数据
+      if (props.returnAddress) {
+        const data = await geocoder(coordinates)
+        editingItem.value = data;
+        emit('update:model-value', data)
+      } else {
+        editingItem.value = {
+          longitude: coordinates[0],
+          latitude: coordinates[1]
+        }
+        emit('update:model-value', editingItem.value)
+      }
+      tempLocation.value = null
+    } else if (props.returnAddress) {
       const data = await geocoder(coordinates)
       editingItem.value = data;
-      emit('update:model-value',data)
-    }else{
-      editingItem.value = {longitude:coordinates[0],latitude:coordinates[1]}
-      emit('update:model-value',editingItem.value)
+      emit('update:model-value', data)
+    } else {
+      editingItem.value = {
+        longitude: coordinates[0],
+        latitude: coordinates[1]
+      }
+      emit('update:model-value', editingItem.value)
     }
-    tempLocation.value = null
     if(props.closeOnChoose){
       menu.value = false
     }
@@ -526,12 +458,11 @@ async function complete(coordinates) {
 
 async function geocoder(coordinates) {
   return new Promise((resolve,reject)=>{
-    const params = {
-      postStr: JSON.stringify({lon: coordinates[0], lat: coordinates[1], ver: 1}),
-      type: 'geocode',
-      tk: TIAN_DI_KEY
-    }
-    fetch('https://api.tianditu.gov.cn/geocoder?' + (new URLSearchParams(params)).toString())
+    const postStr = JSON.stringify({lon: coordinates[0], lat: coordinates[1], ver: 1})
+    const url = `https://api.tianditu.gov.cn/geocoder?postStr=${encodeURIComponent(postStr)}&type=geocode&tk=${TIAN_DI_KEY}`
+    console.log('逆地理编码请求URL:', url)
+
+    fetch(url)
       .then(response => {
         if (!response.ok) {
           throw new Error('Network response was not ok');
@@ -554,7 +485,7 @@ async function geocoder(coordinates) {
           town:result.addressComponent.town,
           town_id:result.addressComponent.town_code.substring(3),
           road:result.addressComponent.road,
-          address:result.formatted_address.replace(province+city+area,'')
+          detail:result.formatted_address.replace(province+city+area,'')
         })
       })
       .catch(error => {
@@ -570,12 +501,6 @@ async function geocoder(coordinates) {
 
 </script>
 <style scoped>
-.map-wrapper {
-  position: relative;
-  height: 500px;
-  width: 100%;
-}
-
 #map-container {
   width: 100%;
   height: 100%;
@@ -585,54 +510,43 @@ async function geocoder(coordinates) {
   background: rgba(255, 255, 255, 0.95);
   border: 1px solid #ccc;
   border-radius: 8px;
-  padding: 16px;
+  padding: 20px;
   z-index: 1000;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
   transition: all 0.3s ease;
-  max-width: 280px;
+  max-width: 300px;
   font-family: 'Arial', sans-serif;
   position: absolute;
-  transform: translate(-50%, -100%);
-  display: none;
+  transform: translate(-50%, -100%); /* 使弹出框上移并居中 */
 }
 
+/* 添加箭头样式 */
 .popup-box::after {
   content: "";
   position: absolute;
-  top: 100%;
-  left: 50%;
-  margin-left: -6px;
-  border-width: 6px;
+  top: 100%; /* 箭头位于弹出框的底部 */
+  left: 50%; /* 箭头横向居中 */
+  margin-left: -6px; /* 调整箭头与弹出框的间距 */
+  border-width: 6px; /* 箭头的大小 */
   border-style: solid;
-  border-color: rgba(255, 255, 255, 0.95) transparent transparent transparent;
+  border-color: rgba(255, 255, 255, 0.95) transparent transparent transparent; /* 箭头的颜色 */
 }
 
 .close-button {
   background: none;
-  color: #666;
+  color: gray;
   border: none;
-  font-size: 18px;
+  font-size: 20px;
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 10px;
+  right: 10px;
   cursor: pointer;
-  width: 24px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  transition: background-color 0.2s;
-}
-
-.close-button:hover {
-  background-color: rgba(0, 0, 0, 0.1);
 }
 
 .popup-content {
   width: 240px;
-  margin-top: 8px;
-  font-size: 14px;
+  margin-top: 10px;
+  font-size: 16px;
   line-height: 1.5;
 }
 
