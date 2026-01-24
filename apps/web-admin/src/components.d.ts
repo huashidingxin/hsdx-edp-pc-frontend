@@ -23,6 +23,7 @@ declare module 'vue' {
     AppOffice: typeof import('./components/AppOffice.vue')['default']
     AppPdfViewer: typeof import('./components/AppPdfViewer.vue')['default']
     AppPrintTemplate: typeof import('./components/AppPrintTemplate/index.vue')['default']
+    AppProject: typeof import('./components/AppProject.vue')['default']
     AppRegion: typeof import('./components/AppRegion/index.vue')['default']
     AppTable: typeof import('./components/AppTable.vue')['default']
     AppTableBAK: typeof import('./components/AppTableBAK.vue')['default']
