@@ -30,23 +30,23 @@ watch(() => preferences.theme, (newTheme) => {
 import {useAppStore} from "#/store";
 import {useAccessStore} from "@vben/stores";
 const accessStore = useAccessStore()
-const appStore = useAppStore()
-
+const appStore = useAppStore();
 watch(()=>accessStore.isAccessChecked,async (isAccessChecked)=>{
   if(isAccessChecked){
-    // appStore.getTodo()
+    await appStore.getProjects('all');
+    appStore.getTodo()
   }
 },{immediate: true})
 
-watch(() => appStore.defaultRegion, (newVal, oldVal) => {
+watch(() => appStore.defaultProject, (newVal, oldVal) => {
   if(accessStore.isAccessChecked){
-    appStore.getPermissions(newVal?.team_id || 0)
+    appStore.getPermissions(newVal?.id || 0)
   }
 
 })
 
 onBeforeMount(()=>{
-  appStore.getConfig()
+  appStore.getSetting()
 })
 
 
