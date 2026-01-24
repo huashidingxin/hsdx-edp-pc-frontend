@@ -1,0 +1,333 @@
+<script setup lang="ts">
+import {useProjectStore} from "@/store/project";
+import {useUserStore} from "@vben/stores";
+import Resource from "@/api/resource";
+import {VChip, VListItem} from "vuetify/components";
+
+const $confirm = inject('$confirm')
+const $toast = inject('$toast')
+
+const projectStore = useProjectStore()
+const userStore = useUserStore()
+const options = ref({
+  columns:[
+    {field:'user.name',title:'姓名',width:200,fixed:'left'},
+    {field:'user.avatar',title:'照片',width:200,customRender:{type:'image'}},
+    {field:'user.mobile',title:'手机号',width:200},
+    {field:'project.name',title:'项目',minWidth:200},
+    {field:'joining_date',title:'加入时间',width:200},
+    {field:'roles',title:'角色',width:200,slots:{default:'default_roles'}},
+    {field:'status',title:'状态',width:200,slots:{default:'default_status'}},
+    {field:'created_at',title:'创建时间',width:200},
+  ],
+  data:[]
+});
+const fields = ref([
+  {
+    field: 'staff_section',
+    type: 'slot',
+    col: 12,
+  },
+  {
+    field: 'users',
+    type: 'autocomplete',
+    col: 12,
+    label: '请选择成员',
+    attrs:{
+      itemTitle:'staff_name',
+      multiple:true,
+      returnObject:true,
+      closableChips:true
+    },
+    slots: [
+      {
+        name: 'chip',
+        component: markRaw(VChip),
+        bind: (e: any) => {
+          return {
+            ...e.props,
+            prependAvatar: e.item.raw.user?.avatar,
+            text: e.item.raw.staff_name || '',
+          };
+        },
+      },
+      {
+        name: 'item',
+        component: markRaw(VListItem),
+        bind: (e: any) => {
+          return {
+            ...e.props,
+            prependAvatar: e.item.raw.user?.avatar,
+            text: e.item.raw.staff_name,
+            // subtitle: e.item.raw.remarks,
+          };
+        },
+      },
+    ],
+  },
+  {
+    field: 'user_list',
+    type: 'slot',
+    col: 12,
+  },
+  {
+    field: 'roles',
+    type: 'autocomplete',
+    col: 6,
+    label: '角色',
+    // updateSearch:{
+    //   apiUrl:'roles',
+    //   params:{
+    //     type:'project'
+    //   }
+    // },
+    attrs:{
+      multiple:true
+    },
+    rules:[v=>!!v || '请选择角色']
+  },
+  {
+    field: 'joining_date',
+    type: 'datetime',
+    col: 6,
+    label: '加入时间',
+    attrs:{
+      onlyDate:true
+    },
+    rules:[v=>!!v || '请选择加入时间']
+  },
+]);
+const filters = ref([
+  {
+    field:'name',
+    type: 'text',
+    col: 3,
+    label: '姓名',
+  },
+  {
+    field:'mobile',
+    type: 'text',
+    col: 3,
+    label: '手机号',
+  },
+  {
+    field:'status',
+    type: 'select',
+    col: 3,
+    label: '状态',
+    attrs:{
+      items:[{id:1,name:'正常'},{id:0,name:'撤离'}],
+      multiple:true
+    }
+  },
+]);
+
+const tableRef = ref(null)
+const editingItem = ref({})
+
+const requestData = computed(() => ({
+  project_id: projectStore.current?.id
+}));
+
+const leaveFields = ref([
+  {
+    field:'leave_date',
+    label:'撤离时间',
+    type:'datetime',
+    rules:[v=>!!v || '请选择撤离时间'],
+    attrs:{
+      onlyDate:true
+    }
+  },
+  {
+    field:'reason',
+    label:'撤离原因',
+    type:'text',
+    rules:[v=>!!v || '撤离原因不能为空']
+  }
+])
+
+const leaveForm = ref(null)
+const leaveData = ref({})
+const currentItem = ref(null)
+function openLeaveDialog(e) {
+  currentItem.value = e
+  //leaveDialog.value = true
+  dialogType.value = 'level'
+  tableRef.value.openDialog('成员撤离')
+}
+async function leaveSubmit() {
+  // const confirm = await $confirm('确定要撤离'+currentItem.value.staff.staff_name+'?')
+  // if(!confirm){
+  //   return
+  // }
+  const {valid} = await leaveForm.value.validate()
+  if(!valid){
+    return
+  }
+  try{
+    const api = new Resource('team-users/'+currentItem.value.id+'/leave')
+    const {data} = await api.store({user_id:currentItem.value.user_id,...leaveData.value})
+    $toast.success('操作成功');
+    tableRef.value.closeDialog()
+    leaveData.value = {}
+    tableRef.value.reload()
+  }catch(e) {
+    console.log(e)
+  }
+}
+
+const excludeFields = computed(()=>{
+  if(!editingItem.value?.id){
+    return ['roles','joining_date']
+  }
+  return ['users','user_list']
+})
+
+const dialogType = ref('level')
+
+const teamUsers = ref([])
+
+watch(()=>editingItem.value?.project_id,async (newProjectId)=>{
+  if(newProjectId){
+    const users = await getProjectUsers(newProjectId)
+    editingItem.value.users = users.map((e)=>{
+      return {
+        ...e.staff,
+        user:e.user,
+        joining_date:e.joining_date,
+        roles:e.roles
+      }
+    })
+  }
+})
+
+
+async function getProjectUsers(projectId) {
+  try{
+    const api = new Resource('team-users')
+    const {data} = await api.list({project_id:projectId,per_page:'all'})
+    return data
+  }catch(e) {
+    console.log(e)
+  }
+}
+
+const userOptions = ref({
+  columns:[
+    {field:'staff_name',title:'成员',width:300},
+    {field:'roles',title:'角色',minWidth: 300},
+    {field:'joining_date',title:'加入时间',width: 300},
+  ],
+});
+
+
+async function getRoles() {
+  try{
+    const api = new Resource('roles')
+    const {data} = await api.list({type:'project'})
+    fields.value.find(v=>v.field === 'roles').attrs.items = data
+  }catch(e) {
+    console.log(e)
+  }
+}
+
+async function getStaffs() {
+  try{
+    const api = new Resource('staff')
+    const {data} = await api.list({per_page:'all'})
+    fields.value.find(v=>v.field === 'users').attrs.items = data
+  }catch(e) {
+    console.log(e)
+  }
+}
+
+function showDetail() {
+  if(projectStore.current?.id){
+    editingItem.value = {}
+    editingItem.value.project_id = projectStore.current.id
+  }
+}
+
+
+onBeforeMount(()=>{
+  getRoles()
+  getStaffs()
+})
+</script>
+
+<template>
+  <AppTable
+    ref="tableRef"
+    v-model="editingItem"
+    :options="options"
+    :filter-fields="filters"
+    api-url="project-users"
+    :fields="fields"
+    :show-create="true"
+    :request-data="requestData"
+    :list-scope="3"
+    :show-delete="false"
+    :project-props="{edit:true,filter:true,editRequired:true}"
+    :exclude-fields="excludeFields"
+    permission-name="project_user"
+    create-open-type="drawer"
+    @show-detail="showDetail"
+  >
+    <template #action="{data}">
+      <v-list-item v-access:code="['edit project_user']" v-if="data.status && userStore.userInfo.id != data.user_id" @click="openLeaveDialog(data)">
+        <v-list-item-title>离岗</v-list-item-title>
+      </v-list-item>
+    </template>
+    <template  #field_staff_section>
+      <v-alert v-if="editingItem.id > 0">
+        <div>{{editingItem.staff?.staff_name}}</div>
+        <div>{{editingItem.staff?.staff_email}}</div>
+        <div>{{editingItem.staff?.staff_mobile}}</div>
+      </v-alert>
+    </template>
+    <template #field_user_list>
+      <AppList
+        v-model="editingItem.users"
+        :options="userOptions"
+        :fields="fields"
+        show-checkbox
+      >
+        <template #header-left>
+          成员明细
+        </template>
+      </AppList>
+    </template>
+    <template #default_roles="{data:{row}}">
+      <div v-if="row.roles?.length" class="d-flex">
+        <div v-for="(item,index) in row.roles" :key="index" class="me-2">{{item.name}}</div>
+      </div>
+    </template>
+    <template #default_status="{data:{row}}">
+      <v-chip :color="row.status ? 'success' : 'error'" size="small" label>{{row.status ? '正常' : '停用'}}</v-chip>
+    </template>
+    <template #dialog-content>
+      <v-card v-if="dialogType == 'level'" class="pa-3">
+        <v-form ref="leaveForm">
+          <v-row>
+            <v-col cols="12" v-for="(item,index) in leaveFields" :key="index">
+              <AppField v-model="leaveData[item.field]" :field="item"></AppField>
+            </v-col>
+          </v-row>
+        </v-form>
+        <v-card-actions class="justify-end">
+          <v-btn color="primary" @click="leaveSubmit">提交</v-btn>
+          <v-btn @click="tableRef.closeDialog()">取消</v-btn>
+        </v-card-actions>
+      </v-card>
+
+      <v-card v-else>
+
+      </v-card>
+    </template>
+  </AppTable>
+</template>
+
+<style scoped>
+
+</style>
