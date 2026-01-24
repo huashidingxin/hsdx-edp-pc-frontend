@@ -268,6 +268,7 @@ function initComponent() {
     }
   }
 
+  defaultAttrs.value.autocomplete = 'off'
 }
 
 async function updateSearch(keyword: string='',refresh=false) {
