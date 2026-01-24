@@ -6,10 +6,9 @@ export const useAppStore = defineStore('app', {
   state: () => {
     return {
       temp: {},
-      config:{},
-      defaultRegion:{},
-      regions:[],
-      datavIsDefault:false
+      setting: {},
+      defaultProject: {},
+      projects: [],
     }
   },
   actions: {
@@ -17,7 +16,7 @@ export const useAppStore = defineStore('app', {
       this.temp[key] = value
     },
 
-    updateMenuBadge(routePath,badge) {
+    updateMenuBadge(routePath, badge) {
       const accessStore = useAccessStore();
       const menu = accessStore.getMenuByPath(routePath);
       menu.badge = '99'
@@ -25,70 +24,82 @@ export const useAppStore = defineStore('app', {
     },
 
 
-    async getPermissions(teamId=0) {
+    async getPermissions(teamId = 0) {
       const accessStore = useAccessStore();
-      try{
+      try {
         const api = new Resource('auth')
-        const {data} = await api.get('codes?team_id='+teamId)
+        const {data} = await api.get('codes?team_id=' + teamId)
         accessStore.setAccessCodes(data)
         return data
-      }catch(e) {
+      } catch (e) {
         console.log(e)
       }
     },
 
-    async getRegions(perPage='all'){
-      return new Promise(async (resolve,reject)=>{
-        try {
-          const api = new Resource('user-regions')
-          const {data} = await api.list({per_page:perPage})
-          if(perPage === 'all'){
-            this.regions = data || []
-          }
-          if(!this.defaultRegion?.id && data?.length){
-            this.defaultRegion = data[0]
-          }
-          resolve(data)
-        } catch (error) {
-          console.log(error)
-          reject(error)
-        }
-      })
-    },
-
-    setDefaultRegion(region) {
-      this.defaultRegion = region;
-      return new Promise(async (resolve,reject)=>{
-        try {
-          const api = new Resource('user-region/default')
-          const {data} = await api.store({region_id:region.id})
-          resolve(data)
-        } catch (error) {
-          console.log(error)
-          reject(error)
-        }
-      })
-    },
-
-    getConfig(){
-      console.log('GET CONFIG');
-      const api = new Resource('app/settings?model=1')
+    getProjects(perPage = 'all') {
       return new Promise(async (resolve, reject) => {
-        try{
-          let {data} = await api.list()
+        try {
+          const api = new Resource('user-projects')
+          const {
+            data
+          } = await api.list({
+            per_page: perPage,
+            with_stats: 1,
+            status: 1,
+            sort_by: JSON.stringify([{
+              key: 'is_default',
+              order: 'desc'
+            }])
+          })
+          if (perPage === 'all') {
+            this.projects = data || []
+          }
+          if (!this.defaultProject?.name) {
+            this.defaultProject = data[0]
+          }
+        } catch (error) {
+          console.log(error)
+        }
+      })
+    },
 
-          this.config = data;
-          resolve()
-        }catch(e){
+    setDefaultProject(project) {
+      this.defaultProject = project;
+      if (!project) {
+        this.defaultProject = {name: '所有项目'}
+        return
+      }
+      return new Promise(async (resolve, reject) => {
+        try {
+          const api = new Resource('project/default')
+          const {
+            data
+          } = await api.store({
+            project_id: project.id
+          })
+          resolve(data)
+        } catch (error) {
+          console.log(error)
+          reject(error)
+        }
+      })
+    },
+
+    getSetting() {
+      console.log('GET CONFIG');
+      const api = new Resource('settings?model=1')
+      return new Promise(async (resolve, reject) => {
+        try {
+          let {data} = await api.list()
+          this.setting = data;
+          resolve(data)
+        } catch (e) {
           reject(e)
         }
 
       })
     },
 
-    setDatavIsDefault(status){
-      this.datavIsDefault = status
-    }
   },
   persist: {
     enabled: true,
@@ -96,7 +107,7 @@ export const useAppStore = defineStore('app', {
       {
         storage: localStorage,
         reducer: (state) => ({
-          datavIsDefault: state.datavIsDefault,
+
         }),
       },
     ],
