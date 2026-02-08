@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import type { TabOption } from '@vben/types';
+import type {TabOption} from '@vben/types';
 
 import {
   AnalysisChartCard,
@@ -13,10 +13,16 @@ import AnalyticsVisitsSales from './analytics-visits-sales.vue';
 import AnalyticsVisitsSource from './analytics-visits-source.vue';
 import AnalyticsVisits from './analytics-visits.vue';
 import AnalyticsOverview from './analytics-overview.vue';
+import AnalyticsGauge from './analytics-gauge.vue';
+import AnalyticsGaugeRing from './analytics-gauge-ring.vue';
+
 import Resource from "#/api/resource";
+import {useAppStore} from '@/store'
 
 const overviewItems = ref([])
 const overviewData = ref({})
+
+const appStore = useAppStore()
 
 const chartTabs: TabOption[] = [
   {
@@ -77,18 +83,29 @@ const mockOverviewData = {
     color: 'secondary'
   }
 }
-
+const trendsType = ref(null);
 async function getOverviewData() {
   const api = new Resource('stats/overviews')
-  const {data} = await api.list()
+  const {data} = await api.list({
+    project_id: appStore.defaultProject?.id
+  })
   overviewData.value = data
+}
+
+const rates= ref([]);
+async function getRates() {
+  const api = new Resource('stats/rates')
+  const {data} = await api.list({
+    project_id: appStore.defaultProject?.id
+  })
+  rates.value = data
 }
 
 const trends = ref({});
 const timeRanges = [
-  { title: "近一周", value: "week" },
-  { title: "近一月", value: "month" },
-  { title: "近一年", value: "year" }
+  {title: "近一周", value: "week"},
+  {title: "近一月", value: "month"},
+  {title: "近一年", value: "year"}
 ];
 
 const orderRange = ref("month");
@@ -115,11 +132,13 @@ const datetimeField = {
 async function getTrends() {
   try {
     const api = new Resource("stats/trends");
-    const { data } = await api.list({
+    const {data} = await api.list({
       range: orderRange.value != "custom" ? orderRange.value : {
         start: customRange.value[0],
         end: customRange.value[1]
-      }
+      },
+      project_id: appStore.defaultProject?.id,
+      type:trendsType.value?.key
     });
     trends.value = {
       ...data,
@@ -137,24 +156,34 @@ function customRangeChange(e) {
 
 }
 
+function trendsChange(e) {
+  trendsType.value = e;
+  getTrends();
+}
 
-onBeforeMount(() => {
+watch(()=>appStore.defaultProject,()=>{
   getOverviewData()
   getTrends()
+  getRates()
+},{immediate:true})
+
+onBeforeMount(() => {
+
 })
 </script>
 
 <template>
   <div class="p-5">
     <!-- 新的基于Vuetify的Overview组件 -->
-    <AnalyticsOverview 
+    <AnalyticsOverview
       :data="overviewData"
       class="mb-3"
+      @change="trendsChange"
     />
 
     <div class="card-box w-full px-4 pb-5 pt-3 mt-4">
       <div class="mb-5 d-flex justify-space-between align-center">
-        <div class="text-h6">订单</div>
+        <div class="text-h6">{{trendsType?.title || '监理日志'}}</div>
         <div>
           <v-btn-toggle v-model="orderRange" mandatory color="primary" density="compact">
             <v-btn v-for="(item,index) in timeRanges" :key="index" :value="item.value"
@@ -173,37 +202,40 @@ onBeforeMount(() => {
 
       <AnalyticsTrends :items="trends.values" :x-axis-data="trends.times"></AnalyticsTrends>
     </div>
-<!--    <AnalysisChartsTabs -->
-<!--      :tabs="chartTabs" -->
-<!--      class="mt-5"-->
-<!--    >-->
-<!--      <template #trends>-->
-<!--        <AnalyticsTrends />-->
-<!--      </template>-->
-<!--      <template #visits>-->
-<!--        <AnalyticsVisits />-->
-<!--      </template>-->
-<!--    </AnalysisChartsTabs>-->
+    <!--    <AnalysisChartsTabs -->
+    <!--      :tabs="chartTabs" -->
+    <!--      class="mt-5"-->
+    <!--    >-->
+    <!--      <template #trends>-->
+    <!--        <AnalyticsTrends />-->
+    <!--      </template>-->
+    <!--      <template #visits>-->
+    <!--        <AnalyticsVisits />-->
+    <!--      </template>-->
+    <!--    </AnalysisChartsTabs>-->
 
-<!--    <div class="mt-5 w-full md:flex">-->
-<!--      <AnalysisChartCard-->
-<!--        class="mt-5 md:mr-4 md:mt-0 md:w-1/3"-->
-<!--        title="访问数量"-->
-<!--      >-->
-<!--        <AnalyticsVisitsData />-->
-<!--      </AnalysisChartCard>-->
-<!--      <AnalysisChartCard-->
-<!--        class="mt-5 md:mr-4 md:mt-0 md:w-1/3"-->
-<!--        title="访问来源"-->
-<!--      >-->
-<!--        <AnalyticsVisitsSource />-->
-<!--      </AnalysisChartCard>-->
-<!--      <AnalysisChartCard-->
-<!--        class="mt-5 md:mt-0 md:w-1/3"-->
-<!--        title="访问来源"-->
-<!--      >-->
-<!--        <AnalyticsVisitsSales />-->
-<!--      </AnalysisChartCard>-->
-<!--    </div>-->
+        <div class="mt-5 w-full md:flex">
+          <AnalysisChartCard
+            v-for="(item,index) in rates"
+            :key="index"
+            class="mt-5 md:mr-4 md:mt-0 md:w-1/3"
+            :title="item.title"
+          >
+            <component
+              :is="item.data?.length > 1 ? AnalyticsGaugeRing : AnalyticsGauge"
+              :key="index"
+              :value="item.data?.length == 1 ? item.data[0].value : item.data"
+              unit="%"
+              :min="0"
+              :max="100"
+              :title="item.data[0].name"
+              :axisConfig="item.config"
+            />
+          </AnalysisChartCard>
+        </div>
+
+<!--      <button class="position-fixed right-0 rounded-s-pill bg-primary px-2 text-button" style="top:100px">-->
+<!--        多项目统计-->
+<!--      </button>-->
   </div>
 </template>
