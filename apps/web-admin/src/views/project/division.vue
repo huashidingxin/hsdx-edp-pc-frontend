@@ -49,9 +49,12 @@ const options = ref({
 });
 const levelItems = [
   {id:1,name:'单位工程'},
-  {id:2,name:'分部'},
-  {id:3,name:'分项'},
-  {id:4,name:'检验批'}
+  {id:2,name:'子单位工程'},
+  {id:3,name:'分部'},
+  {id:4,name:'子分部'},
+  {id:5,name:'分项'},
+  {id:6,name:'子分项'},
+  {id:7,name:'检验批'}
 ]
 const fields = ref([
   {
@@ -63,9 +66,10 @@ const fields = ref([
       const parentLevel = parent.value?.level ?? null
       const options = parentLevelOptions[parentLevel] || parentLevelOptions.null
       return {
-        items: options,
+        items: editingItem.value.id ? levelItems : options,
         placeholder: '输入名称搜索',
-        itemProps: true
+        itemProps: true,
+        readonly: Boolean(editingItem.value.id)
       }
     }),
     rules: [v => !!v || '请选择划分层级']
@@ -187,6 +191,7 @@ function saveFormat(e) {
     ...e,
   }
 }
+
 </script>
 
 <template>
