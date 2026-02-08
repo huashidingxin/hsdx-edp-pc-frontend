@@ -212,6 +212,7 @@ const cancel = () => {
     <v-menu v-model="menuVisible" :close-on-content-click="false">
       <template v-slot:activator="{ props: menuProps }">
         <v-text-field
+          clearable
           v-bind="Object.assign({}, inputProps, menuProps)"
           :model-value="modelValue?.length ? displayValue : ''"
           :placeholder="range ? '请选择时间范围' : '请选择时间'"
