@@ -176,6 +176,10 @@ const props = defineProps({
     default: true,
     type: Boolean
   },
+  showExport: {
+    default: false,
+    type: Boolean
+  },
   clickOpen: {
     default:()=>(e)=>{
       return true
@@ -331,9 +335,10 @@ function filterReset() {
     filters.value[e.field] = e.default
   })
 
-  // if(filters.value.project_id){
-  //   filters.value.project_id = undefined
-  // }
+  if(filters.value.project_id){
+    filters.value.project_id = undefined
+    filterProjectSelected.value = null
+  }
 }
 
 function refresh() {
@@ -343,6 +348,7 @@ function refresh() {
 }
 
 function reload() {
+  detailVisible.value = false
   handlePageData();
 }
 
@@ -528,7 +534,7 @@ function getGrid() {
 }
 
 function checkPermission(permissionAction,actPermissionName='') {
-  const _permission = permissionAction+' '+(actPermissionName || props.permissionName)
+  const _permission = (actPermissionName || props.permissionName)+'.'+permissionAction
   if(props.superRoles?.length > 0 && hasAccessByRoles(props.superRoles) && !props.superRoleExcludeActions.includes(permissionAction)){
     return true
   }
@@ -1005,8 +1011,10 @@ async function audit(row,status=true) {
     return
   }
   try{
-    const api = new Resource('audits')
-    await api.store({id:auditItem.value[props.auditKey],...auditData.value,type:props.auditType || props.apiUrl})
+    // const api = new Resource('audits')
+    // await api.store({id:auditItem.value[props.auditKey],...auditData.value,type:props.auditType || props.apiUrl})
+    const api = new Resource(props.apiUrl+'/'+auditItem.value[props.auditKey]+'/audit')
+    await api.store(auditData.value)
     $toast.success('审核成功');
     auditData.value = {status:0}
     auditDialog.value = false
@@ -1019,6 +1027,22 @@ async function audit(row,status=true) {
 watch(filters,(newFilters)=>{
   emit('update:filters',newFilters)
 },{deep:true})
+
+import projectTable from '#/props/projectTable.js'
+import {useAppStore} from "@/store";
+
+const appStore = useAppStore()
+const filterProjectSelectDialog = ref(false)
+const filterProjectSelected = ref(null)
+function projectConfirm(e) {
+  editedItem.value.project_id = e?.id
+  emit('project-change',e)
+}
+
+function projectFilterChange(e) {
+  filters.value.project_id = e?.id
+  reload()
+}
 
 /**
  * ADD_FORM END
@@ -1095,6 +1119,12 @@ defineExpose({
                   打印
                 </v-list-item-title>
               </v-list-item>
+              <v-list-item v-if="showExport" @click="gridRef.openExport({type:'xlsx'})">
+                <v-list-item-title>
+                  <v-icon icon="mdi-export"></v-icon>
+                  导出
+                </v-list-item-title>
+              </v-list-item>
               <slot name="action_more"></slot>
             </v-list>
           </v-menu>
@@ -1106,6 +1136,20 @@ defineExpose({
                 <v-form ref="filterForm">
                   <slot name="filter">
                     <v-row align="center">
+                      <!-- PROJECT -->
+                      <template v-if="projectProps.filter && !appStore.defaultProject?.id">
+                        <v-col cols="12" :md="3">
+                          <AppTableSelect v-model:show="filterProjectSelectDialog"
+
+                                          key="filter"
+                                          v-bind="projectTable"
+                                          :list-scope="3"
+                                          placeholder="选择项目"
+                                          :required="Boolean(projectProps.filterRequired)"
+                                          @confirm="projectFilterChange"
+                          ></AppTableSelect>
+                        </v-col>
+                      </template>
                       <v-col
                         v-for="(item, key) in formatedFilterFields"
                         :key="key"
@@ -1113,8 +1157,8 @@ defineExpose({
                         :md="item?.col || 12"
                         :class="item.type === 'hidden' ? 'd-none' : ''"
                       >
-
-                        <AppField v-model="filters[item?.field]"
+                        <slot v-if="item.type == 'slot'" :name="'filter_'+item.field"></slot>
+                        <AppField v-else v-model="filters[item?.field]"
                                   :field="item"/>
                       </v-col>
 
@@ -1135,8 +1179,8 @@ defineExpose({
 
                           <div class="d-flex align-center text-button text-primary"
                                @click="filterExpand=!filterExpand" style="min-width: 60px">
-                            <span class="ms-2">收起</span>
-                            <v-icon :class="filterExpand ? '': 'rotate180'">mdi-chevron-up</v-icon>
+<!--                            <span class="ms-2">收起</span>-->
+                            <v-icon :class="filterExpand ? '': 'rotate180'" class="ml-2">mdi-chevron-up</v-icon>
                           </div>
                         </div>
                       </v-col>
@@ -1225,6 +1269,19 @@ defineExpose({
           <v-form ref="formRef" :readonly="!checkItemAction(showEdit,editedItem,'edit')"
                   :class="!checkItemAction(showEdit,editedItem,'edit') ? 'readonly-form' : ''">
             <v-row align="end">
+              <template v-if="!editedItem.id && projectProps.edit && !appStore.defaultProject?.id">
+                <v-col cols="12">
+                  <AppTableSelect v-model:show="filterProjectSelectDialog"
+
+                                  v-bind="projectTable"
+                                  key="field"
+                                  :list-scope="3"
+                                  placeholder="选择项目"
+                                  :required="Boolean(projectProps.editRequired)"
+                                  @confirm="projectConfirm"
+                  ></AppTableSelect>
+                </v-col>
+              </template>
               <template v-for="(item, key) in formatedFields"
                         :key="key">
                 <v-col
@@ -1245,28 +1302,29 @@ defineExpose({
                   />
                 </v-col>
               </template>
-
             </v-row>
           </v-form>
 
         </v-card-text>
         <v-divider/>
         <v-card-actions class="px-4" v-if="$slots.form_actions || editing || ['new','edit'].includes(route.params.action)">
-          <v-spacer/>
-          <slot name="form_actions" :item="editedItem"></slot>
-          <template v-if="(checkItemAction(showEdit,editedItem,'edit') && editing) || (['new','edit'].includes(route.params.action))">
-            <v-btn class="mr-1" color="warning" variant="tonal" @click="reset">
-              重置
-            </v-btn>
-            <v-btn
-              :loading="saving"
-              color="primary"
-              variant="flat"
-              @click="submit"
-            >
-              提交
-            </v-btn>
-          </template>
+          <slot name="form_actions" :item="editedItem">
+            <v-spacer/>
+            <slot name="form_action" :item="editedItem"></slot>
+            <template v-if="(checkItemAction(showEdit,editedItem,'edit') && editing) || (['new','edit'].includes(route.params.action))">
+              <v-btn class="mr-1" color="warning" variant="tonal" @click="reset">
+                重置
+              </v-btn>
+              <v-btn
+                :loading="saving"
+                color="primary"
+                variant="flat"
+                @click="submit"
+              >
+                提交
+              </v-btn>
+            </template>
+          </slot>
         </v-card-actions>
       </v-card>
       <slot name="form_default"></slot>
