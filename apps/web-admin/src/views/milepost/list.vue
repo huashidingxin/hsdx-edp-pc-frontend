@@ -12,11 +12,11 @@ import Draw from "ol/interaction/Draw";
 import Polygon from "ol/geom/Polygon";
 import Feature from "ol/Feature";
 import Resource from "@/api/resource";
-import {useProjectStore} from "@/store";
+import {useAppStore} from "@/store";
 import projectTable from '#/props/projectTable.js'
 
 import {requestClient} from '#/api/request';
-const projectStore = useProjectStore()
+const appStore = useAppStore()
 const $toast = inject('$toast')
 
 
@@ -239,7 +239,7 @@ function columnFormat(columns) {
 }
 
 const excludeFilters = computed(()=>{
-  return projectStore.current?.id > 0 ? ['project.name'] : []
+  return appStore.defaultProject?.id > 0 ? ['project.name'] : []
 })
 
 onBeforeMount(async () => {
@@ -271,13 +271,13 @@ function saveFormat(e) {
   //e.project_id = props.projectId
   return {
     ...e,
-    project_id:props.projectId || projectStore.current?.id,
+    project_id:props.projectId || appStore.defaultProject?.id,
     ...(e.location || {})
   };
 }
 
 const requestData = computed(()=>{
-  return {project_id:props.projectId || projectStore.current?.id}
+  return {project_id:props.projectId || appStore.defaultProject?.id}
 })
 
 const importDialog = ref(false)
@@ -294,7 +294,7 @@ async function importSubmit() {
   try{
     const formData: FormData = new FormData();
     formData.append('file',milepostFile.value.file)
-    formData.append('project_id',projectStore.current?.id || projectSelected.value.id)
+    formData.append('project_id',appStore.defaultProject?.id || projectSelected.value.id)
     await requestClient.post('mileposts/import',formData,{
       headers: {
         'Content-Type': 'multipart/form-data',
@@ -363,7 +363,7 @@ async function importSubmit() {
             导入的桩号编号已存在的会直接覆盖原桩号信息，请谨慎操作
           </v-alert>
           <v-form ref="importForm" >
-            <AppTableSelect v-if="!projectStore.current?.id" v-model:show="projectSelectDialog"
+            <AppTableSelect v-if="!appStore.defaultProject?.id" v-model:show="projectSelectDialog"
                             v-model="projectSelected"
                             v-bind="projectTable"
                             :list-scope="3"
