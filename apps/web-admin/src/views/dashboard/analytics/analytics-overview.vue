@@ -77,6 +77,7 @@ function isHttpUrl(icon: string): boolean {
       sm="6"
       lg="3"
       xl="3"
+      @click="$emit('change', item)"
     >
       <v-card
         class="h-100"
