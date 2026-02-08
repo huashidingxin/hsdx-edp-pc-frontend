@@ -11,7 +11,7 @@ const editedItem = ref({})
 async function getConfig() {
   try{
     const api = new Resource('settings')
-    const {data} = await api.list({per_page:'all'})
+    const {data} = await api.list({per_page:'all',manage:1})
     data.forEach((e)=>{
       const field = {...e,field:e.name,attrs:{}}
       if(e.type === 'image'){
