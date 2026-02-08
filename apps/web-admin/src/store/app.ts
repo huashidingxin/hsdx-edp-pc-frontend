@@ -11,6 +11,11 @@ export const useAppStore = defineStore('app', {
       projects: [],
     }
   },
+  getters:{
+    currentProject: (state) => {
+      return state.defaultProject?.id ? state.defaultProject : state.projects?.[0]
+    }
+  },
   actions: {
     setTemp(key: string, value: any) {
       this.temp[key] = value
