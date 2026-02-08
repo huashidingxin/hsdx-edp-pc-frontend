@@ -6,8 +6,7 @@ const request = requestClient.request;
  */
 class Resource {
   private readonly uri: string = '';
-  private readonly options: object = {};
-  constructor(uri: string, options: any = {}) {
+  constructor(uri: string,options={}) {
     if (uri.indexOf('http') === 0) {
       this.uri = uri;
     } else {
@@ -18,34 +17,35 @@ class Resource {
   destroy(id: string) {
     return request(`${this.uri}/${id}`, {
       method: 'delete',
+      ...this.options
     });
   }
   get(id: string, params = {}) {
     return request(`${this.uri}/${id}`, {
-      ...this.options,
       method: 'get',
       params,
+      ...this.options
     });
   }
   list(query: object) {
     return request(`${this.uri}`, {
-      ...this.options,
       method: 'get',
       params: query,
+      ...this.options
     });
   }
   store(resource: object) {
     return request(`${this.uri}`, {
-      ...this.options,
       data: resource,
       method: 'post',
+      ...this.options
     });
   }
   update(id: string, resource: object) {
     return request(`${this.uri}/${id}`, {
-      ...this.options,
       data: resource,
       method: 'put',
+      ...this.options
     });
   }
 }
