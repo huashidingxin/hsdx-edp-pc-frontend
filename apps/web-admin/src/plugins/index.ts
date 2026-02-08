@@ -45,6 +45,9 @@ import VxeTable from 'vxe-table'
 import 'vxe-table/lib/style.css'
 import {VChip} from "vuetify/components";
 
+import VxeUIPluginExportXLSX from '@vxe-ui/plugin-export-xlsx'
+import ExcelJS from 'exceljs'
+
 function lazyVxeUI (app) {
   app.use(VxeButton)
   app.use(VxeButtonGroup)
@@ -65,7 +68,7 @@ function lazyVxeUI (app) {
   app.use(VxeSwitch)
   app.use(VxeCheckbox)
 }
-
+VxeUI.use(VxeUIPluginExportXLSX,{ExcelJS})
 VxeTable.renderer.add('CellRender',{
   renderTableDefault (renderOpts, params) {
     return renderOpts?.render(params,renderOpts)
