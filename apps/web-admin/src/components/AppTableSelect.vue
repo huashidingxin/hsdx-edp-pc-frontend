@@ -209,12 +209,14 @@ function confirm() {
 
   selectedStr.value = selected.value.map((e)=>{return e[props.nameKey]})
 
-  console.log('@@@@',selectedStr.value)
-
   emit('update:model-value', selectedData)
   emit('confirm', selectedData)
   dialog.value = false
 }
+
+watch(() => props.modelValue, (newValue) => {
+  selectedStr.value = newValue ? (props.multiple ? newValue.map((e)=>{return e[props.nameKey]}) : newValue[props.nameKey]) : []
+}, { deep: true })
 
 function close() {
   emit('close')
@@ -237,7 +239,7 @@ function clear() {
                     :placeholder="placeholder"
                     clearable
                     @click:clear.stop="clear"
-                    :rules="required ? [v=>!!v || '请选择项目'] : []"
+                    :rules="required ? [v=>!!v || '请选择'+resourceName] : []"
       ></v-text-field>
     </div>
     <v-dialog v-model="dialog" max-width="50vw" persistent>
@@ -269,6 +271,7 @@ function clear() {
             :show-tools="false"
             :list-scope="listScope"
             @cellClick="cellClick"
+            filter-expand-default
           >
             <template #right>
               <div v-if="createRoutePath" class="mr-5">
