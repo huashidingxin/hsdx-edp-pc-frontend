@@ -22,7 +22,7 @@ const options = ref({
     {field:'code',title:'编号',sortable:true},
     {field:'category.name',title:'分类',sortable:true},
     {field:'owner_name',title:'业主',slots:{default:'default_owner'}},
-    {field:'phase.name',title:'阶段'},
+    // {field:'phase.name',title:'阶段'},
     {field:'state_label',title:'状态',slots:{default:'default_state'}},
     {field:'unit_project_count',title:'单位工程',slots:{default:'default_unit_project'}},
     {field:'milepost_count',title:'桩号',slots:{default:'default_milepost'}},
@@ -31,12 +31,6 @@ const options = ref({
   data:[]
 });
 const filters = ref([
-  {
-    field: 'parent_id',
-    type: 'hidden',
-    col: 1,
-    default:undefined,
-  },
   {
     field:'name',
     type: 'text',
@@ -49,11 +43,12 @@ const filters = ref([
     col: 4,
     label: '编号',
   },
+
   {
     field: 'category_id',
     type: 'autocomplete',
     col: 4,
-    label: '项目类型',
+    label: '主分类',
     updateSearch:{
       apiUrl: 'categories',
       priorityKey:'id',
@@ -65,6 +60,7 @@ const filters = ref([
       placeholder: '输入名称搜索',
     },
   },
+
   {
     field: 'phase_id',
     type: 'autocomplete',
@@ -113,40 +109,45 @@ const fields = ref([
     label: '监理部',
     rules: [v => !!v || '请输入监理部名称']
   },
-
+  {
+    field: 'categories',
+    type: 'autocomplete',
+    col: 8,
+    label: '分类',
+    attrs: {
+      placeholder: '输入名称搜索',
+      multiple: true,
+      returnObject: true,
+      items:[]
+    },
+  },
   {
     field: 'category_id',
     type: 'autocomplete',
-    col: 3,
-    label: '项目类型',
-    updateSearch:{
-      apiUrl: 'categories',
-      priorityKey:'id',
-      params:{
-        type:'project'
-      }
-    },
+    col: 4,
+    label: '主分类',
     attrs: {
       placeholder: '输入名称搜索',
+      items:[]
     },
     rules: [v => !!v || '请选择项目类型']
   },
-  {
-    field: 'phase_id',
-    type: 'autocomplete',
-    col: 3,
-    label: '项目阶段',
-    updateSearch:{
-      apiUrl: 'phases',
-      priorityKey:'id',
-      params:{
-      }
-    },
-    attrs: {
-      placeholder: '输入名称搜索',
-    },
-    rules: [v => !!v || '请选择项目阶段']
-  },
+  // {
+  //   field: 'phase_id',
+  //   type: 'autocomplete',
+  //   col: 3,
+  //   label: '项目阶段',
+  //   updateSearch:{
+  //     apiUrl: 'phases',
+  //     priorityKey:'id',
+  //     params:{
+  //     }
+  //   },
+  //   attrs: {
+  //     placeholder: '输入名称搜索',
+  //   },
+  //   rules: [v => !!v || '请选择项目阶段']
+  // },
   {
     field:'start_end_time',
     type: 'datetime',
@@ -206,6 +207,8 @@ const requestData  =computed(()=>{
     milepost_count:1
   };
 })
+
+
 function openOwner() {
 
 }
@@ -229,6 +232,27 @@ async function getChildrenList(row) {
   }
 }
 
+async function getCategories(e = {}) {
+  try{
+    const api = new Resource('categories')
+    const {data} = await api.list({per_page:'all'})
+    setFieldAttrItems('categories',data)
+    if(editingItem.value.categories) {
+      setFieldAttrItems('category_id',editingItem.value.categories)
+    }else{
+      setFieldAttrItems('category_id',data)
+    }
+
+  }catch(e) {
+    console.log(e)
+  }
+}
+
+function setFieldAttrItems(fieldKey,items) {
+  const index = fields.value.findIndex(v=>v.field === fieldKey)
+  fields.value[index].attrs.items = items
+}
+
 function locationViewFormat(e){
   return e && e.province ? e.province + e.city + e.area + (e.town || '') : ''
 }
@@ -236,6 +260,19 @@ function locationViewFormat(e){
 watch(()=>editingItem.value?.address?.latitude,(newVal)=>{
   editingItem.value.location = newVal
   editingItem.value['address.detail'] = editingItem.value?.address.detail
+})
+
+
+watch(()=>editingItem.value?.categories,(newCategories)=>{
+  if(newCategories) {
+    setFieldAttrItems('category_id',newCategories)
+    // 如果当前category_id有值且在newCategories中存在，则不更新
+    const currentCategoryId = editingItem.value.category_id
+    const existsInCategories = newCategories.some(c => c.id === currentCategoryId)
+    if(!currentCategoryId || !existsInCategories) {
+      editingItem.value.category_id = newCategories?.length > 0 ? newCategories[0].id : undefined
+    }
+  }
 })
 
 const dialogType = ref('')
@@ -258,6 +295,10 @@ const statusColors = {
   3:'success',
 }
 
+onBeforeMount(()=>{
+  getCategories()
+})
+
 </script>
 <template>
   <div>
@@ -269,13 +310,14 @@ const statusColors = {
       :fields="fields"
       api-url="projects"
       detail-open-type="drawer"
+      create-open-type="drawer"
       :request-data="requestData"
       :detail-format="detailFormat"
       :save-format="saveFormat"
       list-scope="3"
     >
       <template #default_owner="{data:{row}}">
-        <div @click="openOwner" class="text-primary">{{row.owner.name}}</div>
+        <div @click="openOwner" class="text-primary">{{row.owner_name}}</div>
       </template>
       <template #default_state="{data:{row}}">
         <v-chip v-if="row.state_label" :color="statusColors[row.state]" size="small" label>{{row.state_label}}</v-chip>
