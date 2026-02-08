@@ -63,22 +63,23 @@ function showAudit(e) {
     v-model="editingItem"
     :options="options"
     :filter-fields="filters"
-    api-url="team-joins"
+    api-url="project-joins"
     :fields="fields"
     :show-create="false"
     :request-data="requestData"
-    :click-open="false"
+    :click-open="true"
     :show-edit="false"
     :show-delete="false"
     :show-audit="showAudit"
-    audit-type="team_join"
+    audit-type="project_join"
+    detail-open-type="modal"
     :project-props="{filter:true}"
   >
     <template  #form_description>
       <div v-if="editingItem.id > 0">
-        <div>{{editingItem.staff.staff_name}}</div>
-        <div>{{editingItem.staff.staff_email}}</div>
-        <div>{{editingItem.staff.staff_mobile}}</div>
+        <div>{{editingItem.staff.name}}</div>
+        <div>{{editingItem.staff.email}}</div>
+        <div>{{editingItem.staff.mobile}}</div>
       </div>
     </template>
     <template #field_audit v-if="editingItem.audit_id >0">
