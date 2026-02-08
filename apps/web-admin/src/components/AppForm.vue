@@ -1,13 +1,12 @@
 <template>
   <div>
     <slot name="top"></slot>
-
     <!-- Validation Rules Section -->
     <div v-if="Object.values(baseRules).length" class="mt-4">
       <div class="my-2 font-weight-bold text-primary">校验规范</div>
       <div v-for="(item, index) in baseRules" :key="index"
            class="d-flex justify-space-between align-center py-2">
-        <div>{{ item.name }}</div>
+        <div class="mr-1 font-weight-bold mb-2">{{ item.name }}：</div>
         <v-select
           v-model="baseRuleSelected[index]"
           :items="item.rules"
@@ -16,7 +15,7 @@
           @update:modelValue="changeBaseRule(index, $event)"
           placeholder="请选择校验规则"
           density="compact"
-          variant="outlined"
+
         ></v-select>
       </div>
     </div>
@@ -27,291 +26,85 @@
              :cols="field?.col < 3 ? 6 : 12"
              :md="field?.col || 12"
       >
-        <slot :name="field.field + '_top'" :field="field"></slot>
-        <div v-if="field.type === 'list'" ref="fieldRef" class="border border-dashed pa-2 rounded-lg">
-          <div class="font-weight-bold mb-2">{{field.label}}</div>
-          <div v-for="(item, itemIndex) in editedItem[field.field] || []"
-               :key="itemIndex" class="mb-4">
+        <div
+            :class="[setFormItemClass(field.field)]"
+            @click="focusChange(field.field)"
+        >
+          <slot :name="field.field + '_top'" :field="field"></slot>
+          <div v-if="field.type === 'list'" ref="fieldRef" class="border border-dashed pa-2 rounded-lg">
+            <div class="font-weight-bold mb-2">{{field.label}}</div>
+            <div v-for="(item, itemIndex) in editedItem[field.field] || []"
+                 :key="itemIndex" class="mb-4">
 
-            <v-card variant="outlined" class="pa-3 position-relative">
-              <v-card-title class="">
-                <div class="mr-2 list-item-index bg-primary">{{ itemIndex + 1 }}.</div>
-                <v-btn
-                  v-if="field.attrs.disabled !== true"
-                  @click="deleteListItem(field.field, itemIndex)"
-                  icon
-                  size="small"
-                  color="error"
-                  class="mt-2 delete-button"
-                >
-                  <v-icon>mdi-close</v-icon>
-                </v-btn>
-              </v-card-title>
-              <v-card-text>
-                <app-form
-                  ref="childForms"
-                  :fields="field.children"
-                  v-model:modelValue="editedItem[field.field][itemIndex]"
-                  :rules="rules[field.field]?.[itemIndex]"
-                  @update:warnings="handleChildWarnings(field.field, itemIndex, $event)"
-                  @update:model-value="handleChildChange(field.field, itemIndex, $event)"
-                  @update:base-rule="handleChildBaseRule(field.field, itemIndex, $event)"
-                  bottom-height="0"
-                />
-              </v-card-text>
+              <v-card variant="outlined" class="pa-3 position-relative">
+                <v-card-title class="">
+                  <div class="mr-2 list-item-index bg-primary">{{ itemIndex + 1 }}.</div>
+                  <v-btn
+                    v-if="field.attrs.disabled !== true"
+                    @click="deleteListItem(field.field, itemIndex)"
+                    icon
+                    size="small"
+                    color="error"
+                    class="mt-2 delete-button"
+                  >
+                    <v-icon>mdi-close</v-icon>
+                  </v-btn>
+                </v-card-title>
+                <v-card-text>
+
+                  <app-form
+                    ref="childForms"
+                    :fields="field.children"
+                    v-model:modelValue="editedItem[field.field][itemIndex]"
+                    :rules="rules[field.field]?.[itemIndex]"
+                    @update:warnings="handleChildWarnings(field.field, itemIndex, $event)"
+                    @update:model-value="handleChildChange(field.field, itemIndex, $event)"
+                    @update:base-rule="handleChildBaseRule(field.field, itemIndex, $event)"
+                    bottom-height="0"
+                  />
+                </v-card-text>
 
 
-            </v-card>
+              </v-card>
+            </div>
+            <div class="my-3 d-flex justify-end">
+              <v-btn
+                v-if="field.attrs.disabled !== true"
+                @click="addListItem(field.field)"
+                color="primary"
+                size="small"
+              >
+                <v-icon start>mdi-plus</v-icon>
+                增加
+              </v-btn>
+            </div>
           </div>
-          <div class="my-3 d-flex justify-end">
-            <v-btn
-              v-if="field.attrs.disabled !== true"
-              @click="addListItem(field.field)"
-              color="primary"
-              size="small"
-            >
-              <v-icon start>mdi-plus</v-icon>
-              增加
-            </v-btn>
+          <AppField
+            v-else
+            ref="fieldRef"
+            :key="'field_'+field.field"
+            v-model="editedItem[field.field]"
+            :field="{...field,rules:filedRules[field.field]?.rules}"
+            @update:model-value="change(field,$event)"
+            @blur="blur(field)"
+          />
+          <div class="hint mt-1 text-caption text-error" v-if="errors[field.field]">
+            {{ errors[field.field] }}
+          </div>
+          <div class="hint mt-1 text-caption text-warning" style="margin-top: -20px" v-else-if="warnings[field.field]">
+            {{ warnings[field.field].message }}
           </div>
         </div>
-        <AppField
-          v-else
-          ref="fieldRef"
-          :key="'field_'+field.field"
-          v-model="editedItem[field.field]"
-          :field="{...field,rules:filedRules[field.field]?.rules}"
-        />
+
       </v-col>
     </v-row>
-    <!-- Form Fields Rendering -->
-<!--    <v-row align="center">-->
-<!--      <v-col v-for="(field, index) in fields"-->
-<!--             :key="index"-->
-<!--             :cols="field?.col < 3 ? 6 : 12"-->
-<!--             :md="field?.col || 12"-->
-<!--      >-->
-<!--        <slot :name="field.field + '_top'" :field="field"></slot>-->
-
-<!--        <div v-if="field.type !== 'hidden'">-->
-<!--          <div-->
-<!--            class="pb-1 mb-2"-->
-<!--            :class="[setFormItemClass(field.field)]"-->
-<!--            @click="focusChange(field.field)"-->
-<!--          >-->
-<!--            <div-->
-<!--              :class="[-->
-<!--              currentFocus == field.field && !errors[field.field] ? 'border-primary' : '',-->
-<!--              errors[field.field] ? 'border-error' : ''-->
-<!--            ]"-->
-<!--              :style="field.style"-->
-<!--              variant="flat"-->
-<!--            >-->
-<!--              <div :class="field.direction == 'row' ? 'd-flex align-center' : 'd-flex flex-column'">-->
-<!--                &lt;!&ndash; Field Label &ndash;&gt;-->
-<!--&lt;!&ndash;                <div&ndash;&gt;-->
-<!--&lt;!&ndash;                  class="field-label"&ndash;&gt;-->
-<!--&lt;!&ndash;                  :style="{ minWidth: labelWidth }"&ndash;&gt;-->
-<!--&lt;!&ndash;                  :class="field.direction == 'row' ? '' : 'mb-2'"&ndash;&gt;-->
-<!--&lt;!&ndash;                >&ndash;&gt;-->
-<!--&lt;!&ndash;                  <span class="required-field">{{ field.required ? '*' : ' ' }}</span>&ndash;&gt;-->
-<!--&lt;!&ndash;                  {{ field.label }}&ndash;&gt;-->
-<!--&lt;!&ndash;                  <span&ndash;&gt;-->
-<!--&lt;!&ndash;                    class="text-caption"&ndash;&gt;-->
-<!--&lt;!&ndash;                    :class="field.direction == 'row' ? 'd-block' : ''"&ndash;&gt;-->
-<!--&lt;!&ndash;                    :style="[field.label_desc_style]"&ndash;&gt;-->
-<!--&lt;!&ndash;                    v-if="field.label_desc"&ndash;&gt;-->
-<!--&lt;!&ndash;                  >&ndash;&gt;-->
-<!--&lt;!&ndash;                  {{ field.label_desc }}&ndash;&gt;-->
-<!--&lt;!&ndash;                </span>&ndash;&gt;-->
-<!--&lt;!&ndash;                </div>&ndash;&gt;-->
-
-<!--                &lt;!&ndash; Field Content &ndash;&gt;-->
-<!--                <div-->
-<!--                  :class="field.direction === 'row' ? 'flex-grow-1 d-flex align-center justify-space-between' : ''">-->
-<!--                  <div class="flex-grow-1">-->
-<!--                    &lt;!&ndash; List Type Field &ndash;&gt;-->
-<!--                    <div v-if="field.type === 'list'" ref="fieldRef">-->
-<!--                      <div v-for="(item, itemIndex) in editedItem[field.field] || []"-->
-<!--                           :key="itemIndex" class="mb-4">-->
-<!--                        <v-card variant="outlined" class="pa-3">-->
-<!--                          <div class="d-flex align-center">-->
-<!--                            <div class="mr-2">{{ itemIndex + 1 }}.</div>-->
-<!--                            <app-form-->
-<!--                              ref="childForms"-->
-<!--                              :fields="field.children"-->
-<!--                              v-model:modelValue="editedItem[field.field][itemIndex]"-->
-<!--                              :rules="rules[field.field]?.[itemIndex]"-->
-<!--                              @update:warnings="handleChildWarnings(field.field, itemIndex, $event)"-->
-<!--                              @update:model-value="handleChildChange(field.field, itemIndex, $event)"-->
-<!--                              @update:base-rule="handleChildBaseRule(field.field, itemIndex, $event)"-->
-<!--                              bottom-height="0"-->
-<!--                            />-->
-<!--                          </div>-->
-<!--                          <v-btn-->
-<!--                            v-if="field.attrs.disabled !== true"-->
-<!--                            @click="deleteListItem(field.field, itemIndex)"-->
-<!--                            icon-->
-<!--                            size="small"-->
-<!--                            color="error"-->
-<!--                            class="mt-2"-->
-<!--                          >-->
-<!--                            <v-icon>mdi-delete</v-icon>-->
-<!--                          </v-btn>-->
-<!--                        </v-card>-->
-<!--                      </div>-->
-<!--                      <div class="my-3 d-flex justify-end">-->
-<!--                        <v-btn-->
-<!--                          v-if="field.attrs.disabled !== true"-->
-<!--                          @click="addListItem(field.field)"-->
-<!--                          color="primary"-->
-<!--                          size="small"-->
-<!--                        >-->
-<!--                          <v-icon start>mdi-plus</v-icon>-->
-<!--                          增加-->
-<!--                        </v-btn>-->
-<!--                      </div>-->
-<!--                    </div>-->
-
-<!--                    &lt;!&ndash; Slot Type Field &ndash;&gt;-->
-<!--                    <div v-else-if="field.type == 'slot'" ref="fieldRef">-->
-<!--                      <slot :name="field.field"></slot>-->
-<!--                    </div>-->
-
-<!--                    &lt;!&ndash; File Upload Field &ndash;&gt;-->
-<!--                    <div v-else-if="field.type == 'file'">-->
-<!--                      <v-file-input-->
-<!--                        ref="fieldRef"-->
-<!--                        v-model="editedItem[field.field]"-->
-<!--                        @blur="blur(field)"-->
-<!--                        @change="change(field, $event)"-->
-<!--                        :disabled="field.attrs?.disabled"-->
-<!--                        :readonly="field.attrs?.readonly"-->
-<!--                        :multiple="field.attrs?.multiple"-->
-<!--                        :accept="field.attrs?.accept"-->
-<!--                        variant="outlined"-->
-<!--                        density="compact"-->
-<!--                      ></v-file-input>-->
-<!--                    </div>-->
-
-<!--                    &lt;!&ndash; Select Field &ndash;&gt;-->
-<!--                    <v-select-->
-<!--                      v-else-if="field.type == 'select' || field.type == 'multiselect'"-->
-<!--                      v-model="editedItem[field.field]"-->
-<!--                      ref="fieldRef"-->
-<!--                      :key="field.field"-->
-<!--                      @blur="blur(field)"-->
-<!--                      @update:modelValue="change(field, $event)"-->
-<!--                      :label="'请选择' + field.label"-->
-<!--                      :items="field.attrs?.items || []"-->
-<!--                      :multiple="field.attrs?.multiple || field.type == 'multiselect'"-->
-<!--                      :disabled="field.attrs?.disabled"-->
-<!--                      :readonly="field.attrs?.readonly"-->
-<!--                      variant="outlined"-->
-<!--                      density="compact"-->
-<!--                    >-->
-<!--                      <template v-slot:append>-->
-<!--                        <slot :name="field.field + '_select_bottom'"></slot>-->
-<!--                      </template>-->
-<!--                    </v-select>-->
-
-<!--                    &lt;!&ndash; Datetime Field &ndash;&gt;-->
-<!--                    <v-text-field-->
-<!--                      v-else-if="field.type === 'datetime'"-->
-<!--                      v-model="editedItem[field.field]"-->
-<!--                      ref="fieldRef"-->
-<!--                      :key="field.field"-->
-<!--                      @blur="blur(field)"-->
-<!--                      @update:modelValue="change(field, $event)"-->
-<!--                      :label="'请选择' + field.label"-->
-<!--                      type="datetime-local"-->
-<!--                      variant="outlined"-->
-<!--                      density="compact"-->
-<!--                    ></v-text-field>-->
-
-<!--                    &lt;!&ndash; Number Box Field &ndash;&gt;-->
-<!--                    <v-text-field-->
-<!--                      v-else-if="field.type == 'number-box'"-->
-<!--                      v-model="editedItem[field.field]"-->
-<!--                      ref="fieldRef"-->
-<!--                      type="number"-->
-<!--                      :style="{ width: field.width || '80px' }"-->
-<!--                      :min="field.min"-->
-<!--                      :max="field.max"-->
-<!--                      :step="field.step || 1"-->
-<!--                      variant="outlined"-->
-<!--                      density="compact"-->
-<!--                    ></v-text-field>-->
-
-<!--                    &lt;!&ndash; Switch Field &ndash;&gt;-->
-<!--                    <v-switch-->
-<!--                      v-else-if="field.type == 'switch'"-->
-<!--                      v-model="editedItem[field.field]"-->
-<!--                      ref="fieldRef"-->
-<!--                      :true-value="1"-->
-<!--                      :false-value="0"-->
-<!--                      @blur="blur(field)"-->
-<!--                      @update:modelValue="change(field, $event)"-->
-<!--                      :disabled="field.attrs?.disabled"-->
-<!--                      :readonly="field.attrs?.readonly"-->
-<!--                      class="ml-auto"-->
-<!--                      color="primary"-->
-<!--                    ></v-switch>-->
-
-<!--                    &lt;!&ndash; Textarea Field &ndash;&gt;-->
-<!--                    <v-textarea-->
-<!--                      v-else-if="field.type == 'textarea'"-->
-<!--                      v-model="editedItem[field.field]"-->
-<!--                      ref="fieldRef"-->
-<!--                      @blur="blur(field)"-->
-<!--                      @update:modelValue="change(field, $event)"-->
-<!--                      :disabled="field.attrs?.readonly === true"-->
-<!--                      variant="outlined"-->
-<!--                      density="compact"-->
-<!--                      auto-grow-->
-<!--                    ></v-textarea>-->
-
-<!--                    &lt;!&ndash; Default Input Field &ndash;&gt;-->
-<!--                    <v-text-field-->
-<!--                      v-else-->
-<!--                      v-model="editedItem[field.field]"-->
-<!--                      :label="field.name"-->
-<!--                      ref="fieldRef"-->
-<!--                      @blur="blur(field)"-->
-<!--                      @update:modelValue="change(field, $event)"-->
-<!--                      :type="field.type || 'text'"-->
-<!--                      :disabled="field.attrs?.disabled"-->
-<!--                      :readonly="field.attrs?.readonly"-->
-<!--                      hide-details-->
-
-<!--                    ></v-text-field>-->
-<!--                  </div>-->
-<!--                  <div class="text-right text-caption text-grey" v-if="field.count">-->
-<!--                    {{ editedItem[field.field] ? editedItem[field.field].length : 0 }}/{{-->
-<!--                      field.max-->
-<!--                    }}-->
-<!--                  </div>-->
-<!--                </div>-->
-<!--              </div>-->
-<!--            </div>-->
-<!--            <div class="hint mt-1 text-caption text-error" v-if="errors[field.field]">-->
-<!--              {{ errors[field.field] }}-->
-<!--            </div>-->
-<!--            <div class="hint mt-1 text-caption text-warning" v-else-if="warnings[field.field]">-->
-<!--              {{ warnings[field.field].message }}-->
-<!--            </div>-->
-<!--          </div>-->
-<!--        </div>-->
-<!--        <slot :name="field.field + '_bottom'" :field="field"></slot>-->
-<!--      </v-col>-->
-<!--    </v-row>-->
     <div :style="{ height: bottomHeight }"></div>
   </div>
 </template>
 
 <script setup>
 import {ref, watch, nextTick, reactive, computed} from 'vue';
-import {debounce} from "lodash";
+import {cloneDeep, debounce} from "lodash";
 import {
   VAutocomplete,
   VCombobox,
@@ -405,7 +198,7 @@ watch(
     if (!newFields?.length) {
       return
     }
-    initializeFieldBaseRules()
+    //initializeFieldBaseRules()
     newFields.forEach((e) => {
       if (!editedItem.value[e.field]) {
         if (e.type === 'switch') {
@@ -433,9 +226,10 @@ function initializeFieldBaseRules() {
   props.fields.forEach(field => {
     if (field.base_rules?.length) {
       // Default select the first base_rule
-      fieldBaseRules.value[field.field] = !isNaN(props.rules[field.field]) ? props.rules[field.field] : field.base_rules[0].rule_id;
+      fieldBaseRules.value[field.field] = !isNaN(props.rules[field.field]) ? cloneDeep(props.rules[field.field]) : field.base_rules[0].rule_id;
     }
   });
+  console.log('@@@@fieldBaseRules_props.rules',props.rules)
 }
 
 // Use only one validation standard at the same level
@@ -479,6 +273,7 @@ function formatBaseRules() {
       }
     }
   }
+
 }
 
 // Watch field's baseRule changes
@@ -592,10 +387,10 @@ function formatData() {
   function processField(data, ruleData, prefix = '') {
     for (let key in data) {
       const fullKey = prefix ? `${prefix}.${key}` : key;
-      ruleData[key] = props.rules[key]
+      ruleData[key] = cloneDeep(props.rules[key])
       if (typeof data[key] === 'object' && !Array.isArray(data[key])) {
         if (!ruleData[key]) {
-          ruleData[key] = props.rules[key] || {};
+          ruleData[key] = props.rules[key] ? cloneDeep(props.rules[key]) : {};
         }
         processField(data[key], ruleData[key], fullKey);
       } else {
@@ -614,7 +409,7 @@ function formatData() {
 
 // Triggered when field value changes
 function change(field, e) {
-  editedItem.value[field.field] = e;
+  //editedItem.value[field.field] = e;
   if (validateField(field)) {
     updateFormData()
   }
@@ -631,8 +426,13 @@ function handleChildChange(parentField, index, childData) {
 
 // Handle child component validation rule changes
 function handleChildBaseRule(parentField, index, childBaseRule) {
-  fieldBaseRules.value[parentField] = props.rules?.[parentField] || {}
+  //console.log('handleChildBaseRule',parentField.lable,index,childBaseRule)
+  //fieldBaseRules.value[parentField] = props.rules?.[parentField] ? cloneDeep(props.rules?.[parentField]) : {}
+  if(!fieldBaseRules.value[parentField]){
+    fieldBaseRules.value[parentField] = []
+  }
   fieldBaseRules.value[parentField][index] = childBaseRule;
+
   updateFormData()
 }
 
@@ -640,6 +440,12 @@ function updateFormData() {
   const formattedData = formatData();
   emit('update:model-value', formattedData.data);
   emit('update:base-rule', formattedData.baseRule);
+}
+
+function updateModelValue(e) {
+
+  //console.log('@@@updateModelValue',e)
+  //updateFormData()
 }
 
 function setFormItemClass(field) {
@@ -659,10 +465,10 @@ function focusChange(name) {
   }
 }
 
-function blur(field = '') {
+function blur(field=null) {
   currentFocus.value = '';
   if (field) {
-    validate(field, 'blur');
+    //validateField(field, 'blur');
   }
 }
 
@@ -710,8 +516,10 @@ function validateField(field) {
 
 // Validate warnings
 function validateWarnings(field) {
+  // console.log('validateWarnings',field)
   getFieldRules(field)
   let rules = filedRules.value[field.field]?.warnings || []
+  // console.log('filedRules.value',filedRules.value)
   const value = editedItem.value[field.field];
   rules.forEach((rule) => {
     let ret = rule(value);
@@ -724,6 +532,7 @@ function validateWarnings(field) {
       delete warnings.value[field.field];
     }
   });
+
 }
 
 // Get all warning messages
