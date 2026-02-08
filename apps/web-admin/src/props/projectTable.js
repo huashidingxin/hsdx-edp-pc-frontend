@@ -5,7 +5,7 @@ export default {
   options: {
     columns: [
       {field: 'name', title: '名称', minWidth: 200,},
-      {field: 'owner.name', title: '业主', minWidth: 200,},
+      {field: 'owner_name', title: '业主', minWidth: 200,},
       {field: 'created_at', title: '创建时间', width: 200,},
     ]
   },
