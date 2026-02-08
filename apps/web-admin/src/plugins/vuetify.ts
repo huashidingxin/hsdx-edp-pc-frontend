@@ -19,15 +19,18 @@ export default createVuetify({
   defaults: {
     VAutocomplete: {
       variant: 'underlined',
+      autocomlete: 'off',
     },
     VBtn: {
       variant: 'flat',
     },
     VSelect: {
       variant: 'underlined',
+      autocomlete: 'off',
     },
     VTextField: {
       variant: 'underlined',
+      autocomlete: 'off',
     },
   },
   theme: {
