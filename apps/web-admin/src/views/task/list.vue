@@ -2,11 +2,19 @@
 import Resource from "@/api/resource";
 import {useAppStore} from "@/store";
 import {VChip, VListItem} from "vuetify/components";
-import activityTable from '#/props/activityTable.js'
-import teamUserTable from '#/props/teamUserTable.js'
+import {useAccess} from "@vben/access";
+import {useUserStore} from "@vben/stores";
+const { hasAccessByCodes,hasAccessByRoles } = useAccess();
+
 
 const appStore = useAppStore()
+const userStore = useUserStore()
+
 const tableRef = ref(null)
+
+const editingItem = ref({})
+
+const $toast = inject('$toast')
 const stateRender = {
   name: 'CellRender',
   render: ({row}) => {
@@ -37,38 +45,32 @@ const options = ref({
 });
 const filters = ref([
   {
-    field: 'name',
-    type: 'text',
+    field: 'measure_id',
+    type: 'select',
     col: 3,
-    label: '名称',
-  },
-]);
-
-const fields = ref([
-  {
-    field: 'start_end_time',
-    type: 'datetime',
-    col: 6,
-    label: '起止时间',
-    attrs: {
-      range: true
+    label: '监理方式',
+    updateSearch: {
+      apiUrl: 'measures',
     },
-    rules: [v => !!v || '请选择起止时间']
+    attrs:{}
+  },
+  {
+    field: 'procedure_id',
+    type: 'select',
+    col: 3,
+    label: '工序',
+    updateSearch: {
+      apiUrl: 'procedures',
+    },
+    attrs:{}
   },
   {
     field: 'executor_id',
     type: 'autocomplete',
     col: 3,
     label: '执行人',
-    updateSearch: {
-      apiUrl: 'project-users',
-      params: {
-        status: 1,
-        project_id: appStore.defaultProject?.id
-      }
-    },
-    attrs: {
-      itemValue: 'user_id'
+    attrs:{
+      items:[]
     },
     slots: [
       {
@@ -77,8 +79,122 @@ const fields = ref([
         bind: (e) => {
           return {
             ...e.props,
-            prependAvatar: e.item.raw.user?.avatar,
-            text: e.item.raw.staff?.staff_name || '',
+            prependAvatar: e.item.raw?.avatar,
+            text: e.item.raw?.name || '',
+          };
+        },
+      },
+      {
+        name: 'item',
+        component: markRaw(VListItem),
+        bind: (e) => {
+          return {
+            ...e.props,
+            prependAvatar: e.item.raw?.avatar || '',
+            text: e.item.raw?.name,
+            subtitle: e.item.raw.id,
+          };
+        },
+      },
+    ],
+  },
+  {
+    field: 'date_range',
+    type: 'datetime',
+    col: 3,
+    label: '日期',
+    attrs:{
+      onlyDate:true,
+      range:true,
+      inputProps:{clearable:true}
+    }
+  },
+]);
+
+const fields = ref([
+  {
+    field: 'start_end_time',
+    type: 'datetime',
+    col: 8,
+    label: '起止时间',
+    attrs: {
+      range: true
+    },
+    rules: [v => !!v || '请选择起止时间']
+  },
+  {
+    field: 'stakeholder_id',
+    type: 'select',
+    col: 4,
+    label: '相关单位',
+    attrs: {
+      create: {
+        url:'/stakeholders/new',
+        permission:'stakeholder.create'
+      },
+      async refresh(){
+        await loadStakeholders()
+        $toast.success('数据已更新')
+      }
+    },
+    rules: [v => !!v || '请选择单位']
+  },
+  {
+    field: 'unit_project_id',
+    type: 'tree-select',
+    col: 4,
+    label: '单位工程',
+    attrs:{
+      treeProps:{
+        selectStrategy:'single-independent'
+      },
+      create: {
+        url:'/divisions/new',
+        permission:'division.create'
+      },
+      async refresh(){
+        await loadDivisions()
+        $toast.success('数据已更新')
+      }
+    },
+    rules: [v => !!v || '请选择单位工程']
+  },
+  {
+    field: 'procedure_id',
+    type: 'autocomplete',
+    col: 4,
+    label: '工序',
+    attrs: {
+
+    },
+    rules: [v => !!v || '请选择工序']
+  },
+  {
+    field: 'measure_id',
+    type: 'autocomplete',
+    col: 4,
+    label: '监理方式',
+    attrs:{},
+    rules: [v => !!v || '请选择监理方式']
+  },
+  {
+    field: 'executors',
+    type: 'autocomplete',
+    col: 12,
+    label: '执行人',
+    attrs: {
+      multiple:true,
+      returnObject:true,
+    },
+    slots: [
+      {
+        name: 'chip',
+        component: markRaw(VChip),
+        bind: (e) => {
+          return {
+            ...e.props,
+            prependAvatar: e.item.raw?.avatar,
+            text: e.item.raw?.name || '',
           };
         },
       },
@@ -91,8 +207,8 @@ const fields = ref([
           }) || []
           return {
             ...e.props,
-            prependAvatar: e.item.raw.user?.avatar,
-            title: e.item.raw.staff?.staff_name || '',
+            prependAvatar: e.item.raw?.avatar,
+            title: e.item.raw?.name || '',
             subtitle: roles.join('、'),
           };
         },
@@ -101,32 +217,77 @@ const fields = ref([
     rules: [v => !!v || '请选择执行人']
   },
   {
-    field: 'measure_id',
+    field: 'executor_id',
     type: 'autocomplete',
-    col: 3,
-    label: '监理方式',
-    updateSearch: {
-      apiUrl: 'measures',
+    col: 12,
+    label: '执行人',
+    attrs: {
+
     },
-    rules: [v => !!v || '请选择监理方式']
+    slots: [
+      {
+        name: 'chip',
+        component: markRaw(VChip),
+        bind: (e) => {
+          return {
+            ...e.props,
+            prependAvatar: e.item.raw?.avatar,
+            text: e.item.raw?.name || '',
+          };
+        },
+      },
+      {
+        name: 'item',
+        component: markRaw(VListItem),
+        bind: (e) => {
+          const roles = e.item.raw.roles?.map((v) => {
+            return v.name
+          }) || []
+          return {
+            ...e.props,
+            prependAvatar: e.item.raw?.avatar,
+            title: e.item.raw?.name || '',
+            subtitle: roles.join('、'),
+          };
+        },
+      },
+    ],
+    rules: [v => !!v || '请选择执行人']
   },
   {
-    field: 'activity_id',
+    field: 'mileposts',
+    type: 'autocomplete',
+    col: 12,
+    label: '桩号/地点',
+    attrs:{
+      multiple:true,
+      returnObject:true,
+      create: {
+        url:'/mileposts/new',
+        permission:'milepost.create'
+      },
+      async refresh(){
+        await loadMileposts()
+        $toast.success('数据已更新')
+      }
+    },
+    rules: [v => !!v || '请选择桩号/地点']
+  },
+  {
+    field: 'content',
+    type: 'textarea',
+    col: 12,
+    label: '任务内容',
+    attrs:{},
+  },
+  {
+    field: 'form',
     type: 'slot',
     col: 12,
-    label: '活动',
   },
-
-  {
-    field: 'activities',
-    type: 'slot'
-  }
-
 ]);
 
-const editingItem = ref({})
 
-const $toast = inject('$toast')
 
 async function cancel(e) {
   try {
@@ -160,194 +321,6 @@ function saveFormat(e) {
   }
 }
 
-const activityDialog = ref(false)
-const activityMultipleDialog = ref(false)
-const activityItemDialog = ref(false)
-const activityReq = computed(() => {
-  return {
-    ...activityTable.requestData,
-    plan_status: 1,
-    plan_states: [1, 2],
-    project_id: appStore.defaultProject?.id
-  }
-})
-
-function activityConfirm(e) {
-  editingItem.value.activity_id = e.id
-}
-
-const activityOptions = ref({
-  columns: [
-    {field: 'start_end_time', title: '起止时间', width: 400, headerClassName: 'required-field',slots:{header:'header_start_end_time'}},
-    {
-      field: 'executor_id',
-      title: '执行人',
-      width: 200,
-      headerClassName: 'required-field',
-      slots: {default: 'default_executor_id'}
-    },
-    {
-      field: 'activity_id',
-      title: '活动',
-      width: 200,
-      headerClassName: 'required-field',
-      slots: {default: 'default_activity_id'}
-    },
-    {field: 'measure_id', title: '监理方式', width: 200, headerClassName: 'required-field'},
-  ]
-})
-
-const activityFields = ref([
-  {
-    field: 'start_end_time',
-    type: 'datetime',
-    label: '起止时间',
-    attrs: {
-      range: true
-    },
-    rules: [v => !!v || '请选择起止时间']
-  },
-  {
-    field: 'executor_id',
-    type: 'autocomplete',
-    label: '执行人',
-    attrs: {
-      items: [],
-    },
-    rules: [v => !!v || '请选择执行人']
-  },
-  {
-    field: 'activity_id',
-    type: 'autocomplete',
-    label: '活动',
-    attrs: {
-      items: [],
-      itemTitle: 'content'
-    },
-    rules: [v => !!v || '请选择活动人']
-  },
-  {
-    field: 'measure_id',
-    type: 'select',
-    label: '监理方式',
-    attrs: {
-      items: [],
-    },
-    rules: [v => !!v || '请选择监理方式']
-  },
-])
-
-function openDialog() {
-  if (!editingItem.value.activities?.length) {
-    addTaskItem()
-  }
-
-  tableRef.value.openDialog('任务指派', 'drawer')
-}
-
-function addTaskItem() {
-  if (!editingItem.value.activities?.length) {
-    editingItem.value.activities = [];
-  }
-  editingItem.value.activities.push({
-    start_end_time: '',
-    user_id: ''
-  })
-}
-
-function activityMultipleConfirm(e) {
-  editingItem.value.activities = [];
-  e.forEach((activity) => {
-
-    // if(!editingItem.value.activities?.length){
-    //   editingItem.value.activities = [];
-    // }
-    editingItem.value.activities.push({
-      start_end_time: '',
-      user_id: '',
-      activity_id: activity.id
-    })
-  })
-}
-
-async function getProjectUsers() {
-  try {
-    const api = new Resource('project-users')
-    const {data} = await api.list({per_page: 'all', project_id: appStore.defaultProject?.id})
-    activityFields.value.find(v => v.field === 'executor_id').attrs.items = data.map((e) => {
-      return e.user
-    })
-  } catch (e) {
-    console.log(e)
-  }
-}
-
-async function getActivities() {
-  try {
-    const api = new Resource('activities')
-    const {data} = await api.list({per_page: 'all', ...activityReq.value})
-    activityFields.value.find(v => v.field === 'activity_id').attrs.items = data
-  } catch (e) {
-    console.log(e)
-  }
-}
-
-async function getMeasures() {
-  try {
-    const api = new Resource('measures')
-    const {data} = await api.list({per_page: 'all'})
-    activityFields.value.find(v => v.field === 'measure_id').attrs.items = data
-  } catch (e) {
-    console.log(e)
-  }
-}
-
-const listForm = ref(null)
-
-async function submit() {
-  if(!await listForm.value.validate()){
-    return
-  }
-  try{
-    const api = new Resource('tasks')
-    const activities = editingItem.value.activities.map((e)=>{
-      return {
-        ...e,
-        start_time:e.start_end_time[0],
-        end_time:e.start_end_time[1],
-      }
-    })
-    const {data} = await api.store({
-      activities,
-      project_id:appStore.defaultProject?.id,
-    })
-    $toast.success('提交成功');
-    editingItem.value = {}
-    tableRef.value.closeDialog()
-    tableRef.value.reload()
-  }catch(e) {
-    console.log(e)
-  }
-}
-
-const teamUserDialog = ref(false)
-const teamUserReq = computed(()=>{
-  return {
-    project_id:appStore.defaultProject?.id
-  }
-})
-
-function teamUsersConfirm(e) {
-  editingItem.value.activities = [];
-  e.forEach((teamUser) => {
-    editingItem.value.activities.push({
-      start_end_time: '',
-      user_id: '',
-      executor_id: teamUser.user_id
-    })
-  })
-}
-
 function showEdit(e) {
   return !e?.id || (e.status && e.state < 2)
 }
@@ -356,11 +329,184 @@ function showDelete(e) {
   return e.state < 2
 }
 
-onBeforeMount(() => {
-  getActivities()
-  getProjectUsers()
-  getMeasures()
+const currentProject = ref(appStore.defaultProject)
+const projectCategories = ref([])
+function projectChange(e) {
+  updateProject(e)
+  currentProject.value = e
+
+}
+
+async function loadProject(projectId) {
+  try{
+    const api = new Resource('projects')
+    const {data} = await api.get(projectId)
+    currentProject.value = data
+  }catch(e){
+    console.log(e)
+  }
+}
+
+async function updateProject(project) {
+  if(project.categories){
+    projectCategories.value = project.categories.map(v=>v.id)
+  }else{
+    projectCategories.value = [project.category_id]
+  }
+
+  try {
+    await Promise.all([
+      loadProcedures(),
+      loadStakeholders(),
+      loadDivisions(),
+      loadExecutors(),
+      loadMileposts()
+    ])
+  } catch (e) {
+    console.error('加载项目数据失败:', e)
+  }
+}
+
+async function loadProcedures() {
+  try{
+    const {data} = await new Resource('procedures').list({
+      categories: projectCategories.value,
+      per_page:'all'
+    })
+    fields.value.find(v=>v.field==='procedure_id').attrs.items = data
+  }catch(e) {
+    console.log(e)
+  }
+
+}
+
+async function loadStakeholders() {
+  try{
+    const {data} = await new Resource('stakeholders').list({
+      project_id: currentProject.value.id,
+      per_page:'all'
+    })
+    fields.value.find(v=>v.field==='stakeholder_id').attrs.items = data
+  }catch(e) {
+    console.log(e)
+  }
+}
+
+async function loadDivisions() {
+  try{
+    const {data} = await new Resource('divisions').list({
+      project_id: currentProject.value.id,
+      levels:[1,2],
+      per_page:'all'
+    })
+    fields.value.find(v=>v.field==='unit_project_id').attrs.items = data
+  }catch(e) {
+    console.log(e)
+  }
+}
+
+
+const procedureForms = ref({})
+async function loadProcedureForms(procedureId) {
+  try{
+    const api = new Resource('procedure-forms')
+    const {data} = await api.list({
+      procedure_id:procedureId,
+      project_id:currentProject.value?.id,
+    })
+
+    procedureForms.value = {}
+    let isValid = false
+    for(let i in data) {
+      procedureForms.value[data[i].measure_id] = data[i]
+      if(editingItem.value.measure_id == data[i].measure_id) {
+        isValid = true
+      }
+    }
+    if(!isValid) {
+      editingItem.value.measure_id = undefined
+    }
+    const validMeasures = measures.value.filter((e)=>{
+      return procedureForms.value[e.id]
+    })
+
+    fields.value.find(v=>v.field === 'measure_id').attrs.items = validMeasures
+
+
+  }catch(e) {
+    console.log(e)
+  }
+}
+
+const measures = ref([])
+async function loadMeasures() {
+  try{
+    const api = new Resource('measures')
+    const {data} = await api.list({
+      project_id:currentProject.value?.id,
+      procedure_id:editingItem.value.procedure_id,
+      per_page:'all'
+    })
+    measures.value = data
+    fields.value.find(v=>v.field == 'measure_id').attrs.items = data
+  }catch(e) {
+    console.log(e)
+  }
+}
+async function loadMileposts() {
+  try{
+    const api = new Resource('mileposts')
+    const {data} = await api.list({
+      project_id:currentProject.value?.id,
+      per_page:'all'
+    })
+    fields.value.find(v=>v.field == 'mileposts').attrs.items = data
+  }catch(e) {
+    console.log(e)
+  }
+}
+
+async function loadExecutors() {
+  try{
+    const api = new Resource('project-users')
+    const {data} = await api.list({
+      project_id:currentProject.value.id,
+      per_page:'all'
+    })
+    // task.assign
+    const users = data.map((e)=>{
+      const roles = e.roles?.map((v)=>{return v.name}) || []
+      return {
+        ...e.user,
+        prependIcon:e.user.avatar,
+        subtitle:roles.join('、')
+      }
+    })
+
+    const executorKey = editingItem.value.id ? 'executor_id' : 'executors'
+    fields.value.find(v=>v.field == executorKey).attrs.items = hasAccessByCodes(['task.assign']) ? users : users.filter((e)=>{return e.user_id == userStore.userInfo.id})
+  }catch(e) {
+    console.log(e)
+  }
+}
+
+async function updateModelValue(e) {
+  if(!e?.id) {
+    return
+  }
+  await loadProject(e.project_id)
+  updateProject(currentProject.value)
+}
+
+watch(()=>editingItem.value.procedure_id,async (newProcedureId)=>{
+  loadProcedureForms(newProcedureId)
 })
+
+onBeforeMount(()=>{
+  updateProject(appStore.defaultProject)
+  loadMeasures()
+})
+
 
 </script>
 <template>
@@ -371,8 +517,8 @@ onBeforeMount(() => {
     :filter-fields="filters"
     :fields="fields"
     :request-data="requestData"
-    detail-open-type="modal"
-    create-open-type="modal"
+    detail-open-type="drawer"
+    create-open-type="drawer"
     api-url="tasks"
     :detail-format="detailFormat"
     :save-format="saveFormat"
@@ -381,14 +527,14 @@ onBeforeMount(() => {
     :show-edit="showEdit"
     :show-delete="showDelete"
     :project-props="{filter:true,edit:true,editRequired:true}"
+    @project-change="projectChange"
+    @update:model-value="updateModelValue"
+    :exclude-fields="editingItem.id ? ['executors'] : ['executor_id']"
   >
-    <template #right>
-      <v-btn v-access:code="'create task'" v-if="appStore.defaultProject?.id" color="primary" variant="outlined" class="mr-2" @click="openDialog">批量新增</v-btn>
-    </template>
     <template #default_user="{data:{row}}">
       <div class="d-flex align-center">
         <v-avatar :image="row.executor?.avatar" size="20" :rounded="8"></v-avatar>
-        <div class="ms-2"> {{ row.executor?.staff?.staff_name }}</div>
+        <div class="ms-2"> {{ row.executor?.name }}</div>
       </div>
     </template>
 
@@ -399,93 +545,16 @@ onBeforeMount(() => {
       </v-chip>
       <div v-else>-</div>
     </template>
-
-    <template #field_activity_id>
-      <v-text-field label="活动" :model-value="editingItem.activity?.content" class="required-field"
-                    @click="activityDialog=true"></v-text-field>
-      <AppTableSelect
-        v-model:show="activityDialog"
-        v-model="editingItem.activity"
-        v-bind="activityTable"
-        :request-data="activityReq"
-        @confirm="activityConfirm"
-        create-route-path="/activities/new"
-        required
-        :show-result="false"
-      >
-
-      </AppTableSelect>
-    </template>
-
-    <template #form_actions>
-      <div v-if="editingItem.id && editingItem.status" v-access:code="['edit task']">
+    <template #form_action>
+      <div v-if="editingItem.id && editingItem.status" v-access:code="['task.edit']">
         <AppCancel type="task" @confirm="cancel"></AppCancel>
       </div>
     </template>
-<!--    <template #field_activities v-if="!editingItem.id">-->
-<!--      <AppList-->
-<!--        v-model="editingItem.activities"-->
-<!--        :options="activityOptions"-->
-<!--        :fields="activityFields"-->
-<!--        show-checkbox-->
-<!--      >-->
-<!--        <template #header-left>-->
-<!--          <div class="card-title">批量指派任务</div>-->
-<!--        </template>-->
-<!--      </AppList>-->
-<!--    </template>-->
-    <template #dialog-content>
-      <v-card flat>
-        <v-card-text>
-          <v-form ref="listForm">
-            <AppList
-              v-model="editingItem.activities"
-              :options="activityOptions"
-              :fields="activityFields"
-              show-checkbox
-            >
-              <template #header-left>
-                <div class="">任务列表</div>
-              </template>
-              <template #header-right>
-                <v-btn color="primary" @click="activityMultipleDialog=true">按活动指派</v-btn>
-                <v-btn color="success" class="ml-2" @click="teamUserDialog=true">按成员指派</v-btn>
 
-                <AppTableSelect
-                  v-model:show="activityMultipleDialog"
-                  v-bind="activityTable"
-                  :request-data="activityReq"
-                  multiple
-                  @confirm="activityMultipleConfirm"
-                  :show-result="false"
-                ></AppTableSelect>
-                <AppTableSelect
-                  v-model:show="teamUserDialog"
-                  v-bind="teamUserTable"
-                  :request-data="teamUserReq"
-                  multiple
-                  @confirm="teamUsersConfirm"
-                  :show-result="false"
-                ></AppTableSelect>
-              </template>
-              <template #header_start_end_time>
-                <span >
-                  起止时间
-                </span>
-              </template>
-              <template #footer>
-                <div class="mt-5 d-flex justify-center">
-                  <v-btn variant="text" color="primary" @click="addTaskItem">+ 新增任务</v-btn>
-                </div>
-                <div class="my-5 text-right">
-                  <v-btn color="primary" @click="submit">提交</v-btn>
-                </div>
-              </template>
-            </AppList>
-          </v-form>
-
-        </v-card-text>
-      </v-card>
+    <template #field_form>
+      <div v-if="editingItem.measure_id" :class="!procedureForms[editingItem.measure_id] ? 'text-error' : ''">
+        任务表单：{{procedureForms[editingItem.measure_id]?.form?.name || '未配置该监理方式的表单'}}
+      </div>
     </template>
   </AppTable>
 
