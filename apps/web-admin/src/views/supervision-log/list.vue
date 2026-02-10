@@ -2,7 +2,7 @@
 import Resource from "@/api/resource.js";
 import {nextTick, ref, computed, inject, watch} from 'vue';
 import SubmissionEdit from '../submission/edit.vue'
-import {VChip} from "vuetify/components";
+import {VChip,VListItem} from "vuetify/components";
 import {router} from "@/router/index.js";
 import {cloneDeep} from "lodash";
 import {useUserStore} from "@vben/stores";
@@ -72,7 +72,32 @@ const filters = ref([
     label: '记录人',
     attrs:{
       items:[]
-    }
+    },
+    slots: [
+      {
+        name: 'chip',
+        component: markRaw(VChip),
+        bind: (e) => {
+          return {
+            ...e.props,
+            prependAvatar: e.item.raw?.avatar,
+            text: e.item.raw?.name || '',
+          };
+        },
+      },
+      {
+        name: 'item',
+        component: markRaw(VListItem),
+        bind: (e) => {
+          return {
+            ...e.props,
+            prependAvatar: e.item.raw?.avatar || '',
+            text: e.item.raw?.name,
+            subtitle: e.item.raw.id,
+          };
+        },
+      },
+    ],
   },
   {
     field: 'date_range',
@@ -219,7 +244,7 @@ async function batch(isExport=false) {
   loader.close()
 }
 
-async function getTeamUsers(projectId=null) {
+async function getProjectUsers(projectId=null) {
   try{
     const api = new Resource('project-users')
     const {data} = await api.list({per_page:'all',project_id:projectId || appStore.defaultProject?.id})
@@ -308,12 +333,12 @@ async function save() {
 }
 
 function projectChange(e) {
-  getTeamUsers(e?.id)
+  getProjectUsers(e?.id)
 }
 
 
 onBeforeMount(()=>{
-  getTeamUsers()
+  getProjectUsers()
 })
 
 </script>
@@ -351,7 +376,7 @@ onBeforeMount(()=>{
       @project-change="projectChange"
     >
       <template #right>
-<!--        <v-checkbox v-model="withSignature" label="打印/导出包含签名" color="primary" hide-details class="mr-2"></v-checkbox>-->
+        <v-checkbox v-model="withSignature" label="打印/导出包含签名" color="primary" hide-details class="mr-2"></v-checkbox>
         <div class="me-2">
           <v-btn
             color="warning"
