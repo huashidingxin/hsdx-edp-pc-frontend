@@ -167,23 +167,25 @@ onMounted(()=>{
       :activator="'#'+activator"
       transition="fade-transition"
     >
-
-      <v-treeview
-        v-model:selected="selected"
-        @update:selected="updateSelected"
-        open-all
-        selectable
-        :items="getTree(items)"
-        :itemTitle="itemTitle"
-        :itemValue="itemValue"
-        selected-color="primary"
-        return-object
-        v-bind="treeProps"
-
-      ></v-treeview>
+      <v-card>
+        <v-treeview
+          v-model:selected="selected"
+          @update:selected="updateSelected"
+          open-all
+          selectable
+          :items="getTree(items)"
+          :itemTitle="itemTitle"
+          :itemValue="itemValue"
+          selected-color="primary"
+          return-object
+          v-bind="treeProps"
+        >
+        </v-treeview>
+       <div class="pb-2">
+         <slot name="append-item"></slot>
+       </div>
+      </v-card>
     </v-menu>
-
-
   </div>
 </template>
 
