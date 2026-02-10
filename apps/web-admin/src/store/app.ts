@@ -9,11 +9,22 @@ export const useAppStore = defineStore('app', {
       setting: {},
       defaultProject: {},
       projects: [],
+      dashboard:{}
     }
   },
   getters:{
     currentProject: (state) => {
       return state.defaultProject?.id ? state.defaultProject : state.projects?.[0]
+    },
+    todo: (state) => {
+      return state.dashboard?.todo || {}
+    },
+    personalTodoCount: (state) => {
+      const todo = state.dashboard || {}
+      const taskPersonalPending = todo.task?.personal_pending || 0
+      const taskPersonalLogTobeSubmit = todo.task?.personal_log_tobe_submit || 0
+      const supervisionLogPersonalTobeSubmit = todo.supervision_log?.personal_tobe_submit || 0
+      return taskPersonalPending + taskPersonalLogTobeSubmit + supervisionLogPersonalTobeSubmit
     }
   },
   actions: {
@@ -29,16 +40,38 @@ export const useAppStore = defineStore('app', {
     },
 
 
-    async getPermissions(teamId = 0) {
+    async getPermissions(projectId = 0) {
       const accessStore = useAccessStore();
       try {
         const api = new Resource('auth')
-        const {data} = await api.get('codes?team_id=' + teamId)
+        const {data} = await api.get('codes?project_id=' + projectId)
         accessStore.setAccessCodes(data)
         return data
       } catch (e) {
         console.log(e)
       }
+    },
+
+
+    getDashboard() {
+      return new Promise(async (resolve, reject) => {
+        const accessStore = useAccessStore();
+        if (!accessStore.isAccessChecked) {
+          return
+        }
+        try {
+          let api = new Resource('dashboards')
+          let {
+            data
+          } = await api.list({
+            project_id: this.defaultProject?.id
+          });
+          this.dashboard = data
+          resolve(data)
+        } catch (e) {
+          reject(e)
+        }
+      })
     },
 
     getProjects(perPage = 'all') {
@@ -70,7 +103,7 @@ export const useAppStore = defineStore('app', {
 
     setDefaultProject(project) {
       this.defaultProject = project;
-      if (!project) {
+      if (!project?.id) {
         this.defaultProject = {name: '所有项目'}
         return
       }
