@@ -2,11 +2,11 @@
   "name": "web-admin",
   "private": true,
   "type": "module",
-  "version": "0.2.1",
+  "version": "1.0.2",
   "main": "../electron/main.cjs",
   "scripts": {
     "dev": "vite",
-    "build": "pnpm vite build --mode production --base=/admin/",
+    "build": "pnpm vite build --mode production",
     "build_admin": "vite build --mode production --base=/admin/",
     "build:analyze": "pnpm vite build --mode analyze",
     "build_org": "run-p type-check \"build-only {@}\" --",
