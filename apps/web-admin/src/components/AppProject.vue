@@ -157,7 +157,7 @@ async function setDefault(project) {
   await appStore.setDefaultProject(project)
   accessStore.isAccessChecked = false
   $toast.success(`已切换至项目：${project.name}`)
-
+  await appStore.getPermissions(project?.id)
   window.location.reload()
 }
 
