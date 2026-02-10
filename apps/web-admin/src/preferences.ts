@@ -11,7 +11,8 @@ export const overridesPreferences = defineOverridesPreferences({
 		name: import.meta.env.VITE_APP_TITLE,
 		watermark: false,
     authPageLayout:'panel-center',
-    enablePreferences:false
+    enablePreferences:false,
+    defaultHomePath: '/workspace',
 	},
   copyright: {
     companyName: '华视鼎信',
