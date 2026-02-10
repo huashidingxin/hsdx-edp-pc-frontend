@@ -42,8 +42,7 @@ watch(() => appStore.defaultProject, (newVal, oldVal) => {
   if(accessStore.isAccessChecked){
     appStore.getPermissions(newVal?.id || 0)
   }
-
-})
+},{immediate: true,deep:true})
 
 onBeforeMount(()=>{
   appStore.getSetting()
