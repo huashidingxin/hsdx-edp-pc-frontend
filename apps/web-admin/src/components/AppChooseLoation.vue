@@ -34,6 +34,7 @@
                 density="compact"
                 bg-color="white"
                 rounded
+                :readonly="false"
               >
                 <template #append>
                   <v-btn

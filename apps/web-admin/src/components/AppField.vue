@@ -17,6 +17,8 @@ import AppUpload from "#/components/AppUpload.vue";
 import AppEditor from '#/components/AppEditor'
 import Resource from "#/api/resource";
 import AppTreeSelect from "#/components/AppTreeSelect.vue";
+import {useAccess} from "@vben/access";
+const { hasAccessByCodes,hasAccessByRoles } = useAccess();
 
 /**
  * fields
@@ -378,6 +380,15 @@ defineExpose({
           <component v-if="slot.component" :is="slot.component" v-bind="slot.bind?.(e)"/>
           <div v-bind="slot.bind?.(e)">{{slot.content}}</div>
         </template>
+      </template>
+      <template v-if="['select','autocomplete','tree-select'].includes(field.type)" #append-item>
+        <div class="px-3">
+          <v-btn v-if="field.attrs?.create?.url && (!field.attrs.create.permission || hasAccessByCodes([field.attrs.create.permission]))" color="primary" variant="tonal" @click="$router.push(field.attrs.create.url)" class="me-3">
+            <v-icon>mdi-plus</v-icon>
+            <span class="ms-2">新建{{field.label}}</span>
+          </v-btn>
+          <v-btn v-if="Boolean(field.attrs?.refresh)" icon="mdi-refresh" color="primary" size="small" variant="tonal" @click="field.attrs.refresh()"></v-btn>
+        </div>
       </template>
     </component>
     <slot></slot>
