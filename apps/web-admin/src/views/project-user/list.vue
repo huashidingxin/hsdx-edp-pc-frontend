@@ -1,17 +1,18 @@
 <script setup lang="ts">
-import {useProjectStore} from "@/store/project";
+
 import {useUserStore} from "@vben/stores";
 import Resource from "@/api/resource";
 import {VChip, VListItem} from "vuetify/components";
+import {useAppStore} from '@/store'
 
 const $confirm = inject('$confirm')
 const $toast = inject('$toast')
 
-const projectStore = useProjectStore()
+const appStore = useAppStore()
 const userStore = useUserStore()
 const options = ref({
   columns:[
-    {field:'user.name',title:'姓名',width:200,fixed:'left'},
+    {field:'user.name',title:'姓名',width:120,fixed:'left'},
     {field:'user.avatar',title:'照片',width:200,customRender:{type:'image'}},
     {field:'user.mobile',title:'手机号',width:200},
     {field:'project.name',title:'项目',minWidth:200},
@@ -111,12 +112,17 @@ const filters = ref([
     label: '手机号',
   },
   {
-    field:'status',
+    field:'leave_status',
     type: 'select',
     col: 3,
     label: '状态',
     attrs:{
-      items:[{id:1,name:'正常'},{id:0,name:'撤离'}],
+      items:[
+        {id:0,name:'在岗'},
+        {id:1,name:'请假'},
+        {id:2,name:'借调'},
+        {id:3,name:'撤离'},
+      ],
       multiple:true
     }
   },
@@ -126,35 +132,81 @@ const tableRef = ref(null)
 const editingItem = ref({})
 
 const requestData = computed(() => ({
-  project_id: projectStore.current?.id
+  project_id: appStore.defaultProject?.id
 }));
 
 const leaveFields = ref([
   {
-    field:'leave_date',
-    label:'撤离时间',
-    type:'datetime',
-    rules:[v=>!!v || '请选择撤离时间'],
+    field:'type',
+    label:'类型',
+    type:'select',
     attrs:{
-      onlyDate:true
+      items:[
+        {id:1,name:'请假'},
+        {id:2,name:'借调'},
+        {id:3,name:'撤离'},
+      ]
+    },
+    rules:[v=>!!v || '类型不能为空']
+  },
+  {
+    field:'start_time',
+    label:'开始时间',
+    type:'datetime',
+    rules:[v=>!!v || '请选择开始时间'],
+    attrs:{
+
+    }
+  },
+  {
+    field:'end_time',
+    label:'结束时间',
+    type:'datetime',
+    rules:[v=>!!v || '请选择结束时间'],
+    attrs:{
+
     }
   },
   {
     field:'reason',
-    label:'撤离原因',
+    label:'离岗原因',
     type:'text',
-    rules:[v=>!!v || '撤离原因不能为空']
+    rules:[v=>!!v || '离岗原因不能为空']
   }
 ])
+
+const formattedLeaveFields = computed(()=>{
+  if(leaveData.value.type < 3) {
+    return leaveFields.value
+  }
+  return leaveFields.value.filter(v=>v.field !== 'end_time')
+})
 
 const leaveForm = ref(null)
 const leaveData = ref({})
 const currentItem = ref(null)
-function openLeaveDialog(e) {
+async function toggleLeave(e) {
   currentItem.value = e
-  //leaveDialog.value = true
-  dialogType.value = 'level'
-  tableRef.value.openDialog('成员撤离')
+
+  if(e.leave?.status == 'active') {
+
+    const confirm = await $confirm('确定要撤销本次离岗？预计离岗时间：'+(e.leave.start_time).replace('.000000','')+'~'+(e.leave.end_time ? (e.leave.end_time).replace('.000000','') : '长期'))
+
+    if(confirm) {
+      const api = new Resource('project-leaves/'+e.leave.id+'/cancel')
+      const {data} = await api.store()
+
+      $toast.success('撤销成功')
+
+      tableRef.value.refresh()
+    }
+
+  }else{
+    leaveData.value = {}
+    dialogType.value = 'level'
+    tableRef.value.openDialog('成员撤离')
+  }
+
 }
 async function leaveSubmit() {
   // const confirm = await $confirm('确定要撤离'+currentItem.value.staff.staff_name+'?')
@@ -166,7 +218,7 @@ async function leaveSubmit() {
     return
   }
   try{
-    const api = new Resource('team-users/'+currentItem.value.id+'/leave')
+    const api = new Resource('project-users/'+currentItem.value.id+'/leave')
     const {data} = await api.store({user_id:currentItem.value.user_id,...leaveData.value})
     $toast.success('操作成功');
     tableRef.value.closeDialog()
@@ -176,6 +228,7 @@ async function leaveSubmit() {
     console.log(e)
   }
 }
+
 
 const excludeFields = computed(()=>{
   if(!editingItem.value?.id){
@@ -205,7 +258,7 @@ watch(()=>editingItem.value?.project_id,async (newProjectId)=>{
 
 async function getProjectUsers(projectId) {
   try{
-    const api = new Resource('team-users')
+    const api = new Resource('project-users')
     const {data} = await api.list({project_id:projectId,per_page:'all'})
     return data
   }catch(e) {
@@ -243,9 +296,9 @@ async function getStaffs() {
 }
 
 function showDetail() {
-  if(projectStore.current?.id){
+  if(appStore.defaultProject?.id){
     editingItem.value = {}
-    editingItem.value.project_id = projectStore.current.id
+    editingItem.value.project_id = appStore.defaultProject.id
   }
 }
 
@@ -275,15 +328,15 @@ onBeforeMount(()=>{
     @show-detail="showDetail"
   >
     <template #action="{data}">
-      <v-list-item v-access:code="['edit project_user']" v-if="data.status && userStore.userInfo.id != data.user_id" @click="openLeaveDialog(data)">
-        <v-list-item-title>离岗</v-list-item-title>
+      <v-list-item v-access:code="['project_user.update']" v-if="userStore.userInfo.id != data.user_id || true" @click="toggleLeave(data)">
+        <v-list-item-title>{{data.leave?.status == 'active' ? '撤销离岗' : ' 离岗'}}</v-list-item-title>
       </v-list-item>
     </template>
     <template  #field_staff_section>
       <v-alert v-if="editingItem.id > 0">
-        <div>{{editingItem.staff?.staff_name}}</div>
-        <div>{{editingItem.staff?.staff_email}}</div>
-        <div>{{editingItem.staff?.staff_mobile}}</div>
+        <div>{{editingItem.user?.name}}</div>
+        <div>{{editingItem.user?.email}}</div>
+        <div>{{editingItem.user?.mobile}}</div>
       </v-alert>
     </template>
     <template #field_user_list>
@@ -304,13 +357,13 @@ onBeforeMount(()=>{
       </div>
     </template>
     <template #default_status="{data:{row}}">
-      <v-chip :color="row.status ? 'success' : 'error'" size="small" label>{{row.status ? '正常' : '停用'}}</v-chip>
+      <v-chip :color="row.leave?.status === 'active' ? 'error' : 'success'" size="small" label>{{row.leave?.status === 'active' ? row.leave.type_label : '在岗'}}</v-chip>
     </template>
     <template #dialog-content>
       <v-card v-if="dialogType == 'level'" class="pa-3">
         <v-form ref="leaveForm">
           <v-row>
-            <v-col cols="12" v-for="(item,index) in leaveFields" :key="index">
+            <v-col cols="12" v-for="(item,index) in formattedLeaveFields" :key="index">
               <AppField v-model="leaveData[item.field]" :field="item"></AppField>
             </v-col>
           </v-row>
