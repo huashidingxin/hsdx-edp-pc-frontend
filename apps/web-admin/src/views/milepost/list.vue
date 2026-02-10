@@ -74,6 +74,7 @@ const fields = ref([
     type: 'slot',
     col: 6,
     label: '位置',
+    attrs:{}
   },
   {
     field: 'boundary',
@@ -127,7 +128,7 @@ function initMap() {
     view: new View({
       center: [116.28, 39.48],
       projection: projection,
-      zoom: 16,
+      zoom:12,
       maxZoom: 18,
       minZoom: 1
     })
@@ -242,22 +243,28 @@ const excludeFilters = computed(()=>{
   return appStore.defaultProject?.id > 0 ? ['project.name'] : []
 })
 
-onBeforeMount(async () => {
-  editingItem.value.project_id = route.query?.projectId || props.projectId
-  await getProject(editingItem.value.project_id)
-})
 
+const isSetCenter  = ref(false)
 // map初始化需要等map的dom节点，不要在组件的初始化里去初始化，没有field_boundary这个slot的时候没有map dom
 watch(mapRef,(newVal)=>{
   if(newVal){
     initMap();
-    if (!editingItem.value.id) {
-      map.value.getView().setCenter([parseFloat(project.value.address.longitude), parseFloat(project.value.address.latitude)])
-    }
+    setCenter()
   }else{
     resetDrawing()
   }
 })
+
+function setCenter() {
+  if (!isSetCenter.value) {
+    if (!editingItem.value.id && project.value?.address?.longitude && map.value) {
+
+      map.value.getView().setCenter([parseFloat(project.value.address?.longitude), parseFloat(project.value.address?.latitude)])
+      isSetCenter.value = true
+    }
+
+  }
+}
 
 watch(() => editingItem.value.boundary, (newValue) => {
   if (newValue) {
@@ -305,6 +312,18 @@ async function importSubmit() {
     console.log(e)
   }
 }
+
+watch(()=>editingItem.value.location,(newLocation)=>{
+  if(newLocation?.longitude){
+    map.value.getView().setCenter([parseFloat(newLocation.longitude), parseFloat(newLocation.latitude)])
+  }
+},{deep:true})
+
+onBeforeMount(async () => {
+  editingItem.value.project_id = route.query?.projectId || props.projectId || appStore.defaultProject?.id
+  await getProject(editingItem.value.project_id)
+  setCenter()
+})
 </script>
 <template>
   <div>
@@ -312,7 +331,7 @@ async function importSubmit() {
       v-model="editingItem"
       :options="options"
       :filter-fields="filters"
-      detail-open-type="page"
+      detail-open-type="drawer"
       create-open-type="drawer"
       :request-data="requestData"
       :title="title"
