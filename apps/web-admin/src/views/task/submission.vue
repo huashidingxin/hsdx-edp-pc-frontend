@@ -1,10 +1,10 @@
 <script setup>
 import {nextTick, ref, computed, inject, watch} from 'vue';
 import Resource from "@/api/resource.js";
-import {useProjectStore} from "@/store/index.js";
+import {useAppStore} from "@/store/index.js";
 
 import SubmissionEdit from "#/views/submission/edit.vue";
-import {VChip} from "vuetify/components";
+import {VChip,VListItem} from "vuetify/components";
 import {cloneDeep} from "lodash";
 import {useUserStore} from "@vben/stores";
 const $loader = inject('$loader');
@@ -19,7 +19,7 @@ const props = defineProps({
   }
 })
 
-const projectStore = useProjectStore()
+const appStore = useAppStore()
 
 // 表格配置
 const options = ref({
@@ -37,11 +37,11 @@ const options = ref({
       slots: {default: 'default_submission_code'}
     },
     {field: 'measure.name', title: '监理方式', width: 200,},
-    {field: 'activity.procedure.name', title: '工序', width: 200,},
+    {field: 'procedure.name', title: '工序', width: 200,},
     {field: 'form.name', title: '名称', width: 200,},
-    {field: 'executor.staff.staff_name', title: '执行人', width: 100,},
-    {field: 'state_desc', title: '任务状态', width: 100,},
-    {field: 'submission.state_desc', title: '记录状态', width: 100,},
+    {field: 'executor.name', title: '执行人', width: 100,},
+    {field: 'state_label', title: '任务状态', width: 100,},
+    {field: 'submission.state_label', title: '记录状态', width: 100,},
     {field: 'submission_timeout', title: '超时', width: 100, slots: {default: 'default_submission_timeout'}},
     {field: 'date', title: '日期', width: 200,sortable:true},
     {field: 'start_time', title: '开始时间', width: 200},
@@ -66,7 +66,32 @@ const filters = ref([
     label: '执行人',
     attrs:{
       items:[]
-    }
+    },
+    slots: [
+      {
+        name: 'chip',
+        component: markRaw(VChip),
+        bind: (e) => {
+          return {
+            ...e.props,
+            prependAvatar: e.item.raw?.avatar,
+            text: e.item.raw?.name || '',
+          };
+        },
+      },
+      {
+        name: 'item',
+        component: markRaw(VListItem),
+        bind: (e) => {
+          return {
+            ...e.props,
+            prependAvatar: e.item.raw?.avatar || '',
+            text: e.item.raw?.name,
+            subtitle: e.item.raw.id,
+          };
+        },
+      },
+    ],
 
   },
   {
@@ -158,7 +183,7 @@ const selectRows = ref([]);
 
 const requestData = computed(() => ({
   object_type: props.type,
-  project_id: projectStore.current?.id,
+  project_id: appStore.defaultProject?.id,
   with_signature: withSignature.value ? 1 : 0,
 }));
 
@@ -244,17 +269,17 @@ const doc = computed(() => {
 async function getProcedures() {
   try{
     const api = new Resource('procedures')
-    const {data} = await api.list({per_page:'all',project_id:projectStore.current?.id})
+    const {data} = await api.list({per_page:'all',project_id:appStore.defaultProject?.id})
     filters.value.find(v=>v.field === 'procedure_id').attrs.items = data
   }catch(e) {
     console.log(e)
   }
 }
-async function getTeamUsers() {
+async function loadProjectUsers() {
   try{
-    const api = new Resource('team-users')
-    const {data} = await api.list({per_page:'all',project_id:projectStore.current?.id})
-    filters.value.find(v=>v.field === 'executor_id').attrs.items = data.map((e)=>{return {...e.staff,name:e.staff.staff_name}})
+    const api = new Resource('project-users')
+    const {data} = await api.list({per_page:'all',project_id:appStore.defaultProject?.id})
+    filters.value.find(v=>v.field === 'executor_id').attrs.items = data.map((e)=>{return {...e.user}})
   }catch(e) {
     console.log(e)
   }
@@ -409,7 +434,7 @@ async function mediaChange(field) {
   }
 }
 onBeforeMount(()=>{
-  getTeamUsers()
+  loadProjectUsers()
   getProcedures()
 })
 </script>
@@ -439,7 +464,7 @@ onBeforeMount(()=>{
       @show-detail="showDetail"
       :show-audit="showAudit"
       audit-type="submission"
-      permission-name="submission"
+      permission-name="task_log_submission"
       audit-key="submission_id"
       :project-props="{filter:true}"
     >
@@ -551,14 +576,14 @@ onBeforeMount(()=>{
         </v-card-title>
         <v-card-text style="max-height:90vh;overflow-y:auto">
           <app-form ref="nonconformanceForm" v-model="nonconformanceEditing" :fields="nonconformanceFields" bottom-height="0">
-            <template v-for="(item,index) in nonconformanceFields" :key="index" #[item.field+'_top']>
-            <view class="mt-5 mb-3" @click="mediaChange(item)">
-              <view class="flex align-center text-caption">
-                <view class="px-2 rounded-s" :class="item.attrs.fileType=='image' ? 'bg-primary' : 'bg-primary-light'">图片</view>
-                <view class="px-2 rounded-e" :class="item.attrs.fileType=='video' ? 'bg-primary' : 'bg-primary-light'">视频</view>
-              </view>
-            </view>
-          </template>
+<!--            <template v-for="(item,index) in nonconformanceFields" :key="index" #[item.field+'_top']>-->
+<!--            <view class="mt-5 mb-3" @click="mediaChange(item)">-->
+<!--              <view class="flex align-center text-caption">-->
+<!--                <view class="px-2 rounded-s" :class="item.attrs.fileType=='image' ? 'bg-primary' : 'bg-primary-light'">图片</view>-->
+<!--                <view class="px-2 rounded-e" :class="item.attrs.fileType=='video' ? 'bg-primary' : 'bg-primary-light'">视频</view>-->
+<!--              </view>-->
+<!--            </view>-->
+<!--          </template>-->
           </app-form>
         </v-card-text>
         <v-card-actions>
