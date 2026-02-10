@@ -37,7 +37,9 @@ function createRequestClient(baseURL: string) {
     ) {
       accessStore.setLoginExpired(true);
     } else {
-      await authStore.logout();
+      if(accessStore.isAccessChecked){
+        await authStore.logout();
+      }
     }
   }
 
