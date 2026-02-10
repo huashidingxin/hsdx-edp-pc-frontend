@@ -45,6 +45,7 @@ const filters = ref([
         {id:1,name:'通用'},
         {id:2,name:'任务'},
         {id:3,name:'日志'},
+        {id:4,name:'文档'},
       ]
     }
   },
@@ -85,6 +86,7 @@ const fields = ref([
         {id:1,name:'通用'},
         {id:2,name:'任务'},
         {id:3,name:'日志'},
+        {id:4,name:'文档'},
       ]
     }
   },
