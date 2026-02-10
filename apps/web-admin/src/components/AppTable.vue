@@ -1032,7 +1032,7 @@ import projectTable from '#/props/projectTable.js'
 import {useAppStore} from "@/store";
 
 const appStore = useAppStore()
-const filterProjectSelectDialog = ref(false)
+const projectSelectDialog = ref(false)
 const filterProjectSelected = ref(null)
 function projectConfirm(e) {
   editedItem.value.project_id = e?.id
@@ -1139,7 +1139,7 @@ defineExpose({
                       <!-- PROJECT -->
                       <template v-if="projectProps.filter && !appStore.defaultProject?.id">
                         <v-col cols="12" :md="3">
-                          <AppTableSelect v-model:show="filterProjectSelectDialog"
+                          <AppTableSelect v-model:show="projectSelectDialog"
 
                                           key="filter"
                                           v-bind="projectTable"
@@ -1214,7 +1214,7 @@ defineExpose({
                     <v-list-item @click="openDetail(row.id,false)">
                       <v-list-item-title>查看</v-list-item-title>
                     </v-list-item>
-                    <v-list-item v-if="checkItemAction(showEdit,row,'edit')"
+                    <v-list-item v-if="checkItemAction(showEdit,row,'update')"
                                  @click="openDetail(row.id,true)">
                       <v-list-item-title>编辑</v-list-item-title>
                     </v-list-item>
@@ -1253,7 +1253,7 @@ defineExpose({
 
       <v-card class="h-100x" flat>
         <v-card-title class="movable  d-flex justify-space-between align-center border-b">
-          <div class="card-title">{{ title || $route.meta.title }}</div>
+          <div class="card-title">{{ (title || $route.meta.title).replace(/列表$/, '') }}</div>
           <div v-if="pageModel === 'list'">
             <v-btn icon @click="dialogFullscreen=!dialogFullscreen">
               <v-icon :icon="dialogFullscreen ? 'mdi-fullscreen-exit' : 'mdi-fullscreen'"></v-icon>
@@ -1266,12 +1266,12 @@ defineExpose({
         </v-card-title>
         <v-card-text class="overflow-y-auto" style="padding: 16px 24px 24px">
           <slot name="form_description"></slot>
-          <v-form ref="formRef" :readonly="!checkItemAction(showEdit,editedItem,'edit')"
+          <v-form ref="formRef" :readonly="!checkItemAction(showEdit,editedItem,editedItem?.id ? 'update' : 'create')"
                   :class="!checkItemAction(showEdit,editedItem,'edit') ? 'readonly-form' : ''">
             <v-row align="end">
               <template v-if="!editedItem.id && projectProps.edit && !appStore.defaultProject?.id">
                 <v-col cols="12">
-                  <AppTableSelect v-model:show="filterProjectSelectDialog"
+                  <AppTableSelect v-model:show="projectSelectDialog"
 
                                   v-bind="projectTable"
                                   key="field"
@@ -1311,7 +1311,7 @@ defineExpose({
           <slot name="form_actions" :item="editedItem">
             <v-spacer/>
             <slot name="form_action" :item="editedItem"></slot>
-            <template v-if="(checkItemAction(showEdit,editedItem,'edit') && editing) || (['new','edit'].includes(route.params.action))">
+            <template v-if="(checkItemAction(showEdit,editedItem,editedItem?.id ? 'update' : 'create') && editing) || (['new','edit'].includes(route.params.action))">
               <v-btn class="mr-1" color="warning" variant="tonal" @click="reset">
                 重置
               </v-btn>
