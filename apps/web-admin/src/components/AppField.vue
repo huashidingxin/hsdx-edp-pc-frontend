@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import {isEqual} from 'lodash';
 import {onMounted, ref, shallowRef, watch} from 'vue';
 
 import {cloneDeep, debounce} from 'lodash';
@@ -18,6 +19,7 @@ import AppEditor from '#/components/AppEditor'
 import Resource from "#/api/resource";
 import AppTreeSelect from "#/components/AppTreeSelect.vue";
 import {useAccess} from "@vben/access";
+import {isObject} from "lodash-es";
 const { hasAccessByCodes,hasAccessByRoles } = useAccess();
 
 /**
@@ -309,14 +311,16 @@ function reset() {
 
 
 watch(value, (newVal) => {
-  emit('update:model-value', formatter(newVal));
+  const formattedValue = formatter(newVal);
+  if (!isEqual(formattedValue, props.modelValue)) {
+    emit('update:model-value', formattedValue);
+  }
 });
 
 watch(
   () => props.modelValue,
   (newVal) => {
     value.value = newVal;
-
   },
   {immediate: true},
 );
