@@ -333,7 +333,12 @@ function formatRule(e, type) {
     switch (e.type) {
       case 'required':
         if (type !== 'switch' && !isNumeric) {
-          _rule = (v => !!v || errMsg)
+          _rule = (v => {
+            if (v == null) return errMsg;
+            if (Array.isArray(v)) return v.length > 0 || errMsg;
+            if (typeof v === 'string') return v.trim().length > 0 || errMsg;
+            return !!v || errMsg;
+          })
         } else {
           _rule = (v => v !== undefined && v !== null || errMsg)
         }
