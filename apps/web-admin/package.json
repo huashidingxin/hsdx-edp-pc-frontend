@@ -2,7 +2,7 @@
   "name": "web-admin",
   "private": true,
   "type": "module",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "main": "../electron/main.cjs",
   "scripts": {
     "dev": "vite",
@@ -86,7 +86,7 @@
     "vue-router": "catalog:",
     "vue-ueditor-wrap": "^2.5.6",
     "vuedraggable": "^4.1.0",
-    "vuetify": "^3.9.3",
+    "vuetify": "^3.12.1",
     "vxe-pc-ui": "^4.3.48",
     "vxe-table": "^4.9.35",
     "xe-utils": "^3.7.0",
