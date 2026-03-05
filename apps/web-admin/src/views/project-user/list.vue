@@ -35,7 +35,7 @@ const fields = ref([
     col: 12,
     label: '请选择成员',
     attrs:{
-      itemTitle:'staff_name',
+      itemTitle:'name',
       multiple:true,
       returnObject:true,
       closableChips:true
@@ -47,8 +47,8 @@ const fields = ref([
         bind: (e: any) => {
           return {
             ...e.props,
-            prependAvatar: e.item.raw.user?.avatar,
-            text: e.item.raw.staff_name || '',
+            prependAvatar: e.item.raw.avatar,
+            text: e.item.raw.name || '',
           };
         },
       },
@@ -58,8 +58,8 @@ const fields = ref([
         bind: (e: any) => {
           return {
             ...e.props,
-            prependAvatar: e.item.raw.user?.avatar,
-            text: e.item.raw.staff_name,
+            prependAvatar: e.item.raw.avatar,
+            text: e.item.raw.name,
             // subtitle: e.item.raw.remarks,
           };
         },
@@ -112,16 +112,16 @@ const filters = ref([
     label: '手机号',
   },
   {
-    field:'leave_status',
+    field:'statuses',
     type: 'select',
     col: 3,
     label: '状态',
     attrs:{
       items:[
-        {id:0,name:'在岗'},
-        {id:1,name:'请假'},
-        {id:2,name:'借调'},
-        {id:3,name:'撤离'},
+        {id:1,name:'在岗'},
+        {id:2,name:'请假'},
+        {id:3,name:'借调'},
+        {id:4,name:'撤离'},
       ],
       multiple:true
     }
@@ -239,17 +239,18 @@ const excludeFields = computed(()=>{
 
 const dialogType = ref('level')
 
-const teamUsers = ref([])
+const projectUsers = ref([])
 
 watch(()=>editingItem.value?.project_id,async (newProjectId)=>{
   if(newProjectId){
     const users = await getProjectUsers(newProjectId)
     editingItem.value.users = users.map((e)=>{
       return {
-        ...e.staff,
+        ...e.user,
         user:e.user,
         joining_date:e.joining_date,
-        roles:e.roles
+        roles:e.roles,
+        leave:e.leave
       }
     })
   }
@@ -259,7 +260,7 @@ watch(()=>editingItem.value?.project_id,async (newProjectId)=>{
 async function getProjectUsers(projectId) {
   try{
     const api = new Resource('project-users')
-    const {data} = await api.list({project_id:projectId,per_page:'all'})
+    const {data} = await api.list({project_id:projectId,per_page:'all',statuses:[1,2,3]})
     return data
   }catch(e) {
     console.log(e)
@@ -268,7 +269,8 @@ async function getProjectUsers(projectId) {
 
 const userOptions = ref({
   columns:[
-    {field:'staff_name',title:'成员',width:300},
+    {field:'name',title:'成员',width:120},
+    // {field:'status',title:'状态',slots:{default:'default_status'}},
     {field:'roles',title:'角色',minWidth: 300},
     {field:'joining_date',title:'加入时间',width: 300},
   ],
@@ -301,7 +303,11 @@ function showDetail() {
     editingItem.value.project_id = appStore.defaultProject.id
   }
 }
-
+function dialogChange(status) {
+  if(!status) {
+    editingItem.value = {}
+  }
+}
 
 onBeforeMount(()=>{
   getRoles()
@@ -326,6 +332,7 @@ onBeforeMount(()=>{
     permission-name="project_user"
     create-open-type="drawer"
     @show-detail="showDetail"
+    @dialog-change="dialogChange"
   >
     <template #action="{data}">
       <v-list-item v-access:code="['project_user.update']" v-if="userStore.userInfo.id != data.user_id || true" @click="toggleLeave(data)">
@@ -333,7 +340,7 @@ onBeforeMount(()=>{
       </v-list-item>
     </template>
     <template  #field_staff_section>
-      <v-alert v-if="editingItem.id > 0">
+      <v-alert v-if="editingItem?.id > 0">
         <div>{{editingItem.user?.name}}</div>
         <div>{{editingItem.user?.email}}</div>
         <div>{{editingItem.user?.mobile}}</div>
@@ -348,6 +355,9 @@ onBeforeMount(()=>{
       >
         <template #header-left>
           成员明细
+        </template>
+        <template #default_status="{row}">
+          <v-chip :color="row.leave?.status === 'active' ? 'error' : 'success'" size="small" label>{{row.leave?.status === 'active' ? row.leave.type_label : '在岗'}}</v-chip>
         </template>
       </AppList>
     </template>
