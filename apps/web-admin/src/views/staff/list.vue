@@ -118,7 +118,8 @@ const fields = ref([
     type: 'slot',
     col: 3,
     label: '职位',
-    rules: [v => !!v || '请选择职位'],
+    required:true,
+    rules: [v => !!v && v.length > 0 || '请选择职位'],
     updateSearch:{
       apiUrl:'positions',
       params:{
@@ -185,6 +186,12 @@ const filters = ref([
     type: 'text',
     col: 3,
     label: '姓名',
+  },
+  {
+    field:'username',
+    type: 'text',
+    col: 3,
+    label: '用户名',
   },
   {
     field: 'mobile',
@@ -339,15 +346,17 @@ onBeforeMount(()=>{
       </v-list-item>
     </template>
     <template #field_position_id>
-      <v-autocomplete v-model="editingItem.position_id" label="职位" :items="positionItems" item-title="name" item-value="id" clearable>
-        <template v-slot:item="{ props, item }">
-          <v-list-item
-            v-bind="props"
-            :subtitle="item.raw.department?.name"
-            :title="item.raw.name"
-          ></v-list-item>
-        </template>
-      </v-autocomplete>
+      <div class="required-field">
+        <v-autocomplete v-model="editingItem.position_id" label="职位" :items="positionItems" item-title="name" item-value="id" clearable :rules="[v=>!!v || '请选择职位']">
+          <template v-slot:item="{ props, item }">
+            <v-list-item
+              v-bind="props"
+              :subtitle="item.raw.department?.name"
+              :title="item.raw.name"
+            ></v-list-item>
+          </template>
+        </v-autocomplete>
+      </div>
     </template>
   </AppTable>
 </template>
