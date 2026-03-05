@@ -7,7 +7,7 @@ const stateRender = {
   render:({row})=>{
     const colors = {1:'primary',2:'success',3:'error'}
     return h(VChip,{
-      text:row.state_desc,
+      text:row.state_label,
       color:colors[row.state],
       label:true,
       size:'small'
@@ -16,10 +16,10 @@ const stateRender = {
 }
 const options = ref({
   columns:[
-    {field:'staff.staff_name',title:'姓名',width:200,fixed:'left'},
-    {field:'staff.staff_mobile',title:'手机号',width:200},
+    {field:'user.name',title:'姓名',width:200,fixed:'left'},
+    {field:'user.mobile',title:'手机号',width:200},
     {field:'reason',title:'原因',minWidth:200},
-    {field:'state_desc',title:'状态',width:200,cellRender:stateRender},
+    {field:'state_label',title:'状态',width:200,cellRender:stateRender},
     {field:'created_at',title:'创建时间',width:200},
   ],
   data:[]
@@ -28,6 +28,7 @@ const fields = ref([
   {
     field: 'reason',
     type: 'text',
+    label: '原因',
     col: 12,
   },
   {
@@ -41,7 +42,22 @@ const filters = ref([
     field:'name',
     type: 'text',
     col: 3,
-    label: '名称',
+    label: '姓名',
+  },
+  {
+    field:'states',
+    type: 'select',
+    col: 4,
+    label: '状态',
+    attrs:{
+      multiple:true,
+      items:[
+        {id:1,name:'待审核'},
+        {id:2,name:'已加入'},
+        {id:3,name:'已拒绝'},
+      ],
+      multiple:true
+    }
   },
 ]);
 
@@ -77,9 +93,9 @@ function showAudit(e) {
   >
     <template  #form_description>
       <div v-if="editingItem.id > 0">
-        <div>{{editingItem.staff.name}}</div>
-        <div>{{editingItem.staff.email}}</div>
-        <div>{{editingItem.staff.mobile}}</div>
+        <div>{{editingItem.user.name}}</div>
+        <div>{{editingItem.user.email}}</div>
+        <div>{{editingItem.user.mobile}}</div>
       </div>
     </template>
     <template #field_audit v-if="editingItem.audit_id >0">
