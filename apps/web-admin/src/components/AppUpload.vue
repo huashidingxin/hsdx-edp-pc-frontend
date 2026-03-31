@@ -1,24 +1,26 @@
 <script setup lang="ts">
-import type { Ref } from "vue";
+import type { Ref } from 'vue';
+
+import { VueCropper } from 'vue-cropper';
+import 'vue-cropper/dist/index.css';
+
+import Compressor from 'compressorjs';
+import { debounce } from 'lodash';
+
+import { upload as uploadFile } from '#/api';
 import {
   base64ToFile,
+  blobUrlToFile,
   createObjectURL,
   formatSize,
   getInfo,
   isBase64,
   videoUrlToBlobUrl,
-  blobUrlToFile
-} from '#/utils/file.js'
-import { debounce } from "lodash";
-import 'vue-cropper/dist/index.css';
-import { VueCropper } from "vue-cropper";
-import Compressor from 'compressorjs';
-import { upload as uploadFile } from '#/api';
-import AppPdfViewer from "#/components/AppPdfViewer.vue";
+} from '#/utils/file.js';
 
 interface FileItem {
   url: string;
-  file?: File | Blob;
+  file?: Blob | File;
   [key: string]: any;
 }
 
@@ -47,11 +49,10 @@ interface CompressorOption {
   height: number;
 }
 
-const $attrs = useAttrs();
 const props = defineProps({
   modelValue: {
     default: '',
-    type: [String, Array, File] as PropType<string | File | FileItem[]>,
+    type: [String, Array, File] as PropType<File | FileItem[] | string>,
   },
   label: {
     default: '',
@@ -62,9 +63,8 @@ const props = defineProps({
     type: String,
   },
 });
-
 const emit = defineEmits(['update:model-value']);
-
+const $attrs = useAttrs();
 const $toast: any = inject('$toast');
 const $loader: any = inject('$loader');
 const $preview: any = inject('$preview');
@@ -82,16 +82,24 @@ const accepts: Record<string, string> = {
   image: 'image/*',
   video: 'video/*',
   audio: 'audio/*',
-  file: '*'
+  file: '*',
 };
 const accept: Ref<string> = ref(accepts.image);
 const fileType: Ref<string> = ref('image');
 const typeIcons = [
-  { name: 'preview', types: ['image', 'file'], value: 'mdi-magnify-plus-outline' },
+  {
+    name: 'preview',
+    types: ['image', 'file'],
+    value: 'mdi-magnify-plus-outline',
+  },
   { name: 'crop', types: ['image'], value: 'mdi-crop' },
   { name: 'play', types: ['video'], value: 'mdi-play' },
   { name: 'snapshot', types: ['video'], value: 'mdi-camera-outline' },
-  { name: 'remove', types: ['image', 'video', 'file'], value: 'mdi-delete-forever' },
+  {
+    name: 'remove',
+    types: ['image', 'video', 'file'],
+    value: 'mdi-delete-forever',
+  },
 ];
 
 // 裁剪相关
@@ -111,10 +119,10 @@ const cropperOption: Ref<CropperOption> = ref({
   autoCropHeight: 340,
   centerBox: true,
   high: true,
-  max: 99999,
+  max: 99_999,
   fixed: true,
   fixedWidth: 1920,
-  fixedHeight: 1080
+  fixedHeight: 1080,
 });
 
 // 压缩相关
@@ -126,7 +134,7 @@ const mimeTypes = [
 const compressorOption: Ref<CompressorOption> = ref({
   quality: 90,
   width: 0,
-  height: 0
+  height: 0,
 });
 const compressedFile = ref<File | null>(null);
 
@@ -139,8 +147,8 @@ const snapshotDialog = ref(false);
 const uploadProgress = ref(0);
 
 // 拖拽排序相关
-const draggedIndex = ref<number | null>(null);
-const dragOverIndex = ref<number | null>(null);
+const draggedIndex = ref<null | number>(null);
+const dragOverIndex = ref<null | number>(null);
 const isDragging = ref(false);
 
 // 初始化
@@ -148,7 +156,9 @@ function init() {
   if ($attrs.fileType) {
     fileType.value = $attrs.fileType as string;
   }
-  accept.value = $attrs.accept ? ($attrs.accept as string) : (accepts[fileType.value] || '*');
+  accept.value = $attrs.accept
+    ? ($attrs.accept as string)
+    : accepts[fileType.value] || '*';
 }
 
 // 处理文件变化
@@ -171,10 +181,14 @@ watch(files, async (newVal) => {
 });
 
 // 同步外部数据变化
-watch(() => props.modelValue, (newVal) => {
-  init();
-  setValue();
-}, { immediate: true, deep: true });
+watch(
+  () => props.modelValue,
+  (_newVal) => {
+    init();
+    setValue();
+  },
+  { immediate: true, deep: true },
+);
 
 // 设置初始值
 async function setValue() {
@@ -182,7 +196,11 @@ async function setValue() {
 
   if ($attrs.multiple) {
     _list = Array.isArray(props.modelValue) ? [...props.modelValue] : [];
-  } else if (props.modelValue && typeof props.modelValue === 'object' && !Array.isArray(props.modelValue)) {
+  } else if (
+    props.modelValue &&
+    typeof props.modelValue === 'object' &&
+    !Array.isArray(props.modelValue)
+  ) {
     _list = [props.modelValue];
   } else if (props.modelValue) {
     _list = [props.modelValue];
@@ -206,26 +224,24 @@ async function setValue() {
     } else {
       list.value.push(item);
     }
-
-
   }
 }
 
 // 更新模型值
 function updateModelValue() {
-  const arr = list.value.map(item => {
+  const arr = list.value.map((item) => {
     return item.url.startsWith('http') ? item.url : item;
   });
 
-  emit('update:model-value', $attrs.multiple ? arr : (arr[0] || null));
+  emit('update:model-value', $attrs.multiple ? arr : arr[0] || null);
   files.value = [];
 }
 
 // 拖放相关函数
-function handleDragOver(e: DragEvent) {
+function handleDragOver(_e: DragEvent) {
   // 如果正在拖拽排序，不设置拖拽上传状态
   if (isDragging.value) return;
-  
+
   dragover.value = true;
 }
 
@@ -235,10 +251,10 @@ function handleDragLeave() {
 
 function handleDrop(e: DragEvent) {
   dragover.value = false;
-  
+
   // 如果正在拖拽排序，不处理文件上传
   if (isDragging.value) return;
-  
+
   const files = e.dataTransfer?.files;
   if (files && files.length > 0) {
     handleFiles(files);
@@ -248,24 +264,27 @@ function handleDrop(e: DragEvent) {
 function fileFilter(files: File[]): File[] {
   if (accept.value === '*') return files;
 
-  return files.filter(item => {
+  return files.filter((item) => {
     const acceptTypes = accept.value.split(',');
     const [mimeType] = item.type.split('/');
     const [, extension] = item.name.split('.');
 
-    //console.log('acceptTypes',acceptTypes,extension)
-    return acceptTypes.some(type => {
+    // console.log('acceptTypes',acceptTypes,extension)
+    return acceptTypes.some((type) => {
       if (type.includes('/')) {
-        return item.type === type || (type.startsWith(mimeType) && type.includes('*'));
+        return (
+          item.type === type ||
+          (type.startsWith(mimeType) && type.includes('*'))
+        );
       }
       return `${extension}` === type;
     });
   });
 }
 
-function handleFiles(fileList: FileList | File[]) {
-  const _files = fileFilter(Array.from(fileList));
-  if (!_files.length) {
+function handleFiles(fileList: File[] | FileList) {
+  const _files = fileFilter([...fileList]);
+  if (_files.length === 0) {
     $toast.error('文件类型不匹配！');
     return;
   }
@@ -285,56 +304,62 @@ function inputChange(e: Event) {
 // 图标操作
 function iconAction(action: string, index: number) {
   switch (action) {
-    case 'preview':
-    case 'play':
-      preview(index);
-      break;
-    case 'crop':
+    case 'crop': {
       crop(index);
       break;
-    case 'snapshot':
-      snapshot(index);
+    }
+    case 'play':
+    case 'preview': {
+      preview(index);
       break;
-    case 'remove':
+    }
+    case 'remove': {
       remove(index);
       break;
+    }
+    case 'snapshot': {
+      snapshot(index);
+      break;
+    }
   }
 }
 
-const previewDialog = ref(false)
-const previewInfo = ref({})
+const previewDialog = ref(false);
+const previewInfo = ref({});
 function preview(index: number) {
   if (fileType.value === 'file') {
     if (list.value[index]?.url?.startsWith('http')) {
       const url = new URL(list.value[index].url, window.location.origin);
       const fileName = url.pathname.split('/').pop();
       const categories = {
-        word:['doc','docx'],
-        excel:['xls','xlsx'],
-        ppt:['ppt','pptx'],
-        pdf:['pdf'],
-        image:['jpg','jpeg','png','svg','bmp'],
-      }
+        word: ['doc', 'docx'],
+        cell: ['xls', 'xlsx'],
+        slide: ['ppt', 'pptx'],
+        pdf: ['pdf'],
+        image: ['jpg', 'jpeg', 'png', 'svg', 'bmp'],
+      };
       const extension = fileName.split('.').pop();
       let type = '';
-      for(let key in categories) {
-        if(categories[key].includes(extension.toLowerCase())) {
+      for (const key in categories) {
+        if (categories[key].includes(extension.toLowerCase())) {
           type = key;
           break;
         }
       }
       previewInfo.value = {
-        url: ['pdf'].includes(type) ? `${import.meta.env.VITE_GLOB_URL}/file-preview?file=${list.value[index].url}` : list.value[index].url,
-        type:type,
+        url: ['pdf'].includes(type)
+          ? `${import.meta.env.VITE_GLOB_URL}/file-preview?file=${list.value[index].url}`
+          : list.value[index].url,
+        type,
 
-        extension:extension,
-      }
-      previewDialog.value = true
-      //window.open(`${import.meta.env.VITE_GLOB_URL}/file-preview?file=${list.value[index].url}`, '_blank');
+        extension,
+      };
+      previewDialog.value = true;
+      // window.open(`${import.meta.env.VITE_GLOB_URL}/file-preview?file=${list.value[index].url}`, '_blank');
     }
   } else {
     $preview.show(
-      list.value.map(item => item.url),
+      list.value.map((item) => item.url),
       index,
       fileType.value,
     );
@@ -351,11 +376,11 @@ async function setCurrent(index: number) {
   const item = list.value[index];
   fileOrgInfo.value = item.file
     ? {
-      ...item.file,
-      size: item.file.size,
-      type: item.file.type,
-      name: item.file.name,
-    }
+        ...item.file,
+        size: item.file.size,
+        type: item.file.type,
+        name: item.file.name,
+      }
     : await getInfo(item.url);
 
   fileOrgInfo.value.index = index;
@@ -382,11 +407,11 @@ function cropHandler() {
   cropper.value?.getCropBlob((data: Blob) => {
     if (!data) return;
 
-    const typeIndex = mimeTypes.findIndex(v => v.type === data.type);
+    const typeIndex = mimeTypes.findIndex((v) => v.type === data.type);
     const _file = new File(
       [data],
       `${Date.now()}.${mimeTypes[typeIndex]?.extension || 'jpg'}`,
-      { type: data.type }
+      { type: data.type },
     );
 
     compressorOption.value.width = cropperOption.value.fixedWidth;
@@ -397,14 +422,16 @@ function cropHandler() {
 
 // 压缩相关函数
 function compress(file: File) {
+  // eslint-disable-next-line no-new
   new Compressor(file, {
     quality: (compressorOption.value.quality - 1) / 100,
     width: compressorOption.value.width,
     height: compressorOption.value.height,
     success: (result: Blob | File) => {
-      compressedFile.value = result instanceof Blob
-        ? new File([result], result.name, { type: result.type })
-        : result;
+      compressedFile.value =
+        result instanceof Blob
+          ? new File([result], result.name, { type: result.type })
+          : result;
     },
     error: (err: Error) => {
       console.error(err.message);
@@ -419,7 +446,7 @@ function handleSubmit() {
   if (fileOrgInfo.value.index !== undefined && compressedFile.value) {
     list.value[fileOrgInfo.value.index] = {
       url: createObjectURL(compressedFile.value),
-      file: compressedFile.value
+      file: compressedFile.value,
     };
     updateModelValue();
   }
@@ -441,32 +468,41 @@ function takeSnapshot() {
 
     const ctx = videoCanvas.value.getContext('2d');
     if (ctx) {
-      ctx.drawImage(video.value, 0, 0, videoCanvas.value.width, videoCanvas.value.height);
+      ctx.drawImage(
+        video.value,
+        0,
+        0,
+        videoCanvas.value.width,
+        videoCanvas.value.height,
+      );
       snapshotBase64.value = videoCanvas.value.toDataURL('image/webp');
 
       try {
-        const snapshotFile = base64ToFile(snapshotBase64.value)
-        $attrs.onSnapshot?.({ field: props.fieldName, data: {file:snapshotFile,url:createObjectURL(snapshotFile)}});
-      } catch (e) {
-        console.error('Snapshot error:', e);
+        const snapshotFile = base64ToFile(snapshotBase64.value);
+        $attrs.onSnapshot?.({
+          field: props.fieldName,
+          data: { file: snapshotFile, url: createObjectURL(snapshotFile) },
+        });
+      } catch (error) {
+        console.error('Snapshot error:', error);
       }
 
       snapshotDialog.value = false;
     }
-  } catch (e) {
-    console.error('Take snapshot error:', e);
+  } catch (error) {
+    console.error('Take snapshot error:', error);
   }
 }
 
 // 拖拽排序相关函数
 function handleDragStart(e: DragEvent, index: number) {
   if (!$attrs.multiple || list.value.length <= 1) return;
-  
+
   draggedIndex.value = index;
   isDragging.value = true;
   e.dataTransfer!.effectAllowed = 'move';
   e.dataTransfer!.setData('text/html', e.target?.toString() || '');
-  
+
   // 阻止事件冒泡，防止触发父级的拖拽上传逻辑
   e.stopPropagation();
 }
@@ -481,7 +517,7 @@ function handleItemDragOver(e: DragEvent, index: number) {
   e.preventDefault();
   e.stopPropagation();
   e.dataTransfer!.dropEffect = 'move';
-  
+
   if (draggedIndex.value !== null && draggedIndex.value !== index) {
     dragOverIndex.value = index;
   }
@@ -494,23 +530,24 @@ function handleItemDragLeave() {
 function handleItemDrop(e: DragEvent, dropIndex: number) {
   e.preventDefault();
   e.stopPropagation();
-  
+
   if (draggedIndex.value === null || draggedIndex.value === dropIndex) {
     handleDragEnd();
     return;
   }
-  
+
   // 重新排列数组
   const draggedItem = list.value[draggedIndex.value];
   const newList = [...list.value];
-  
+
   // 移除被拖拽的项
   newList.splice(draggedIndex.value, 1);
-  
+
   // 在新位置插入
-  const adjustedDropIndex = draggedIndex.value < dropIndex ? dropIndex - 1 : dropIndex;
+  const adjustedDropIndex =
+    draggedIndex.value < dropIndex ? dropIndex - 1 : dropIndex;
   newList.splice(adjustedDropIndex, 0, draggedItem);
-  
+
   list.value = newList;
   updateModelValue();
   handleDragEnd();
@@ -519,10 +556,10 @@ function handleItemDrop(e: DragEvent, dropIndex: number) {
 // 上传函数
 async function upload() {
   const uploadItems = list.value
-    .filter(item => item.file && !item.url.startsWith('http'))
-    .map(item => item.file!);
+    .filter((item) => item.file && !item.url.startsWith('http'))
+    .map((item) => item.file!);
 
-  if (!uploadItems.length) return list.value;
+  if (uploadItems.length === 0) return list.value;
 
   const loader = $loader.show('上传中...');
   try {
@@ -536,7 +573,7 @@ async function upload() {
 
     const results = $attrs.multiple ? ret : [ret];
 
-    list.value = list.value.map(item => {
+    list.value = list.value.map((item) => {
       if (item.file && !item.url.startsWith('http')) {
         const result = results.shift();
         if (result) {
@@ -548,9 +585,9 @@ async function upload() {
 
     updateModelValue();
     return list.value;
-  } catch (e) {
-    console.error('Upload error:', e);
-    throw e;
+  } catch (error) {
+    console.error('Upload error:', error);
+    throw error;
   } finally {
     loader.close();
   }
@@ -566,8 +603,76 @@ function formatUrl(urlString: string): FileItem {
       size: params.get('size'),
       name: params.get('name') || url.pathname.split('/').pop(),
       category: params.get('category'),
-    }
+    },
   };
+}
+
+async function downloadFile(url) {
+  try {
+    const loader = $loader.show('正在下载...');
+
+    // 获取文件内容
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {},
+    });
+
+    if (!response.ok) {
+      throw new Error('下载失败');
+    }
+
+    // 转换为 Blob
+    const blob = await response.blob();
+
+    // 从 URL 中提取文件名
+    let fileName = 'download';
+    try {
+      const urlObj = new URL(url, window.location.origin);
+      const pathName = urlObj.pathname;
+      const nameMatch = pathName.match(/([^/]+)$/);
+      if (nameMatch && nameMatch[1]) {
+        fileName = nameMatch[1];
+      } else {
+        // 尝试从响应头获取文件名
+        const contentDisposition = response.headers.get('content-disposition');
+        if (contentDisposition) {
+          const fileNameMatch = contentDisposition.match(
+            /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/,
+          );
+          if (fileNameMatch && fileNameMatch[1]) {
+            fileName = fileNameMatch[1].replaceAll(/['"]/g, '');
+          }
+        }
+      }
+    } catch {
+      console.warn('无法提取文件名，使用默认名称');
+    }
+
+    // 创建下载链接
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = fileName;
+
+    // 添加到 DOM，触发下载，然后移除
+    document.body.append(link);
+    link.click();
+
+    // 清理
+    setTimeout(() => {
+      link.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+    }, 100);
+
+    loader.close();
+    $toast.success('下载成功');
+  } catch (error) {
+    console.error('下载失败:', error);
+    $toast.error('下载失败，请重试');
+
+    // 降级方案：使用 window.open
+    window.open(url, '_blank');
+  }
 }
 
 defineExpose({
@@ -587,9 +692,8 @@ defineExpose({
       @dragleave.prevent="handleDragLeave"
       @drop.prevent="handleDrop"
     >
-      <template v-if="['image','video'].includes(fileType)">
+      <template v-if="['image', 'video'].includes(fileType)">
         <v-row class="w-100" style="box-sizing: border-box">
-
           <v-col
             v-for="(item, index) in list"
             :key="index"
@@ -597,9 +701,9 @@ defineExpose({
             :md="$attrs.md || 2"
             :xxl="$attrs.xxl || 1"
             :class="{
-              'dragging': draggedIndex === index,
+              dragging: draggedIndex === index,
               'drag-over': dragOverIndex === index,
-              'sortable-item': $attrs.multiple && list.length > 1
+              'sortable-item': $attrs.multiple && list.length > 1,
             }"
             @dragstart="handleDragStart($event, index)"
             @dragend="handleDragEnd"
@@ -610,19 +714,22 @@ defineExpose({
             :draggable="$attrs.multiple && list.length > 1"
           >
             <v-responsive :aspect-ratio="1">
-              <div class="media-item" :class="[
-                fileType === 'image' ? '' : 'bg-black',
-                {
-                  'dragging': draggedIndex === index,
-                  'drag-over': dragOverIndex === index
-                }
-              ]">
-                <v-hover v-slot="{ isHovering, props }">
+              <div
+                class="media-item"
+                :class="[
+                  fileType === 'image' ? '' : 'bg-black',
+                  {
+                    dragging: draggedIndex === index,
+                    'drag-over': dragOverIndex === index,
+                  },
+                ]"
+              >
+                <v-hover v-slot="{ isHovering, props: hoverProps }">
                   <v-card
                     :class="{ 'on-hover': isHovering }"
                     :elevation="isHovering ? 12 : 2"
                     class="w-100 position-relative"
-                    v-bind="props"
+                    v-bind="hoverProps"
                   >
                     <v-img
                       v-if="fileType === 'image'"
@@ -631,23 +738,30 @@ defineExpose({
                       aspect-ratio="1"
                       cover
                       rounded
-                    ></v-img>
-                    <video v-else :src="item.url" ></video>
-                    <div class="d-flex align-center position-absolute w-100 h-100 top-0 justify-center btn-wrap">
+                    />
+                    <video v-else :src="item.url"></video>
+                    <div
+                      class="d-flex align-center position-absolute w-100 h-100 btn-wrap top-0 justify-center"
+                    >
                       <!-- 拖拽指示器 -->
-                      <div v-if="$attrs.multiple && list.length > 1" class="drag-handle">
-                        <v-icon 
-                          size="20" 
-                          color="white" 
+                      <div
+                        v-if="$attrs.multiple && list.length > 1"
+                        class="drag-handle"
+                      >
+                        <v-icon
+                          size="20"
+                          color="white"
                           class="opacity-70"
-                          style="cursor: grab;"
+                          style="cursor: grab"
                         >
                           mdi-drag-horizontal-variant
                         </v-icon>
                       </div>
                       <div class="align-self-center flex">
                         <v-btn
-                          v-for="(icon, i) in typeIcons.filter(icon => icon.types.includes(fileType))"
+                          v-for="(icon, i) in typeIcons.filter((icon) =>
+                            icon.types.includes(fileType),
+                          )"
                           :key="i"
                           :class="{ 'show-btns': isHovering }"
                           color="transparent"
@@ -663,13 +777,16 @@ defineExpose({
               </div>
             </v-responsive>
           </v-col>
-          <v-col :cols="$attrs.cols || 4"
-                 :md="$attrs.md || 2"
-                 :xxl="$attrs.xxl || 1" v-if="!list.length || $attrs.multiple">
+          <v-col
+            :cols="$attrs.cols || 4"
+            :md="$attrs.md || 2"
+            :xxl="$attrs.xxl || 1"
+            v-if="list.length === 0 || $attrs.multiple"
+          >
             <v-responsive :aspect-ratio="1">
               <div class="media-item add" @click="choose">
                 <v-icon size="24">mdi-plus</v-icon>
-                <div class="mt-1 text-truncate">点击或拖拽上传</div>
+                <div class="text-truncate mt-1">点击或拖拽上传</div>
               </div>
             </v-responsive>
           </v-col>
@@ -680,7 +797,7 @@ defineExpose({
           <v-icon>mdi-upload</v-icon>
           <div>点击或拖拽上传</div>
         </v-btn>
-        <div class="py-3 bg-transparent">
+        <div class="bg-transparent py-3">
           <v-list class="bg-transparent">
             <v-list-item
               v-for="(item, index) in list"
@@ -689,14 +806,14 @@ defineExpose({
               :subtitle="item.file?.size ? formatSize(item.file?.size) : ''"
               :title="item.file?.name || '文件'"
             >
-              <template v-slot:append>
+              <template #append>
                 <v-btn
                   icon="mdi-close-circle"
                   size="small"
                   variant="text"
                   color="error"
                   @click.stop="remove(index)"
-                ></v-btn>
+                />
               </template>
             </v-list-item>
           </v-list>
@@ -717,22 +834,27 @@ defineExpose({
     <v-dialog v-model="snapshotDialog" max-width="50vw">
       <v-card>
         <v-card-title>
-          <div class="flex justify-space-between align-center">
+          <div class="justify-space-between align-center flex">
             截取视频帧
-            <v-btn icon="mdi-close" @click="snapshotDialog = false"></v-btn>
+            <v-btn icon="mdi-close" @click="snapshotDialog = false" />
           </div>
         </v-card-title>
-        <v-card-text style="height: 50vh" class="flex justify-center bg-black py-0">
+        <v-card-text
+          style="height: 50vh"
+          class="flex justify-center bg-black py-0"
+        >
           <video
             ref="video"
             :src="videoUrl"
             controls
             style="max-width: 100%; max-height: 100%"
           ></video>
-          <canvas ref="videoCanvas" style="display: none;"></canvas>
+          <canvas ref="videoCanvas" style="display: none"></canvas>
         </v-card-text>
         <v-card-actions class="flex justify-center">
-          <v-btn color="primary" variant="flat" @click="takeSnapshot">截取当前帧</v-btn>
+          <v-btn color="primary" variant="flat" @click="takeSnapshot">
+            截取当前帧
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -741,9 +863,9 @@ defineExpose({
     <v-dialog v-model="cropperDialog" max-width="50vw">
       <v-card>
         <v-card-title>
-          <div class="flex justify-space-between align-center">
+          <div class="justify-space-between align-center flex">
             图片裁剪压缩
-            <v-btn icon="mdi-close" @click="cropperDialog = false"></v-btn>
+            <v-btn icon="mdi-close" @click="cropperDialog = false" />
           </div>
         </v-card-title>
         <v-card-text>
@@ -757,7 +879,10 @@ defineExpose({
               :info="true"
               :full="cropperOption.full"
               :fixed="cropperOption.fixed"
-              :fixed-number="[cropperOption.fixedWidth, cropperOption.fixedHeight]"
+              :fixed-number="[
+                cropperOption.fixedWidth,
+                cropperOption.fixedHeight,
+              ]"
               :can-move="cropperOption.canMove"
               :can-move-box="cropperOption.canMoveBox"
               :fixed-box="cropperOption.fixedBox"
@@ -770,19 +895,27 @@ defineExpose({
               @real-time="realTime"
               :max-img-size="cropperOption.max"
               mode="contain"
-            ></VueCropper>
+            />
           </div>
 
           <div class="mt-5">
             <v-alert v-if="fileOrgInfo" class="mb-2">
               <span class="font-weight-bold me-3">处理前</span>
-              <span>分辨率：{{ fileOrgInfo.width }} * {{ fileOrgInfo.height }}</span>
+              <span
+                >分辨率：{{ fileOrgInfo.width }} *
+                {{ fileOrgInfo.height }}</span
+              >
               <span class="mx-2">大小：{{ formatSize(fileOrgInfo.size) }}</span>
 
               <div v-if="compressedFile" class="text-red">
                 <span class="font-weight-bold me-3">处理后</span>
-                <span>分辨率：{{ cropperOption.fixedWidth }} * {{ cropperOption.fixedHeight }}</span>
-                <span class="mx-2">大小：{{ formatSize(compressedFile.size) }}</span>
+                <span
+                  >分辨率：{{ cropperOption.fixedWidth }} *
+                  {{ cropperOption.fixedHeight }}</span
+                >
+                <span class="mx-2"
+                  >大小：{{ formatSize(compressedFile.size) }}</span
+                >
               </div>
             </v-alert>
             <v-row>
@@ -793,14 +926,14 @@ defineExpose({
                   :items="mimeTypes"
                   item-value="type"
                   item-title="extension"
-                ></v-select>
+                />
               </v-col>
               <v-col cols="4">
                 <v-switch
                   label="固定宽高比"
                   color="primary"
                   v-model="cropperOption.fixed"
-                ></v-switch>
+                />
               </v-col>
               <template v-if="cropperOption.fixed">
                 <v-col cols="2">
@@ -808,14 +941,14 @@ defineExpose({
                     label="宽度"
                     v-model="cropperOption.fixedWidth"
                     type="number"
-                  ></v-text-field>
+                  />
                 </v-col>
                 <v-col cols="2">
                   <v-text-field
                     label="高度"
                     v-model="cropperOption.fixedHeight"
                     type="number"
-                  ></v-text-field>
+                  />
                 </v-col>
               </template>
 
@@ -827,39 +960,85 @@ defineExpose({
                   :min="1"
                   thumb-label
                   color="primary"
-                ></v-slider>
+                />
               </v-col>
             </v-row>
           </div>
         </v-card-text>
         <v-card-actions>
-          <v-btn variant="flat" color="primary" @click="handleSubmit">确定处理</v-btn>
-          <v-btn variant="flat" color="warning" @click="cropperDialog = false">取消</v-btn>
+          <v-btn variant="flat" color="primary" @click="handleSubmit">
+            确定处理
+          </v-btn>
+          <v-btn variant="flat" color="warning" @click="cropperDialog = false">
+            取消
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
 
     <v-dialog v-model="previewDialog" fullscreen>
-      <v-card>
+      <v-card class="d-flex flex-column h-100">
         <v-card-title class="">
-          <div class="flex justify-space-between align-center">
+          <div class="justify-space-between align-center flex">
             文件预览
-            <v-btn icon="mdi-close" @click="previewDialog = false"></v-btn>
+            <v-btn icon="mdi-close" @click="previewDialog = false" />
           </div>
         </v-card-title>
-        <v-card-text>
-          <div v-if="previewInfo.type == 'image'">
-            <v-img :src="previewInfo.url" ></v-img>
+        <v-card-text
+          class="flex-1 overflow-auto"
+          style="max-height: calc(100vh - 120px)"
+        >
+          <div v-if="previewInfo.type === 'image'">
+            <v-img
+              :src="previewInfo.url"
+              class="w-100"
+              style="max-width: 100%"
+            />
           </div>
-          <iframe v-else-if="previewInfo.type == 'pdf'" :src="previewInfo.url" width="100%" height="100%"></iframe>
-          <div v-else-if="['word','excel','ppt','pdf'].includes(previewInfo.type)" style="height: 100%">
-
+          <iframe
+            v-else-if="previewInfo.type === 'pdf'"
+            :src="previewInfo.url"
+            width="100%"
+            height="100%"
+          ></iframe>
+          <div
+            v-else-if="
+              ['word', 'cell', 'slide', 'pdf'].includes(previewInfo.type)
+            "
+            style="height: 100%"
+          >
             <AppOffice
               :document-type="previewInfo.type"
-              :document="{url:previewInfo.url}"
+              :document="{ url: previewInfo.url }"
               callback-url="https://www.cpzhongzhou.com/api/v1/mock-save"
-            ></AppOffice>
+            />
           </div>
+          <div v-else>
+            <v-alert>
+              当前文件不支持在线预览，请下载后在本地打开
+              <template #append>
+                <v-btn
+                  color="primary"
+                  variant="flat"
+                  @click="downloadFile(previewInfo.url)"
+                >
+                  下载
+                  <v-icon>mdi-download</v-icon>
+                </v-btn>
+              </template>
+            </v-alert>
+          </div>
+
+          <v-card-actions>
+            <v-btn
+              color="primary"
+              variant="flat"
+              @click="downloadFile(previewInfo.url)"
+            >
+              下载
+              <v-icon>mdi-download</v-icon>
+            </v-btn>
+          </v-card-actions>
         </v-card-text>
       </v-card>
     </v-dialog>
@@ -868,15 +1047,15 @@ defineExpose({
 
 <style scoped>
 .media-item {
-  height: 100%;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
+  height: 100%;
+  cursor: pointer;
   border: 1px dashed #ddd;
   border-radius: 4px;
-  cursor: pointer;
   transition: all 0.3s ease;
-  position: relative;
 }
 
 .media-item.add {
@@ -885,21 +1064,21 @@ defineExpose({
 }
 
 .media-item.add:hover {
-  border-color: #1976d2;
   color: #1976d2;
+  border-color: #1976d2;
 }
 
 /* 拖拽状态样式 */
 .media-item.dragging {
+  border: 2px solid #1976d2;
+  box-shadow: 0 4px 12px rgb(25 118 210 / 30%);
   opacity: 0.5;
   transform: scale(0.95);
-  border: 2px solid #1976d2;
-  box-shadow: 0 4px 12px rgba(25, 118, 210, 0.3);
 }
 
 .media-item.drag-over {
+  background: rgb(25 118 210 / 10%);
   border: 2px dashed #1976d2;
-  background: rgba(25, 118, 210, 0.1);
   transform: scale(1.02);
 }
 
@@ -912,10 +1091,10 @@ defineExpose({
 }
 
 .btn-wrap {
+  gap: 8px;
+  background: rgb(0 0 0 / 50%);
   opacity: 0;
   transition: opacity 0.3s;
-  background: rgba(0, 0, 0, 0.5);
-  gap: 8px;
 }
 
 .btn-wrap:hover {
@@ -923,7 +1102,7 @@ defineExpose({
 }
 
 .show-btns {
-  color: rgba(255, 255, 255, 1) !important;
+  color: rgb(255 255 255 / 100%) !important;
 }
 
 .drag-handle {
@@ -931,9 +1110,9 @@ defineExpose({
   top: 8px;
   left: 8px;
   z-index: 10;
-  background: rgba(0, 0, 0, 0.6);
-  border-radius: 4px;
   padding: 4px;
+  background: rgb(0 0 0 / 60%);
+  border-radius: 4px;
   opacity: 0;
   transition: opacity 0.3s;
 }
