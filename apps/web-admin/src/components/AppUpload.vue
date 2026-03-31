@@ -857,7 +857,7 @@ defineExpose({
             <AppOffice
               :document-type="previewInfo.type"
               :document="{url:previewInfo.url}"
-              callback-url="https://dev2.cpzhongzhou.com/api/v1/mock-save"
+              callback-url="https://www.cpzhongzhou.com/api/v1/mock-save"
             ></AppOffice>
           </div>
         </v-card-text>
