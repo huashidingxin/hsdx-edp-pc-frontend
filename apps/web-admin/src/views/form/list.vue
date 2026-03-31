@@ -111,7 +111,6 @@ const editingItem = ref({})
         <FormField :form-id="editingItem.id"></FormField>
       </div>
       <div class="my-2">
-
         <FormTemplate :form-id="editingItem.id" :type="editingItem.type" :form-fields="editingItem.fields"></FormTemplate>
       </div>
     </template>
