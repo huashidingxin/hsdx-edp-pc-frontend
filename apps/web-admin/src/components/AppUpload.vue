@@ -354,6 +354,10 @@ function preview(index: number) {
 
         extension,
       };
+      if(type == 'pdf') {
+        window.open(list.value[index].url, '_blank');
+        return
+      }
       previewDialog.value = true;
       // window.open(`${import.meta.env.VITE_GLOB_URL}/file-preview?file=${list.value[index].url}`, '_blank');
     }
