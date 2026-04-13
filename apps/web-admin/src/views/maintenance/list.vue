@@ -11,7 +11,7 @@ const props = defineProps({
 })
 const options = ref({
   columns:[
-    {field:'type_desc',title:'类型',fixed:'left',width:300},
+    {field:'type_label',title:'类型',fixed:'left',width:300},
     {field:'start_end_time',title:'起止时间',slots:{default:'default_start_end_time'}},
     {field:'created_at',title:'创建时间'},
   ],
@@ -19,10 +19,16 @@ const options = ref({
 });
 const filters = ref([
   {
-    field:'name',
-    type: 'text',
+    field:'type',
+    type: 'select',
     col: 3,
-    label: '名称',
+    label: '类型',
+    attrs:{
+      items:[
+        {id:1,name:'保养'},
+        {id:2,name:'维修'},
+      ]
+    }
   },
 ]);
 
