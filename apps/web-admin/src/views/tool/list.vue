@@ -6,7 +6,7 @@ const options = ref({
     {field:'code',title:'编号'},
     {field:'project.name',title:'项目'},
     {field:'category.name',title:'分类'},
-    {field:'state_desc',title:'状态'},
+    {field:'state_label',title:'状态'},
     {field:'calibration_days',title:'检定周期'},
     {field:'last_calibration_time',title:'最后检定时间'},
     {field:'created_at',title:'创建时间'},
@@ -19,6 +19,21 @@ const filters = ref([
     type: 'text',
     col: 3,
     label: '名称',
+  },
+  {
+    field:'states',
+    type: 'select',
+    col: 3,
+    label: '状态',
+    attrs:{
+      multiple:true,
+      items:[
+        {id:1,name:'正常'},
+        {id:2,name:'待检定'},
+        {id:3,name:'损坏'},
+        {id:4,name:'报废'},
+      ]
+    }
   },
 ]);
 const fields = ref([
