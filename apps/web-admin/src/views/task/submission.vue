@@ -136,11 +136,12 @@ const filters = ref([
     }
   },
   {
-    field: 'submission_timeout',
+    field: 'submission_timeouts',
     type: 'select',
     col: 2,
     label: '超时状态',
     attrs: {
+      multiple: true,
       items: [
         {id: 0, name: '正常'},
         {id: 1, name: '超时'},
