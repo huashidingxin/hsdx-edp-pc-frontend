@@ -174,8 +174,9 @@ async function formatFields(arr) {
     }
     if (item.type === 'file') {
       _type = 'file';
-      _attrs.limit = 1;
+      _attrs.limit = 50;
       _attrs.fileType = 'file';
+      _attrs.multiple = true
     } else if (item.type === 'images') {
       _type = 'file';
       _attrs.fileType = 'image';
