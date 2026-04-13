@@ -54,6 +54,9 @@ const fields = ref([
     type: 'number',
     col: 4,
     label: '检定周期',
+    attrs:{
+      suffix:'天'
+    },
     rules:[v=>!!v || '请输入检定周期']
   },
   {
@@ -61,6 +64,7 @@ const fields = ref([
     type: 'select',
     col: 4,
     label: '状态',
+    default:1,
     attrs:{
       items:[
         {id:1,name:'正常'},
