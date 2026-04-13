@@ -407,12 +407,13 @@ const search = (keyword, treeOptions = {children: 'children'}, searchProps = ['n
 }
 
 const isDBClick = ref(false)
+const sortBy = ref([])
 
 const gridEvents: VxeGridListeners = {
   pageChange({pageSize, currentPage}) {
     gridOptions.pagerConfig.currentPage = currentPage
     gridOptions.pagerConfig.pageSize = pageSize
-    handlePageData()
+    handlePageData(sortBy.value)
   },
   cellClick({row, column}) {
     //console.log(`单击行：${row.id} 单击列：${column.title}`)
@@ -431,13 +432,13 @@ const gridEvents: VxeGridListeners = {
     // openDetail(row[props.idKey || 'id'], false)
   },
   sortChange({sortList}) {
-    const sortBy = sortList.map((e) => {
+    sortBy.value = sortList.map((e) => {
       return {
         key: e.field,
         order: e.order
       }
     })
-    handlePageData(sortBy)
+    handlePageData(sortBy.value)
   },
   checkboxAll(e) {
     emit('update:selected', e.records);
