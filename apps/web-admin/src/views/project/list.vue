@@ -18,6 +18,7 @@ const options = ref({
     }
   },
   columns:[
+    {field:'id',title:'ID',fixed:'left',width:'200px',sortable:true,treeNode: true,},
     {field:'name',title:'名称',fixed:'left',width:'300px',sortable:true,treeNode: true,},
     {field:'code',title:'编号',sortable:true},
     {field:'category.name',title:'分类',sortable:true},
