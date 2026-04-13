@@ -277,7 +277,7 @@ function fileFilter(files: File[]): File[] {
           (type.startsWith(mimeType) && type.includes('*'))
         );
       }
-      return `${extension}` === type;
+      return `.${extension}` === type;
     });
   });
 }
