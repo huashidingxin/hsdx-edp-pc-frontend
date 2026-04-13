@@ -214,6 +214,9 @@ function loadFence(coordinates) {
 const project = ref(null)
 
 async function getProject(projectId) {
+  if(!projectId) {
+    return
+  }
   try {
     const api = new Resource('projects')
     const {data} = await api.get(projectId)
@@ -308,6 +311,7 @@ async function importSubmit() {
       },
     })
     $toast.success('导入成功');
+    importDialog.value = false
   }catch(e) {
     console.log(e)
   }
