@@ -5,7 +5,7 @@ import { useUserStore } from '@vben/stores';
 import Resource from '@/api/resource';
 import { cloneDeep } from 'lodash';
 
-import { useAppStore, useProjectStore } from '#/store';
+import { useAppStore } from '#/store';
 import { getTree } from '#/utils/index.js';
 
 const props = defineProps({
