@@ -71,7 +71,6 @@ const fields = ref([
     type: 'text',
     col: 4,
     label: 'Email',
-    rules: [v => !!v && validEmail(v) || 'Email格式不正确']
   },
   {
     field: 'avatar',
@@ -118,8 +117,8 @@ const fields = ref([
     type: 'slot',
     col: 3,
     label: '职位',
-    required:true,
-    rules: [v => !!v && v.length > 0 || '请选择职位'],
+    // required:true,
+    // rules: [v => !!v && v.length > 0 || '请选择职位'],
     updateSearch:{
       apiUrl:'positions',
       params:{
@@ -346,7 +345,7 @@ onBeforeMount(()=>{
       </v-list-item>
     </template>
     <template #field_position_id>
-      <div class="required-field">
+      <div class="">
         <v-autocomplete v-model="editingItem.position_id" label="职位" :items="positionItems" item-title="name" item-value="id" clearable :rules="[v=>!!v || '请选择职位']">
           <template v-slot:item="{ props, item }">
             <v-list-item
