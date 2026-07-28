@@ -186,12 +186,12 @@ async function loadStakeholders(projectId=null) {
   }
 }
 
-watch(()=>filterData.value.project_id,async (newFilterProjectId)=>{
-  const data = await loadStakeholders(newFilterProjectId)
-  filters.value.find(v=>v.field=='stakeholder_id').attrs.items = data
+const projectId = computed(()=>{
+  return filterData.value.project_id || appStore.defaultProjet?.id || editingItem.value.project_id
+
 })
 
-watch(()=>editingItem.value.project_id,async (newFilterProjectId)=>{
+watch(()=>projectId.value,async (newFilterProjectId)=>{
   const data = await loadStakeholders(newFilterProjectId || appStore.defaultProjet?.id)
   fields.value.find(v=>v.field=='stakeholder_id').attrs.items = data
 },{immediate:true})
