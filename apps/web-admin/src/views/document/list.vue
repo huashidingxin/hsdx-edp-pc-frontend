@@ -12,7 +12,7 @@ import SubmissionEdit from '../submission/edit.vue';
 
 const props = defineProps({
   type: {
-    default: 'diary',
+    default: 'supervision_log',
     type: String,
   },
 });
