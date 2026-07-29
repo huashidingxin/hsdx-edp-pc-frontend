@@ -1,506 +1,308 @@
 <template>
-  <div class="main-container">
-    <div
-      class="editor-container editor-container_classic-editor editor-container_include-style editor-container_include-word-count"
-      ref="editorContainerElement"
-    >
-      <div class="editor-container__editor">
-        <div ref="editorElement">
-          <ckeditor v-if="editor && config" v-model="content" :editor="editor" :config="config" @ready="onReady" />
-        </div>
-      </div>
-      <div class="editor_container__word-count" ref="editorWordCountElement"></div>
+  <div class="app-print-template">
+    <div class="d-flex flex-wrap align-center gap-1 mb-2 pt-toolbar">
+      <v-btn
+        size="x-small"
+        variant="outlined"
+        :disabled="!editor"
+        :color="isActive('bold') ? 'primary' : undefined"
+        @click="editor?.chain().focus().toggleBold().run()"
+        ><b>B</b></v-btn
+      >
+      <v-btn
+        size="x-small"
+        variant="outlined"
+        :disabled="!editor"
+        :color="isActive('italic') ? 'primary' : undefined"
+        @click="editor?.chain().focus().toggleItalic().run()"
+        ><i>I</i></v-btn
+      >
+      <v-btn
+        size="x-small"
+        variant="outlined"
+        :disabled="!editor"
+        :color="isActive('underline') ? 'primary' : undefined"
+        @click="editor?.chain().focus().toggleUnderline().run()"
+        ><u>U</u></v-btn
+      >
+      <v-btn
+        size="x-small"
+        variant="outlined"
+        :disabled="!editor"
+        :color="isActive('strike') ? 'primary' : undefined"
+        @click="editor?.chain().focus().toggleStrike().run()"
+        ><s>S</s></v-btn
+      >
+      <v-divider vertical />
+      <v-btn
+        size="x-small"
+        variant="outlined"
+        :disabled="!editor"
+        @click="editor?.chain().focus().toggleHeading({ level: 1 }).run()"
+        >H1</v-btn
+      >
+      <v-btn
+        size="x-small"
+        variant="outlined"
+        :disabled="!editor"
+        @click="editor?.chain().focus().toggleHeading({ level: 2 }).run()"
+        >H2</v-btn
+      >
+      <v-btn
+        size="x-small"
+        variant="outlined"
+        :disabled="!editor"
+        @click="editor?.chain().focus().toggleHeading({ level: 3 }).run()"
+        >H3</v-btn
+      >
+      <v-divider vertical />
+      <v-btn
+        size="x-small"
+        variant="outlined"
+        :disabled="!editor"
+        @click="editor?.chain().focus().toggleBulletList().run()"
+        >• 列表</v-btn
+      >
+      <v-btn
+        size="x-small"
+        variant="outlined"
+        :disabled="!editor"
+        @click="editor?.chain().focus().toggleOrderedList().run()"
+        >1. 列表</v-btn
+      >
+      <v-btn
+        size="x-small"
+        variant="outlined"
+        :disabled="!editor"
+        @click="editor?.chain().focus().setTextAlign('left').run()"
+        >左</v-btn
+      >
+      <v-btn
+        size="x-small"
+        variant="outlined"
+        :disabled="!editor"
+        @click="editor?.chain().focus().setTextAlign('center').run()"
+        >中</v-btn
+      >
+      <v-btn
+        size="x-small"
+        variant="outlined"
+        :disabled="!editor"
+        @click="editor?.chain().focus().setTextAlign('right').run()"
+        >右</v-btn
+      >
+      <v-divider vertical />
+      <v-btn
+        size="x-small"
+        variant="outlined"
+        :disabled="!editor"
+        @click="openLink"
+        >链接</v-btn
+      >
+      <v-btn
+        size="x-small"
+        variant="outlined"
+        :disabled="!editor"
+        @click="fileInput?.click()"
+        >图片</v-btn
+      >
+      <input
+        ref="fileInput"
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        @change="onFilePicked"
+      />
+      <v-btn
+        size="x-small"
+        variant="outlined"
+        :disabled="!editor"
+        @click="
+          editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
+        "
+        >表格</v-btn
+      >
+      <v-btn
+        size="x-small"
+        variant="outlined"
+        :disabled="!editor"
+        @click="editor?.chain().focus().toggleBlockquote().run()"
+        >引用</v-btn
+      >
+      <v-divider vertical />
+      <v-menu :close-on-content-click="false">
+        <template #activator="{ props: menuProps }">
+          <v-btn size="x-small" variant="outlined" v-bind="menuProps" :disabled="!editor"
+            >表单插值</v-btn
+          >
+        </template>
+        <v-sheet class="pa-2" style="max-height: 320px; overflow: auto">
+          <template v-for="model in formModels" :key="model.key">
+            <div v-if="!model.children">
+              <v-btn
+                block
+                variant="text"
+                size="small"
+                class="justify-start"
+                @click="insertPlaceholder(model.key, model.name)"
+                >{{ model.name }}
+                <code class="ml-1">{{ '{' + model.key + '}' }}</code></v-btn
+              >
+            </div>
+            <div v-else>
+              <div class="text-caption text-medium-emphasis px-2">
+                {{ model.name }}
+              </div>
+              <v-btn
+                v-for="child in model.children"
+                :key="child.key"
+                block
+                variant="text"
+                size="small"
+                class="justify-start"
+                @click="insertPlaceholder(model.key + '.' + child.key, model.name + ':' + child.name)"
+                >{{ child.name }}
+                <code class="ml-1">{{ '{' + (model.key + '.' + child.key) + '}' }}</code></v-btn
+              >
+            </div>
+          </template>
+          <div
+            v-if="!formModels.length"
+            class="text-caption pa-2 text-medium-emphasis"
+          >
+            无可用字段
+          </div>
+        </v-sheet>
+      </v-menu>
     </div>
+    <EditorContent v-if="editor" :editor="editor" class="pt-content" />
   </div>
 </template>
 
 <script setup>
-import { computed, ref, onMounted, useTemplateRef } from 'vue';
-import { Ckeditor } from '@ckeditor/ckeditor5-vue';
-import Placeholder from './plugins/placeholder.js'  // 引入自定义插件
+import { ref, watch, onBeforeUnmount } from 'vue';
+import { useEditor, EditorContent } from '@tiptap/vue-3';
 
-import {
-  ClassicEditor,
-  Alignment,
-  Autoformat,
-  AutoImage,
-  AutoLink,
-  Autosave,
-  BlockQuote,
-  Bold,
-  Bookmark,
-  Code,
-  CodeBlock,
-  Essentials,
-  FindAndReplace,
-  FontBackgroundColor,
-  FontColor,
-  FontFamily,
-  FontSize,
-  FullPage,
-  GeneralHtmlSupport,
-  Heading,
-  Highlight,
-  HorizontalLine,
-  HtmlComment,
-  HtmlEmbed,
-  ImageBlock,
-  ImageCaption,
-  ImageInline,
-  ImageInsert,
-  ImageInsertViaUrl,
-  ImageResize,
-  ImageStyle,
-  ImageTextAlternative,
-  ImageToolbar,
-  ImageUpload,
-  Indent,
-  IndentBlock,
-  Italic,
-  Link,
-  LinkImage,
-  List,
-  ListProperties,
-  Markdown,
-  MediaEmbed,
-  Mention,
-  PageBreak,
-  Paragraph,
-  PasteFromMarkdownExperimental,
-  PasteFromOffice,
-  RemoveFormat,
-  ShowBlocks,
-  SimpleUploadAdapter,
-  SourceEditing,
-  SpecialCharacters,
-  SpecialCharactersArrows,
-  SpecialCharactersCurrency,
-  SpecialCharactersEssentials,
-  SpecialCharactersLatin,
-  SpecialCharactersMathematical,
-  SpecialCharactersText,
-  Strikethrough,
-  Style,
-  Subscript,
-  Superscript,
-  Table,
-  TableCaption,
-  TableCellProperties,
-  TableColumnResize,
-  TableProperties,
-  TableToolbar,
-  TextPartLanguage,
-  TextTransformation,
-  Title,
-  TodoList,
-  Underline,
-  WordCount,
-} from 'ckeditor5';
+import { upload as uploadFile } from '#/api';
 
-
-import translations from 'ckeditor5/translations/zh-cn.js';
-
-import 'ckeditor5/ckeditor5.css';
-import './style.css';
-
-import ImageUploadAdapter from "@/components/AppEditor/adapter/ImageUploadAdapter.js";
+import { createPrintTemplateExtensions } from './extensions';
 
 const props = defineProps({
-  modelValue:{
-    type:String,
-    default:''
+  modelValue: {
+    type: String,
+    default: '',
   },
-  formModels:{
-    type:Array,
-    default:()=>([])
-  }
-})
-
-const emit = defineEmits(['update:model-value'])
-
-const content = ref('')
-
-watch(()=>props.modelValue,(newValue)=>{
-  content.value = newValue
-})
-
-watch(content,(newVal)=>{
-  console.log('WATCH CONT')
-  emit('update:model-value',newVal)
-})
-/**
- * Create a free account with a trial: https://portal.ckeditor.com/checkout?plan=free
- */
-const LICENSE_KEY = 'GPL'; // or <YOUR_LICENSE_KEY>.
-
-const editorWordCount = useTemplateRef('editorWordCountElement');
-
-const isLayoutReady = ref(false);
-
-const editor = ClassicEditor;
-
-const config = computed(() => {
-  if (!isLayoutReady.value) {
-    return null;
-  }
-
-  return {
-    toolbar: {
-      // items: [
-      //   'sourceEditing',
-      //   'showBlocks',
-      //   'findAndReplace',
-      //   'textPartLanguage',
-      //   '|',
-      //   //'heading',
-      //   'style',
-      //   '|',
-      //   'fontSize',
-      //   'fontFamily',
-      //   'fontColor',
-      //   'fontBackgroundColor',
-      //   '|',
-      //   'bold',
-      //   'italic',
-      //   'underline',
-      //   'strikethrough',
-      //   'subscript',
-      //   'superscript',
-      //   'code',
-      //   'removeFormat',
-      //   '|',
-      //   'specialCharacters',
-      //   'horizontalLine',
-      //   'pageBreak',
-      //   'link',
-      //   'bookmark',
-      //   'insertImage',
-      //   'mediaEmbed',
-      //   'insertTable',
-      //   'highlight',
-      //   'blockQuote',
-      //   'codeBlock',
-      //   'htmlEmbed',
-      //   '|',
-      //   'alignment',
-      //   '|',
-      //   'bulletedList',
-      //   'numberedList',
-      //   'todoList',
-      //   'outdent',
-      //   'indent'
-      // ],
-      items:[
-        'sourceEditing',
-        'placeholder',
-        'heading',
-        '|',
-        'bold',
-        'italic',
-        'underline',
-        'alignment',
-        '|',
-        'link',
-        'insertImage',
-        'ckbox',
-        'mediaEmbed',
-        'insertTable',
-        'blockQuote',
-        '|',
-        'bulletedList',
-        'numberedList',
-        'todoList',
-        'outdent',
-        'indent'
-      ],
-      shouldNotGroupWhenFull: false
-    },
-    plugins: [
-      Alignment,
-      Autoformat,
-      AutoImage,
-      AutoLink,
-      Autosave,
-      BlockQuote,
-      Bold,
-      Bookmark,
-      Code,
-      CodeBlock,
-      Essentials,
-      FindAndReplace,
-      FontBackgroundColor,
-      FontColor,
-      FontFamily,
-      FontSize,
-      FullPage,
-      GeneralHtmlSupport,
-      Heading,
-      Highlight,
-      HorizontalLine,
-      HtmlComment,
-      HtmlEmbed,
-      ImageBlock,
-      ImageCaption,
-      ImageInline,
-      ImageInsert,
-      ImageInsertViaUrl,
-      ImageResize,
-      ImageStyle,
-      ImageTextAlternative,
-      ImageToolbar,
-      ImageUpload,
-      Indent,
-      IndentBlock,
-      Italic,
-      Link,
-      LinkImage,
-      List,
-      ListProperties,
-      Markdown,
-      MediaEmbed,
-      Mention,
-      PageBreak,
-      Paragraph,
-      PasteFromMarkdownExperimental,
-      PasteFromOffice,
-      RemoveFormat,
-      ShowBlocks,
-      SimpleUploadAdapter,
-      SourceEditing,
-      SpecialCharacters,
-      SpecialCharactersArrows,
-      SpecialCharactersCurrency,
-      SpecialCharactersEssentials,
-      SpecialCharactersLatin,
-      SpecialCharactersMathematical,
-      SpecialCharactersText,
-      Strikethrough,
-      Style,
-      Subscript,
-      Superscript,
-      Table,
-      TableCaption,
-      TableCellProperties,
-      TableColumnResize,
-      TableProperties,
-      TableToolbar,
-      TextPartLanguage,
-      TextTransformation,
-      // Title,
-      TodoList,
-      Underline,
-      WordCount,
-      Placeholder
-    ],
-    placeholderConfig: {
-      models: props.formModels,
-    },
-    fontFamily: {
-      supportAllValues: true
-    },
-    fontSize: {
-      options: [10, 12, 14, 'default', 18, 20, 22],
-      supportAllValues: true
-    },
-    // heading: {
-    //   options: [
-    //     {
-    //       model: 'paragraph',
-    //       title: 'Paragraph',
-    //       class: 'ck-heading_paragraph'
-    //     },
-    //     {
-    //       model: 'heading1',
-    //       view: 'h1',
-    //       title: 'Heading 1',
-    //       class: 'ck-heading_heading1'
-    //     },
-    //     {
-    //       model: 'heading2',
-    //       view: 'h2',
-    //       title: 'Heading 2',
-    //       class: 'ck-heading_heading2'
-    //     },
-    //     {
-    //       model: 'heading3',
-    //       view: 'h3',
-    //       title: 'Heading 3',
-    //       class: 'ck-heading_heading3'
-    //     },
-    //     {
-    //       model: 'heading4',
-    //       view: 'h4',
-    //       title: 'Heading 4',
-    //       class: 'ck-heading_heading4'
-    //     },
-    //     {
-    //       model: 'heading5',
-    //       view: 'h5',
-    //       title: 'Heading 5',
-    //       class: 'ck-heading_heading5'
-    //     },
-    //     {
-    //       model: 'heading6',
-    //       view: 'h6',
-    //       title: 'Heading 6',
-    //       class: 'ck-heading_heading6'
-    //     }
-    //   ]
-    // },
-    htmlSupport: {
-      allow: [
-        {
-          name: /^.*$/,
-          styles: true,
-          attributes: true,
-          classes: true
-        }
-      ]
-    },
-    image: {
-      toolbar: [
-        'toggleImageCaption',
-        'imageTextAlternative',
-        '|',
-        'imageStyle:inline',
-        'imageStyle:wrapText',
-        'imageStyle:breakText',
-        '|',
-        'resizeImage'
-      ]
-    },
-    // initialData: '',
-    language: 'zh-cn',
-    licenseKey: LICENSE_KEY,
-    link: {
-      addTargetToExternalLinks: true,
-      defaultProtocol: 'https://',
-      decorators: {
-        toggleDownloadable: {
-          mode: 'manual',
-          label: 'Downloadable',
-          attributes: {
-            download: 'file'
-          }
-        }
-      }
-    },
-    // list: {
-    //   properties: {
-    //     styles: true,
-    //     startIndex: true,
-    //     reversed: true
-    //   }
-    // },
-    // mention: {
-    //   feeds: [
-    //     {
-    //       marker: '@',
-    //       feed: [
-    //         /* See: https://ckeditor.com/docs/ckeditor5/latest/features/mentions.html */
-    //       ]
-    //     }
-    //   ]
-    // },
-    // placeholder: 'Type or paste your content here!',
-    style: {
-      definitions: [
-        {
-          name: 'Article category',
-          element: 'h3',
-          classes: ['category']
-        },
-        {
-          name: 'Title',
-          element: 'h2',
-          classes: ['document-title']
-        },
-        {
-          name: 'Subtitle',
-          element: 'h3',
-          classes: ['document-subtitle']
-        },
-        {
-          name: 'Info box',
-          element: 'p',
-          classes: ['info-box']
-        },
-        {
-          name: 'Side quote',
-          element: 'blockquote',
-          classes: ['side-quote']
-        },
-        {
-          name: 'Marker',
-          element: 'span',
-          classes: ['marker']
-        },
-        {
-          name: 'Spoiler',
-          element: 'span',
-          classes: ['spoiler']
-        },
-        {
-          name: 'Code (dark)',
-          element: 'pre',
-          classes: ['fancy-code', 'fancy-code-dark']
-        },
-        {
-          name: 'Code (bright)',
-          element: 'pre',
-          classes: ['fancy-code', 'fancy-code-bright']
-        }
-      ]
-    },
-    table: {
-      contentToolbar: ['tableColumn', 'tableRow', 'mergeTableCells', 'tableProperties', 'tableCellProperties']
-    },
-    translations: [translations]
-  };
+  formModels: {
+    type: Array,
+    default: () => [],
+  },
 });
 
-onMounted(() => {
-  isLayoutReady.value = true;
+const emit = defineEmits(['update:model-value']);
 
-
-});
-
-function onReady(editor) {
-  [...editorWordCount.value.children].forEach(child => child.remove());
-
-  const wordCount = editor.plugins.get('WordCount');
-  editorWordCount.value.appendChild(wordCount.wordCountContainer);
-
-  // // 获取工具栏视图
-  // const toolbarView = editor.ui.view.toolbar
-  // console.log(toolbarView)
-  // // 监听工具栏按钮点击
-  // toolbarView.items.forEach(item => {
-  //   console.log(item)
-  //   if (item.label) {
-  //     item.on('execute', () => {
-  //       console.log(`${item.label} clicked!`);  // 打印按钮名称
-  //     });
-  //   }
-  // });
-  editor.plugins.get('FileRepository').createUploadAdapter = (loader) => {
-    return new ImageUploadAdapter(loader)
+async function uploadImage(file) {
+  const result = await uploadFile(file, {});
+  if (typeof result === 'string') {
+    return result;
   }
+  return result?.url ?? result?.default ?? '';
 }
+
+const editor = useEditor({
+  content: props.modelValue,
+  extensions: createPrintTemplateExtensions({ upload: uploadImage }),
+  onUpdate: ({ editor }) => {
+    emit('update:model-value', editor.getHTML());
+  },
+});
+
+const fileInput = ref(null);
+
+function isActive(name, attrs) {
+  if (!editor.value) return false;
+  return attrs ? editor.value.isActive(name, attrs) : editor.value.isActive(name);
+}
+
+function openLink() {
+  if (!editor.value) return;
+  const previous = editor.value.getAttributes('link').href || '';
+  const url = window.prompt('链接地址', previous);
+  if (url === null) return;
+  if (url === '') {
+    editor.value.chain().focus().extendMarkRange('link').unsetLink().run();
+    return;
+  }
+  editor.value.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
+}
+
+async function onFilePicked(e) {
+  const files = Array.from(e.target.files || []);
+  for (const file of files) {
+    const url = await uploadImage(file);
+    if (url) {
+      editor.value?.chain().focus().setImage({ src: url }).run();
+    }
+  }
+  e.target.value = '';
+}
+
+function insertPlaceholder(key, name) {
+  editor.value?.chain().focus().insertContent({
+    type: 'placeholderToken',
+    attrs: { key, name },
+  }).run();
+}
+
+watch(
+  () => props.modelValue,
+  (val) => {
+    if (!editor.value) return;
+    if (val !== editor.value.getHTML()) {
+      editor.value.commands.setContent(val || '', { emitUpdate: false });
+    }
+  },
+);
+
+onBeforeUnmount(() => {
+  editor.value?.destroy();
+});
 </script>
 
 <style scoped>
-/*@import "./plugins/theme/placeholder.css";*/
-:deep(.placeholder) {
+.pt-content {
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 4px;
+  padding: 12px;
+  min-height: 240px;
+  max-height: 520px;
+  overflow: auto;
+}
+.pt-content :deep(.ProseMirror) {
+  outline: none;
+  min-height: 220px;
+}
+.pt-content :deep(.vben-tiptap__image),
+.pt-content :deep(img) {
+  max-width: 100%;
+}
+.pt-content :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.75rem 0;
+}
+.pt-content :deep(table td),
+.pt-content :deep(table th) {
+  border: 1px solid #d0d0d0;
+  padding: 6px 10px;
+  vertical-align: top;
+}
+.pt-content :deep(.placeholder) {
   background: #ffff00;
-  padding: 4px 2px;
+  padding: 2px 4px;
+  border-radius: 2px;
   outline-offset: -2px;
-  line-height: 1em;
   margin: 0 1px;
+  cursor: default;
 }
-
-:deep(.placeholder::selection) {
-  display: none;
-}
-
 </style>

@@ -39,7 +39,6 @@
     "@/*": "./src/*"
   },
   "dependencies": {
-    "@ckeditor/ckeditor5-vue": "^7.3.0",
     "@mdi/font": "7.4.47",
     "@onlyoffice/document-editor-vue": "^1.5.0",
     "@vben/access": "workspace:*",
@@ -59,7 +58,6 @@
     "@vueuse/core": "catalog:",
     "@vxe-ui/plugin-export-xlsx": "^4.5.1",
     "@xpyjs/gantt": "^2.1.14",
-    "ckeditor5": "^44.1.0",
     "compressorjs": "^1.2.1",
     "core-js": "^3.37.1",
     "countup.js": "^2.9.0",

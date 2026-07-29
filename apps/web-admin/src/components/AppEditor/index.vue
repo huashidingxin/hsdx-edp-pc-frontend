@@ -1,489 +1,165 @@
 <template>
-  <div class="main-container1">
-    <div class="mb-3">{{label}}</div>
-    <div
-      class="editor-container editor-container_classic-editor editor-container_include-style editor-container_include-word-count"
-      ref="editorContainerElement"
-    >
-      <div class="editor-container__editor">
-        <div ref="editorElement">
-          <ckeditor v-if="editor && config" v-model="content" :editor="editor" :config="config" @ready="onReady" />
-        </div>
-      </div>
-      <div class="editor_container__word-count" ref="editorWordCountElement"></div>
-    </div>
+  <div class="app-editor-tiptap">
+    <div v-if="label" class="mb-2 text-sm text-gray-700">{{ label }}</div>
+    <VbenTiptap
+      v-model="content"
+      :editable="!disabled"
+      :placeholder="placeholder"
+      :min-height="minHeight"
+      :max-height="maxHeight"
+      :toolbar="toolbar"
+      :previewable="previewable"
+      :extensions="extensions"
+      @change="onChange"
+    />
   </div>
 </template>
 
 <script setup>
-import { computed, ref, onMounted, useTemplateRef } from 'vue';
-import { Ckeditor } from '@ckeditor/ckeditor5-vue';
-import ImageUploadAdapter from './adapter/ImageUploadAdapter.js'
-import {
-  ClassicEditor,
-  Alignment,
-  Autoformat,
-  AutoImage,
-  AutoLink,
-  Autosave,
-  BlockQuote,
-  Bold,
-  Bookmark,
-  Code,
-  CodeBlock,
-  Essentials,
-  FindAndReplace,
-  FontBackgroundColor,
-  FontColor,
-  FontFamily,
-  FontSize,
-  FullPage,
-  GeneralHtmlSupport,
-  Heading,
-  Highlight,
-  HorizontalLine,
-  HtmlComment,
-  HtmlEmbed,
-  ImageBlock,
-  ImageCaption,
-  ImageInline,
-  ImageInsert,
-  ImageInsertViaUrl,
-  ImageResize,
-  ImageStyle,
-  ImageTextAlternative,
-  ImageToolbar,
-  ImageUpload,
-  Indent,
-  IndentBlock,
-  Italic,
-  Link,
-  LinkImage,
-  List,
-  ListProperties,
-  Markdown,
-  MediaEmbed,
-  Mention,
-  PageBreak,
-  Paragraph,
-  PasteFromMarkdownExperimental,
-  PasteFromOffice,
-  RemoveFormat,
-  ShowBlocks,
-  SimpleUploadAdapter,
-  SourceEditing,
-  SpecialCharacters,
-  SpecialCharactersArrows,
-  SpecialCharactersCurrency,
-  SpecialCharactersEssentials,
-  SpecialCharactersLatin,
-  SpecialCharactersMathematical,
-  SpecialCharactersText,
-  Strikethrough,
-  Style,
-  Subscript,
-  Superscript,
-  Table,
-  TableCaption,
-  TableCellProperties,
-  TableColumnResize,
-  TableProperties,
-  TableToolbar,
-  TextPartLanguage,
-  TextTransformation,
-  Title,
-  TodoList,
-  Underline,
-  WordCount,
-} from 'ckeditor5';
+import { ref, watch } from 'vue';
 
+import { VbenTiptap } from '@vben/plugins/tiptap';
 
-import translations from 'ckeditor5/translations/zh-cn.js';
+import { upload as uploadFile } from '#/api';
 
-import 'ckeditor5/ckeditor5.css';
-import './style.css';
+import { createEditorExtensions } from './extensions';
 
 const props = defineProps({
-  modelValue:{
-    type:String,
-    default:''
+  // 兼容 AppField 的 :value / @update:value 用法
+  value: {
+    type: String,
+    default: undefined,
   },
-
-  label:{
-    type:String,
-    default:'内容'
-  }
-})
-
-const emit = defineEmits(['update:model-value'])
-
-const content = ref('')
-
-watch(()=>props.modelValue,(newValue)=>{
-  content.value = newValue
-})
-
-watch(content,(newVal)=>{
-  emit('update:model-value',newVal)
-})
-/**
- * Create a free account with a trial: https://portal.ckeditor.com/checkout?plan=free
- */
-const LICENSE_KEY = 'GPL'; // or <YOUR_LICENSE_KEY>.
-
-const editorWordCount = useTemplateRef('editorWordCountElement');
-
-const isLayoutReady = ref(false);
-
-const editor = ClassicEditor;
-
-const config = computed(() => {
-  if (!isLayoutReady.value) {
-    return null;
-  }
-
-  return {
-    toolbar: {
-      items: [
-        'sourceEditing',
-        // 'showBlocks',
-        'findAndReplace',
-        // 'textPartLanguage',
-        '|',
-        'heading',
-        // 'style',
-        '|',
-        'fontSize',
-        'fontFamily',
-        'fontColor',
-        'fontBackgroundColor',
-        '|',
-        'bold',
-        'italic',
-        'underline',
-        'strikethrough',
-        'subscript',
-        'superscript',
-        'code',
-        'removeFormat',
-        '|',
-        'specialCharacters',
-        'horizontalLine',
-        'pageBreak',
-        'link',
-        'bookmark',
-        'insertImage',
-        // 'mediaEmbed',
-        'insertTable',
-        'highlight',
-        'blockQuote',
-        'codeBlock',
-        'htmlEmbed',
-        '|',
-        'alignment',
-        '|',
-        'bulletedList',
-        'numberedList',
-        'todoList',
-        'outdent',
-        'indent'
-      ],
-      // items:[
-      //   'sourceEditing',
-      //   'heading',
-      //   '|',
-      //   'bold',
-      //   'italic',
-      //   'underline',
-      //   'alignment',
-      //   '|',
-      //   'link',
-      //   'insertImage',
-      //   'ckbox',
-      //   'mediaEmbed',
-      //   'insertTable',
-      //   'blockQuote',
-      //   '|',
-      //   'bulletedList',
-      //   'numberedList',
-      //   'todoList',
-      //   'outdent',
-      //   'indent'
-      // ],
-      shouldNotGroupWhenFull: false
-    },
-    plugins: [
-      Alignment,
-      Autoformat,
-      AutoImage,
-      AutoLink,
-      Autosave,
-      BlockQuote,
-      Bold,
-      Bookmark,
-      Code,
-      CodeBlock,
-      Essentials,
-      FindAndReplace,
-      FontBackgroundColor,
-      FontColor,
-      FontFamily,
-      FontSize,
-      FullPage,
-      GeneralHtmlSupport,
-      Heading,
-      Highlight,
-      HorizontalLine,
-      HtmlComment,
-      HtmlEmbed,
-      ImageBlock,
-      ImageCaption,
-      ImageInline,
-      ImageInsert,
-      ImageInsertViaUrl,
-      ImageResize,
-      ImageStyle,
-      ImageTextAlternative,
-      ImageToolbar,
-      ImageUpload,
-      Indent,
-      IndentBlock,
-      Italic,
-      Link,
-      LinkImage,
-      List,
-      ListProperties,
-      Markdown,
-      MediaEmbed,
-      Mention,
-      PageBreak,
-      Paragraph,
-      PasteFromMarkdownExperimental,
-      PasteFromOffice,
-      RemoveFormat,
-      ShowBlocks,
-      SimpleUploadAdapter,
-      SourceEditing,
-      SpecialCharacters,
-      SpecialCharactersArrows,
-      SpecialCharactersCurrency,
-      SpecialCharactersEssentials,
-      SpecialCharactersLatin,
-      SpecialCharactersMathematical,
-      SpecialCharactersText,
-      Strikethrough,
-      Style,
-      Subscript,
-      Superscript,
-      Table,
-      TableCaption,
-      TableCellProperties,
-      TableColumnResize,
-      TableProperties,
-      TableToolbar,
-      TextPartLanguage,
-      TextTransformation,
-      // Title,
-      TodoList,
-      Underline,
-      WordCount,
-    ],
-    fontFamily: {
-      supportAllValues: true
-    },
-    fontSize: {
-      options: [10, 12, 14, 'default', 18, 20, 22],
-      supportAllValues: true
-    },
-    heading: {
-      options: [
-        {
-          model: 'paragraph',
-          title: 'Paragraph',
-          class: 'ck-heading_paragraph'
-        },
-        {
-          model: 'heading1',
-          view: 'h1',
-          title: 'Heading 1',
-          class: 'ck-heading_heading1'
-        },
-        {
-          model: 'heading2',
-          view: 'h2',
-          title: 'Heading 2',
-          class: 'ck-heading_heading2'
-        },
-        {
-          model: 'heading3',
-          view: 'h3',
-          title: 'Heading 3',
-          class: 'ck-heading_heading3'
-        },
-        {
-          model: 'heading4',
-          view: 'h4',
-          title: 'Heading 4',
-          class: 'ck-heading_heading4'
-        },
-        {
-          model: 'heading5',
-          view: 'h5',
-          title: 'Heading 5',
-          class: 'ck-heading_heading5'
-        },
-        {
-          model: 'heading6',
-          view: 'h6',
-          title: 'Heading 6',
-          class: 'ck-heading_heading6'
-        }
-      ]
-    },
-    htmlSupport: {
-      allow: [
-        {
-          name: /^.*$/,
-          styles: true,
-          attributes: true,
-          classes: true
-        }
-      ]
-    },
-    image: {
-      toolbar: [
-        'toggleImageCaption',
-        'imageTextAlternative',
-        '|',
-        'imageStyle:inline',
-        'imageStyle:wrapText',
-        'imageStyle:breakText',
-        '|',
-        'resizeImage'
-      ]
-    },
-    // initialData: '',
-    language: 'zh-cn',
-    licenseKey: LICENSE_KEY,
-    link: {
-      addTargetToExternalLinks: true,
-      defaultProtocol: 'https://',
-      decorators: {
-        toggleDownloadable: {
-          mode: 'manual',
-          label: 'Downloadable',
-          attributes: {
-            download: 'file'
-          }
-        }
-      }
-    },
-    // list: {
-    //   properties: {
-    //     styles: true,
-    //     startIndex: true,
-    //     reversed: true
-    //   }
-    // },
-    // mention: {
-    //   feeds: [
-    //     {
-    //       marker: '@',
-    //       feed: [
-    //         /* See: https://ckeditor.com/docs/ckeditor5/latest/features/mentions.html */
-    //       ]
-    //     }
-    //   ]
-    // },
-    // placeholder: 'Type or paste your content here!',
-    style: {
-      definitions: [
-        {
-          name: 'Article category',
-          element: 'h3',
-          classes: ['category']
-        },
-        {
-          name: 'Title',
-          element: 'h2',
-          classes: ['document-title']
-        },
-        {
-          name: 'Subtitle',
-          element: 'h3',
-          classes: ['document-subtitle']
-        },
-        {
-          name: 'Info box',
-          element: 'p',
-          classes: ['info-box']
-        },
-        {
-          name: 'Side quote',
-          element: 'blockquote',
-          classes: ['side-quote']
-        },
-        {
-          name: 'Marker',
-          element: 'span',
-          classes: ['marker']
-        },
-        {
-          name: 'Spoiler',
-          element: 'span',
-          classes: ['spoiler']
-        },
-        {
-          name: 'Code (dark)',
-          element: 'pre',
-          classes: ['fancy-code', 'fancy-code-dark']
-        },
-        {
-          name: 'Code (bright)',
-          element: 'pre',
-          classes: ['fancy-code', 'fancy-code-bright']
-        }
-      ]
-    },
-    table: {
-      contentToolbar: ['tableColumn', 'tableRow', 'mergeTableCells', 'tableProperties', 'tableCellProperties']
-    },
-    translations: [translations]
-  };
+  // 兼容 v-model 用法
+  modelValue: {
+    type: String,
+    default: undefined,
+  },
+  label: {
+    type: String,
+    default: '',
+  },
+  placeholder: {
+    type: String,
+    default: '请输入内容...',
+  },
+  disabled: {
+    type: Boolean,
+    default: false,
+  },
+  toolbar: {
+    type: Boolean,
+    default: true,
+  },
+  previewable: {
+    type: Boolean,
+    default: true,
+  },
+  minHeight: {
+    type: [Number, String],
+    default: 240,
+  },
+  maxHeight: {
+    type: [Number, String],
+    default: 480,
+  },
 });
 
-onMounted(() => {
-  isLayoutReady.value = true;
+const emit = defineEmits(['update:value', 'update:modelValue', 'change']);
 
+const content = ref(props.modelValue ?? props.value ?? '');
 
+async function uploadImage(file) {
+  const result = await uploadFile(file, {});
+  if (typeof result === 'string') {
+    return result;
+  }
+  return result?.url ?? result?.default ?? '';
+}
+
+const extensions = createEditorExtensions({
+  placeholder: props.placeholder,
+  upload: uploadImage,
 });
 
-function onReady(editor) {
-  [...editorWordCount.value.children].forEach(child => child.remove());
+watch(
+  () => props.value,
+  (newValue) => {
+    if (newValue !== undefined && newValue !== content.value) {
+      content.value = newValue;
+    }
+  },
+);
 
-  const wordCount = editor.plugins.get('WordCount');
-  editorWordCount.value.appendChild(wordCount.wordCountContainer);
+watch(
+  () => props.modelValue,
+  (newValue) => {
+    if (newValue !== undefined && newValue !== content.value) {
+      content.value = newValue;
+    }
+  },
+);
 
-  // // 获取工具栏视图
-  // const toolbarView = editor.ui.view.toolbar
-  // console.log(toolbarView)
-  // // 监听工具栏按钮点击
-  // toolbarView.items.forEach(item => {
-  //   console.log(item)
-  //   if (item.label) {
-  //     item.on('execute', () => {
-  //       console.log(`${item.label} clicked!`);  // 打印按钮名称
-  //     });
-  //   }
-  // });
+watch(content, (newValue) => {
+  emit('update:value', newValue);
+  emit('update:modelValue', newValue);
+});
 
-  editor.plugins.get('FileRepository').createUploadAdapter = (loader) => {
-    return new ImageUploadAdapter(loader)
-  }
-
+function onChange(payload) {
+  emit('change', payload);
 }
 </script>
 
+<!-- 非 scoped：编辑器内容渲染在 .vben-tiptap-content 内，需要全局样式补齐表格等元素 -->
 <style>
+.vben-tiptap-content table {
+  width: 100%;
+  margin: 0.75rem 0;
+  border-collapse: collapse;
+  table-layout: fixed;
+  overflow: hidden;
+}
 
+.vben-tiptap-content table td,
+.vben-tiptap-content table th {
+  position: relative;
+  min-width: 1em;
+  padding: 6px 10px;
+  vertical-align: top;
+  border: 1px solid hsl(var(--border));
+}
+
+.vben-tiptap-content table th {
+  font-weight: 600;
+  text-align: left;
+  background-color: hsl(var(--muted));
+}
+
+.vben-tiptap-content table .selectedCell::after {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  content: '';
+  background: hsl(var(--primary) / 15%);
+}
+
+.vben-tiptap-content table .column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  bottom: -2px;
+  width: 4px;
+  pointer-events: none;
+  background-color: hsl(var(--primary));
+}
+
+.vben-tiptap-content .tableWrapper {
+  margin: 0.75rem 0;
+  overflow-x: auto;
+}
+
+.vben-tiptap-content p {
+  margin: 0.25rem 0;
+}
 </style>
