@@ -340,7 +340,7 @@ onBeforeMount(()=>{
     </template>
     <template #action="{data}">
 
-      <v-list-item v-access="['delete staff']" v-if="data.state != 3" @click="resign(data)">
+      <v-list-item v-access="['staff.delete']" v-if="data.state != 3" @click="resign(data)">
         <v-list-item-title>离职</v-list-item-title>
       </v-list-item>
     </template>

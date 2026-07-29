@@ -215,7 +215,7 @@ function saveFormat(e) {
       :save-format="saveFormat"
     >
       <template #right>
-        <v-btn  v-access="['edit division']" v-if="isChange" color="warning" variant="flat" class="me-2 slide-y-transition" @click="save">保存修改</v-btn>
+        <v-btn  v-access="['division.edit']" v-if="isChange" color="warning" variant="flat" class="me-2 slide-y-transition" @click="save">保存修改</v-btn>
       </template>
       <template #form_description>
         <div v-if="parent" class="font-weight-bold text-body-1 mb-3">
@@ -227,7 +227,7 @@ function saveFormat(e) {
       </template>
 
       <template #action="{data}">
-        <v-list-item v-access="['create division']" v-if="data.level < 7" @click.stop="openSubDialog(data)">
+        <v-list-item v-access="['division.create']" v-if="data.level < 7" @click.stop="openSubDialog(data)">
           <v-list-item-title>增加下级</v-list-item-title>
         </v-list-item>
       </template>
@@ -241,7 +241,7 @@ function saveFormat(e) {
               <v-chip size="x-small" variant="elevated" class="me-1" label :color="levels[currentItem.level].color">
                 {{levels[currentItem.level].name}}
               </v-chip>
-              <v-btn v-access="['create division']" v-if="row.level < 7"  icon="mdi-plus" size="x-small" @click.stop="openSubDialog(currentItem)"></v-btn>
+              <v-btn v-access="['division.create']" v-if="row.level < 7"  icon="mdi-plus" size="x-small" @click.stop="openSubDialog(currentItem)"></v-btn>
               <!--              <v-btn icon="mdi-pencil-outline" size="x-small" @click.stop="tableRef.openDetail(currentItem.id)"></v-btn>-->
               <!--              <v-btn icon="mdi-trash-can-outline" size="x-small" @click.stop="tableRef.deleteItem(currentItem)"></v-btn>-->
             </div>

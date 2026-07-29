@@ -450,7 +450,7 @@ function copyCreate(row) {
       <v-list-item
         v-if="
           hasAccessByRoles(['Super Admin', 'Admin']) ||
-          hasAccessByCodes(['create print_template'])
+          hasAccessByCodes(['print_template.create'])
         "
         @click="copyCreate(data)"
       >
