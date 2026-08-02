@@ -1,4 +1,6 @@
 <script lang="ts" setup>
+import type { FormProps } from 'antdv-next';
+
 import { computed, reactive, ref, watch } from 'vue';
 
 import { AuthenticationLoginExpiredModal } from '@vben/common-ui';
@@ -10,7 +12,6 @@ import { useAccessStore, useUserStore } from '@vben/stores';
 import { Form, FormItem, InputPassword, Modal, message } from 'antdv-next';
 
 import { changePasswordApi } from '#/api';
-import { $t } from '#/locales';
 import { useAuthStore } from '#/store';
 import LoginForm from '#/views/_core/authentication/login.vue';
 
@@ -28,7 +29,7 @@ const passwordForm = reactive({
   confirm_password: '',
 });
 
-const passwordRules = {
+const passwordRules: FormProps['rules'] = {
   old_password: [{ required: true, message: '请输入旧密码', trigger: 'blur' }],
   new_password: [
     { required: true, message: '请输入新密码', trigger: 'blur' },
@@ -124,7 +125,7 @@ watch(
       <UserDropdown
         :avatar
         :menus
-        :text="userStore.userInfo?.name"
+        :text="userStore.userInfo?.realName"
         @logout="handleLogout"
       />
     </template>

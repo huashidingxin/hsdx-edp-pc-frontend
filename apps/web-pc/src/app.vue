@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, watch } from 'vue';
 
 import { useAntdDesignTokens } from '@vben/hooks';
 import { preferences, usePreferences } from '@vben/preferences';
@@ -7,8 +7,6 @@ import { preferences, usePreferences } from '@vben/preferences';
 import { App, ConfigProvider, theme } from 'antdv-next';
 
 import { antdLocale } from '#/locales';
-
-import Resource from '#/api/resource';
 
 defineOptions({ name: 'App' });
 
@@ -39,7 +37,7 @@ const globalComponentConfig = {
   },
 };
 
-import {useUserStore,useAccessStore} from "@vben/stores";
+import { useAccessStore } from '@vben/stores';
 import { useSocketStore } from '#/store/socket';
 import { useAppStore } from '#/store/app';
 

@@ -9,7 +9,12 @@ export namespace AuthApi {
 
   /** 登录接口返回值 */
   export interface LoginResult {
-    accessToken: string;
+    expires_at: null | string;
+    id: number | string;
+    mobile_verified_at: null | string;
+    ouid: null | string;
+    token: string;
+    username: string;
   }
 
   export interface RefreshTokenResult {
@@ -27,9 +32,9 @@ export async function loginApi(params: AuthApi.LoginParams) {
     params,
   );
   return {
+    ...data,
     accessToken: data.token,
     refreshToken: '',
-    ...data,
   };
 }
 

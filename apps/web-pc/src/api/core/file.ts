@@ -1,68 +1,68 @@
-import {requestClient} from '#/api/request';
-import {calculateFileHash} from '#/utils/file.js'
+import type { RequestClientConfig } from '@vben/request';
 
-export async function upload(file: any, params: any, onUploadProgress = null) {
-  let files = [];
-  if (Array.isArray(file)) {
-    files = file
-  } else {
-    files = [file];
-  }
-  let arr = [];
-  let hashSuccess = [];
-  for (const index in files) {
+import { requestClient } from '#/api/request';
+import { calculateFileHash } from '#/utils/file.js';
+
+type UploadFile = File & { ret?: any };
+
+export async function upload(
+  file: File | File[],
+  params: Record<string, any> = {},
+  onUploadProgress?: RequestClientConfig['onUploadProgress'],
+) {
+  const files: UploadFile[] = (Array.isArray(file) ? file : [file]) as UploadFile[];
+  const hashSuccess: any[] = [];
+  for (const uploadFile of files) {
     try {
-      const hash = await calculateFileHash(files[index])
-      const data = await requestClient.post('/uploads', {hash, name: files[index].name})
+      const hash = await calculateFileHash(uploadFile);
+      const data = await requestClient.post('/uploads', {
+        hash,
+        name: uploadFile.name,
+      });
       if (data) {
-        files[index].ret = data;
-        hashSuccess.push(data)
+        uploadFile.ret = data;
+        hashSuccess.push(data);
       }
     } catch (e) {
-      console.log(e)
+      console.error(e);
     }
   }
 
-  if(hashSuccess.length === files.length){
-    return Array.isArray(file) ? hashSuccess : hashSuccess[0]
+  if (hashSuccess.length === files.length) {
+    return Array.isArray(file) ? hashSuccess : hashSuccess[0];
   }
 
-  const formData: FormData = new FormData();
-  let uploadIndexList = [];
+  const formData = new FormData();
+  const uploadIndexList: number[] = [];
   if (Array.isArray(file)) {
-    for (const index in files) {
-      if(files[index].ret){
-        continue;
+    files.forEach((uploadFile, index) => {
+      if (uploadFile.ret) {
+        return;
       }
-      uploadIndexList.push(index)
-      formData.append('file[]', files[index]);
-    }
+      uploadIndexList.push(index);
+      formData.append('file[]', uploadFile);
+    });
   } else {
     formData.append('file', file);
   }
   for (const key in params) {
-    formData.append(key, params[key]);
+    formData.append(key, params[key] as string | Blob);
   }
 
   const data = await requestClient.post('/uploads', formData, {
     headers: {
       'Content-Type': 'multipart/form-data',
     },
-    timeout:60000,
-    onUploadProgress: onUploadProgress || (() => {
-    }),
+    timeout: 60_000,
+    onUploadProgress,
   });
 
-  if(!Array.isArray(file)){
+  if (!Array.isArray(file)) {
     return data;
-  }else{
-    for(let i in uploadIndexList){
-      files[uploadIndexList[i]].ret = data[i]
-    }
-    return files.map((e)=>{
-      return e.ret
-    })
   }
-  // 如果是数组把hash上传成功的合并
-  // return !Array.isArray(file) ? data : data.concat(arr);
+
+  uploadIndexList.forEach((fileIndex, responseIndex) => {
+    files[fileIndex]!.ret = data[responseIndex];
+  });
+  return files.map((item) => item.ret);
 }

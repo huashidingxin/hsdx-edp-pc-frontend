@@ -19,7 +19,7 @@ export const overridesPreferences = defineOverridesPreferences({
   copyright: {
     companyName: '华视鼎信',
     companySiteLink: 'https://www.hsdxchina.com',
-    date: new Date().getFullYear(),
+    date: String(new Date().getFullYear()),
     enable: true,
     icp: '',
     icpLink: '',
@@ -28,7 +28,7 @@ export const overridesPreferences = defineOverridesPreferences({
 
   logo: {
     enable: true,
-    source: 'logo.png',
+    source: '/favicon.ico',
   },
   theme: {
     mode: 'light',

@@ -465,7 +465,7 @@ onBeforeMount(()=>{
       @show-detail="showDetail"
       :show-audit="showAudit"
       audit-type="submission"
-      permission-name="task_log_submission"
+      permission-name="task_submission"
       audit-key="submission_id"
       :project-props="{filter:true}"
     >

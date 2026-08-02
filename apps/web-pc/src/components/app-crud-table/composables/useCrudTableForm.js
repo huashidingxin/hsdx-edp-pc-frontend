@@ -43,7 +43,8 @@ export function useCrudTableForm(props, ctx, modelValueRef) {
    */
   const formatedFields = computed(() => {
     const excludeSet = new Set(props.excludeFields || []);
-    const editing = modelValueRef.value?.id !== undefined;
+    const editing =
+      modelValueRef.value?.[props.idKey || 'id'] !== undefined;
 
     return (props.fields || [])
       .filter((f) => !excludeSet.has(f.field))
@@ -123,7 +124,7 @@ export function useCrudTableForm(props, ctx, modelValueRef) {
     for (const field of fields) {
       const ref = fieldRefMap.value[field.renderKey];
 
-      if (ref && typeof ref?.fieldRef.upload === 'function') {
+      if (ref && typeof ref?.fieldRef?.upload === 'function') {
         const values = modelValueRef.value?.[field.field];
         const arr = Array.isArray(values) ? values : [values];
 
@@ -133,7 +134,6 @@ export function useCrudTableForm(props, ctx, modelValueRef) {
         if (hasPending) {
           await ref.fieldRef.upload();
         }
-        
       }
     }
   }

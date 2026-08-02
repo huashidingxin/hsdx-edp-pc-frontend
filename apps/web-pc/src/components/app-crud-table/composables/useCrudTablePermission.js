@@ -63,8 +63,6 @@ export function useCrudTablePermission(props) {
     }
 
     // action + permissionName 校验
-    // 规范（与后端 Permission::initPermissions 一致）：权限码为「资源.动作」点分格式，
-    // 例如 project.create / project.view / project.delete / project.audit
     const name = actName || props.permissionName;
     if (action && name) {
       return hasAccessByCodes([`${name}.${action}`]);

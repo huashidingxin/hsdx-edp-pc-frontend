@@ -2,7 +2,7 @@
 import type { Ref } from 'vue';
 
 import { h } from 'vue';
-import { VueCropper } from 'vue-cropper';
+import { VueCropper } from 'vue-cropper/dist/vue-cropper.es.js';
 import 'vue-cropper/dist/index.css';
 
 import {
@@ -35,8 +35,21 @@ import {
 
 interface FileItem {
   url: string;
-  file?: Blob | File;
+  file?: Blob | File | FileDescriptor;
   [key: string]: any;
+}
+
+interface FileDescriptor {
+  category: null | string;
+  name: string;
+  size: number;
+  type?: string;
+}
+
+interface PreviewInfo {
+  extension: string;
+  type: string;
+  url: string;
 }
 
 interface CropperOption {
@@ -62,6 +75,10 @@ interface CompressorOption {
   quality: number;
   width: number;
   height: number;
+}
+
+interface CropperInstance {
+  getCropBlob?: (callback: (data: Blob) => void) => void;
 }
 
 const props = defineProps({
@@ -132,7 +149,7 @@ const inputRef: Ref<HTMLInputElement | null> = ref(null);
 const previewSrc = ref('');
 const previewOpen = ref(false);
 const dragover = ref(false);
-const cropper = ref<InstanceType<typeof VueCropper> | null>(null);
+const cropper = ref<CropperInstance | null>(null);
 const video = ref<HTMLVideoElement | null>(null);
 const videoCanvas = ref<HTMLCanvasElement | null>(null);
 
@@ -143,7 +160,7 @@ const accepts: Record<string, string> = {
   audio: 'audio/*',
   file: '*',
 };
-const acceptValue: Ref<string> = ref(accepts.image);
+const acceptValue: Ref<string> = ref(accepts.image ?? 'image/*');
 const typeIcons = [
   {
     name: 'preview',
@@ -269,8 +286,10 @@ watch(files, async (newVal) => {
 
   const newItems: FileItem[] = [];
   for (let i = 0; i < files.value.length; i++) {
-    const url = createObjectURL(files.value[i]);
-    newItems.push({ file: files.value[i], url });
+    const file = files.value[i];
+    if (!file) continue;
+    const url = createObjectURL(file);
+    newItems.push({ file, url });
   }
 
   if (props.multiple) {
@@ -322,7 +341,7 @@ async function setValue() {
       if (isBase64(item)) {
         fileItem.file = base64ToFile(item);
       } else if (item.startsWith('blob:')) {
-        fileItem.file = await blobUrlToFile(item);
+        fileItem.file = (await blobUrlToFile(item)) ?? undefined;
       } else {
         fileItem = formatUrl(item);
       }
@@ -372,7 +391,7 @@ function fileFilter(files: File[]): File[] {
 
   return files.filter((item) => {
     const acceptTypes = acceptValue.value.split(',');
-    const [mimeType] = item.type.split('/');
+    const [mimeType = ''] = item.type.split('/');
     const [, extension] = item.name.split('.');
 
     // console.log('acceptTypes',acceptTypes,extension)
@@ -415,10 +434,14 @@ function iconAction(action: string, index: number) {
       break;
     }
     case 'preview': {
-      previewSrc.value = list.value[index]?.url;
-      nextTick(() => {
-        previewOpen.value = true;
-      });
+      if (props.fileType === 'file') {
+        preview(index);
+      } else {
+        previewSrc.value = list.value[index]?.url ?? '';
+        nextTick(() => {
+          previewOpen.value = true;
+        });
+      }
       break;
     }
     case 'remove': {
@@ -433,22 +456,22 @@ function iconAction(action: string, index: number) {
 }
 
 const previewDialog = ref(false);
-const previewInfo = ref({});
+const previewInfo = ref<PreviewInfo>({ extension: '', type: '', url: '' });
 function preview(index: number) {
   if (props.fileType === 'file' && list.value[index]?.url?.startsWith('http')) {
     const url = new URL(list.value[index].url, window.location.origin);
-    const fileName = url.pathname.split('/').pop();
-    const categories = {
+    const fileName = url.pathname.split('/').pop() ?? '';
+    const categories: Record<string, string[]> = {
       word: ['doc', 'docx'],
       excel: ['xls', 'xlsx'],
       ppt: ['ppt', 'pptx'],
       pdf: ['pdf'],
       image: ['jpg', 'jpeg', 'png', 'svg', 'bmp'],
     };
-    const extension = fileName.split('.').pop();
+    const extension = fileName.split('.').pop()?.toLowerCase() ?? '';
     let type = '';
     for (const key in categories) {
-      if (categories[key].includes(extension.toLowerCase())) {
+      if (categories[key]?.includes(extension)) {
         type = key;
         break;
       }
@@ -473,14 +496,16 @@ function remove(index: number) {
 // 裁剪相关函数
 async function setCurrent(index: number) {
   const item = list.value[index];
-  fileOrgInfo.value = item.file?.size
+  if (!item) return false;
+
+  const file = item.file;
+  fileOrgInfo.value = file?.size
     ? {
-        ...item.file,
-        size: item.file.size,
-        type: item.file.type,
-        name: item.file.name,
+        name: file instanceof File ? file.name : 'name' in file ? file.name : '',
+        size: file.size,
+        type: file.type,
       }
-    : await getInfo(item.url);
+    : (await getInfo(item.url)) ?? {};
 
   fileOrgInfo.value.index = index;
 
@@ -501,13 +526,14 @@ async function setCurrent(index: number) {
       fileOrgInfo.value.height = 0;
     }
   }
+  return true;
 }
 
 const cropKey = ref(0);
 
 async function crop(index: number) {
-  await setCurrent(index);
-  imageUrl.value = list.value[index].url;
+  if (!(await setCurrent(index))) return;
+  imageUrl.value = list.value[index]?.url ?? '';
   compressedFile.value = null;
   compressedFileSize.value = 0;
 
@@ -563,7 +589,7 @@ const realTime = debounce((e: any) => {
 }, 50);
 
 function cropHandler() {
-  cropper.value?.getCropBlob((data: Blob) => {
+  cropper.value?.getCropBlob?.((data: Blob) => {
     if (!data) return;
 
     const outputType = cropperOption.value.outputType;
@@ -589,11 +615,9 @@ function compress(blob: Blob, outputType?: string, fileName?: string) {
     height: compressorOption.value.height,
     success: (result: Blob | File) => {
       const file =
-        result instanceof Blob
-          ? new File([result], fileName || result.name || 'compressed', {
-              type: result.type,
-            })
-          : result;
+        result instanceof File && !fileName
+          ? result
+          : new File([result], fileName || 'compressed', { type: result.type });
       compressedFile.value = file;
       compressedFileSize.value = file.size;
     },
@@ -618,8 +642,10 @@ function handleSubmit() {
 
 // 视频截图相关函数
 async function snapshot(index: number) {
-  await setCurrent(index);
-  videoUrl.value = await videoUrlToBlobUrl(list.value[index].url);
+  if (!(await setCurrent(index))) return;
+  const url = list.value[index]?.url;
+  if (!url) return;
+  videoUrl.value = (await videoUrlToBlobUrl(url)) ?? '';
   snapshotDialog.value = true;
 }
 
@@ -701,6 +727,10 @@ function handleItemDrop(e: DragEvent, dropIndex: number) {
 
   // 重新排列数组
   const draggedItem = list.value[draggedIndex.value];
+  if (!draggedItem) {
+    handleDragEnd();
+    return;
+  }
   const newList = [...list.value];
 
   // 移除被拖拽的项
@@ -719,18 +749,21 @@ function handleItemDrop(e: DragEvent, dropIndex: number) {
 // 上传函数
 async function upload() {
   const uploadItems = list.value
-    .filter((item) => item.file && !item.url.startsWith('http'))
-    .map((item) => item.file!);
+    .filter(
+      (item): item is FileItem & { file: File } =>
+        item.file instanceof File && !item.url.startsWith('http'),
+    )
+    .map((item) => item.file);
 
   if (uploadItems.length === 0) return list.value;
 
   uploading.value = true;
   try {
     const ret = await uploadFile(
-      props.multiple ? uploadItems : uploadItems[0],
+      props.multiple ? uploadItems : uploadItems[0]!,
       { scene: props.scene },
-      (e: { progress: number }) => {
-        uploadProgress.value = Math.floor(e.progress * 100);
+      (e) => {
+        uploadProgress.value = Math.floor((e.progress ?? 0) * 100);
       },
     );
 
@@ -764,14 +797,14 @@ function formatUrl(urlString: string): FileItem {
   return {
     url: urlString,
     file: {
-      size: params.get('size'),
-      name: params.get('name') || url.pathname.split('/').pop(),
+      size: Number(params.get('size') || 0),
+      name: params.get('name') || url.pathname.split('/').pop() || '',
       category: params.get('category'),
     },
   };
 }
 
-function isVideoUrl(url: string, file?: Blob | File): boolean {
+function isVideoUrl(url: string, file?: Blob | File | FileDescriptor): boolean {
   if (file?.type?.startsWith('video/')) return true;
   return /\.(?:mp4|webm|ogg|mov|avi|mkv)(?:\?.*)?$/i.test(url || '');
 }

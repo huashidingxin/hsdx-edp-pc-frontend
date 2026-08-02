@@ -1215,7 +1215,7 @@ defineExpose({
                     <v-list-item @click="openDetail(row.id,false)">
                       <v-list-item-title>查看</v-list-item-title>
                     </v-list-item>
-                    <v-list-item v-if="checkItemAction(showEdit,row,'update')"
+                    <v-list-item v-if="checkItemAction(showEdit,row,'edit')"
                                  @click="openDetail(row.id,true)">
                       <v-list-item-title>编辑</v-list-item-title>
                     </v-list-item>
@@ -1223,7 +1223,7 @@ defineExpose({
                                  @click="openAuditDialog(row,true)">
                       <v-list-item-title>审核</v-list-item-title>
                     </v-list-item>
-                    <v-list-item v-if="checkItemAction(showReserveAudit,row,'reverse audit')"
+                    <v-list-item v-if="checkItemAction(showReserveAudit,row,'audit')"
                                  @click="audit(row,false)">
                       <v-list-item-title>反审核</v-list-item-title>
                     </v-list-item>
@@ -1267,7 +1267,7 @@ defineExpose({
         </v-card-title>
         <v-card-text class="overflow-y-auto" style="padding: 16px 24px 24px">
           <slot name="form_description"></slot>
-          <v-form ref="formRef" :readonly="!checkItemAction(showEdit,editedItem,editedItem?.id ? 'update' : 'create')"
+          <v-form ref="formRef" :readonly="!checkItemAction(showEdit,editedItem,editedItem?.id ? 'edit' : 'create')"
                   :class="!checkItemAction(showEdit,editedItem,'edit') ? 'readonly-form' : ''">
             <v-row align="end">
               <template v-if="!editedItem.id && projectProps.edit && !appStore.defaultProject?.id">
@@ -1312,7 +1312,7 @@ defineExpose({
           <slot name="form_actions" :item="editedItem">
             <v-spacer/>
             <slot name="form_action" :item="editedItem"></slot>
-            <template v-if="(checkItemAction(showEdit,editedItem,editedItem?.id ? 'update' : 'create') && editing) || (['new','edit'].includes(route.params.action))">
+            <template v-if="(checkItemAction(showEdit,editedItem,editedItem?.id ? 'edit' : 'create') && editing) || (['new','edit'].includes(route.params.action))">
               <v-btn class="mr-1" color="warning" variant="tonal" @click="reset">
                 重置
               </v-btn>

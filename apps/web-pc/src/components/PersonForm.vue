@@ -1,14 +1,20 @@
 <script setup lang="ts">
+import type { FreeDatePrecision } from '#/components/app-free-date/types';
+
 import { computed, nextTick, ref, reactive, watch } from 'vue';
-import { Button, Form, FormItem, RadioGroup, Select, Switch, Tooltip, Row, Col, message } from 'antdv-next';
+import { Col, Form, FormItem, message, Row, Tooltip } from 'antdv-next';
 import { IconifyIcon as Icon } from '@vben/icons';
 
 import AppField from '#/components/AppField.vue';
 import AppFreeDate from '#/components/app-free-date/index.vue';
 import AIGenerateImageModal from '#/components/AIGenerateImageModal.vue';
 
-import Resource from '#/api/resource';
-import { requestClient } from '#/api/request';
+interface FieldConfig {
+  field: string;
+  label?: string;
+  span?: number;
+  [key: string]: unknown;
+}
 
 const props = defineProps({
   /** 表单数据对象（v-model） */
@@ -71,7 +77,7 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'parse', 'fileSelect', 'save', 'aiGenerate']);
 
 // ==================== 本地表单数据 ====================
-const localForm = reactive({
+const localForm = reactive<Record<string, any>>({
   id: '',
   name: '',
   avatar: '',
@@ -93,22 +99,24 @@ const localForm = reactive({
 });
 
 // 保留外部传入的原始数据
-const originalData = ref({});
+const originalData = ref<Record<string, any>>({});
 
 // 头像字段引用
-const avatarFieldRef = ref(null);
+const avatarFieldRef = ref<any>(null);
 
 // ==================== 智能识别 ====================
 const parseText = ref('');
 
 // 计算属性：过滤后的字段（优先使用 props.fields）
-const displayedFields = computed(() => {
+const displayedFields = computed<FieldConfig[]>(() => {
   // 如果直接提供了 fields，优先使用
   if (props.fields && props.fields.length > 0) {
-    return props.fields;
+    return props.fields as FieldConfig[];
   }
   // 否则使用 allFields + excludeFields
-  return props.allFields.filter((f: any) => props.excludeFields.indexOf(f.field) === -1);
+  return (props.allFields as FieldConfig[]).filter(
+    (field) => props.excludeFields.indexOf(field.field) === -1,
+  );
 });
 
 // 监听外部 modelValue 变化
@@ -138,12 +146,12 @@ watch(
 );
 
 // ==================== 日期处理 ====================
-const datePrecisions = {
+const datePrecisions: Record<number, FreeDatePrecision> = {
   1: 'year',
   2: 'month',
   3: 'date',
 };
-const datePrecisionNumbers = {
+const datePrecisionNumbers: Record<string, number> = {
   year: 1,
   month: 2,
   date: 3,

@@ -8,7 +8,7 @@
 import { computed, onMounted, provide, ref, useSlots, watch } from 'vue';
 import { useRoute } from 'vue-router';
 
-import { cloneDeep, isEqual } from 'lodash-es';
+import { cloneDeep } from 'lodash-es';
 
 // Composables
 import { useCrudTableActions } from './composables/useCrudTableActions.js';
@@ -66,7 +66,7 @@ const props = defineProps({
 
   // 行操作
   showActions: { type: Boolean, default: true },
-  inlineActions: { type: Array, default: () => ['view', 'edit','delete'] },
+  inlineActions: { type: Array, default: () => ['view', 'edit', 'delete'] },
   actionsConfig: { type: Array, default: () => [] },
 
   // 详情
@@ -112,12 +112,12 @@ const emit = defineEmits([
   'showDetail',
   'detailClose',
   'saved',
+  'export',
 ]);
 
 // ========================= 内部状态 =========================
 const route = useRoute();
 const slots = useSlots();
-const lastExtraQuery = ref(cloneDeep(props.extraQuery));
 
 // 受控的 modelValue。所有 composable 与子组件共享这一个 ref。
 const currentModelValue = ref(cloneDeep(props.modelValue));
@@ -190,7 +190,7 @@ const {
   openType,
   detailError,
   auditDialog,
-  auditRow,
+  auditSubmitting,
 } = detailApi;
 
 // 绑定行操作回调
@@ -222,7 +222,7 @@ const slotFilterEntries = computed(() =>
 
 const formDisabled = computed(() => {
   if (!editing.value) return true;
-  const action = currentModelValue.value?.[props.idKey] ? 'update' : 'create';
+  const action = currentModelValue.value?.[props.idKey] ? 'edit' : 'create';
   return !permissionApi.checkPermission(action);
 });
 
@@ -264,7 +264,10 @@ function handlePrint() {
 }
 
 function handleExport() {
-  // 由业务方在 toolbar-append slot 自行实现
+  emit('export', {
+    filters: { ...filters.value },
+    list: [...dataApi.list.value],
+  });
 }
 
 function handleCellDblclick({ row }) {
@@ -324,6 +327,9 @@ function handleFiltersUpdate(next) {
 
 function setAuditDialog(value) {
   auditDialog.value = value;
+  if (!value) {
+    detailApi.auditRow.value = null;
+  }
 }
 
 // ========================= 同步 props.modelValue =========================
@@ -377,9 +383,7 @@ onMounted(() => {
 
 watch(
   () => props.extraQuery,
-  (val) => {
-    if (isEqual(val, lastExtraQuery.value)) return;
-    lastExtraQuery.value = cloneDeep(val);
+  () => {
     if (isListMode.value) dataApi.handlePageData();
   },
   { deep: true },
@@ -436,7 +440,7 @@ defineExpose({
           <template #prepend>
             <slot name="toolbar-prepend"></slot>
           </template>
-          <template #append>
+          <template v-if="slots['toolbar-append']" #append>
             <slot name="toolbar-append"></slot>
           </template>
           <template #sub-title>
@@ -651,11 +655,9 @@ defineExpose({
     <!-- ==================== 审核弹窗 ==================== -->
     <CrudAuditModal
       :open="auditDialog"
-      :row="auditRow"
-      :api-url="apiUrl"
-      :id-key="idKey"
+      :submitting="auditSubmitting"
       @update:open="setAuditDialog"
-      @audited="dataApi.reload()"
+      @submit="detailApi.submitAudit"
     />
   </div>
 </template>

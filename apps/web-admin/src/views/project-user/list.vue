@@ -335,7 +335,7 @@ onBeforeMount(()=>{
     @dialog-change="dialogChange"
   >
     <template #action="{data}">
-      <v-list-item v-access:code="['project_user.update']" v-if="userStore.userInfo.id != data.user_id || true" @click="toggleLeave(data)">
+      <v-list-item v-access:code="['project_user.edit']" v-if="userStore.userInfo.id != data.user_id || true" @click="toggleLeave(data)">
         <v-list-item-title>{{data.leave?.status == 'active' ? '撤销离岗' : ' 离岗'}}</v-list-item-title>
       </v-list-item>
     </template>

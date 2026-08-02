@@ -1414,7 +1414,7 @@ defineExpose({
                     查看
                   </Button>
                   <Button
-                    v-if="checkItemAction(showEdit, row, 'update')"
+                    v-if="checkItemAction(showEdit, row, 'edit')"
                     type="link"
                     size="small"
                     @click="openDetail(row.id, true)"
@@ -1438,7 +1438,7 @@ defineExpose({
                   </Button>
                   <Button
                     v-if="
-                      checkItemAction(showReserveAudit, row, 'reverse audit')
+                      checkItemAction(showReserveAudit, row, 'audit')
                     "
                     type="link"
                     size="small"
@@ -1497,7 +1497,7 @@ defineExpose({
               !checkItemAction(
                 showEdit,
                 modelValue,
-                modelValue?.id ? 'update' : 'create',
+                modelValue?.id ? 'edit' : 'create',
               ) || !editing
             "
             v-bind="formAttrs"
@@ -1542,7 +1542,7 @@ defineExpose({
               (checkItemAction(
                 showEdit,
                 modelValue,
-                modelValue?.id ? 'update' : 'create',
+                modelValue?.id ? 'edit' : 'create',
               ) &&
                 editing) ||
               ['new', 'edit'].includes(route.params.action)

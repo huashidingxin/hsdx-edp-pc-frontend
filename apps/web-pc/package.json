@@ -77,10 +77,11 @@
     "vue-cropper": "^1.1.4",
     "vue-router": "catalog:",
     "vxe-table": "catalog:",
-    "xe-utils": "^4.0.1"
+    "vxe-pc-ui": "catalog:"
   },
   "devDependencies": {
     "@antdv-next/auto-import-resolver": "^1.0.6",
+    "@types/lodash-es": "^4.17.12",
     "unplugin-auto-import": "^0.17.6",
     "unplugin-fonts": "^1.1.1",
     "unplugin-vue-components": "^0.27.2",

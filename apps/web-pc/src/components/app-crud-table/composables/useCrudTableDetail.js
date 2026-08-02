@@ -47,7 +47,6 @@ export function useCrudTableDetail(props, ctx, callbacks) {
 
   // 创建 Modal / Drawer 容器
   const [ModalComponent, modalApi] = useVbenModal({
-    closeOnClickModal: false,
     draggable: true,
     async onCancel() {
       closeDetail('cancel');
@@ -60,7 +59,6 @@ export function useCrudTableDetail(props, ctx, callbacks) {
   });
 
   const [DrawerComponent, drawerApi] = useVbenDrawer({
-    closeOnClickModal: false,
     async onCancel() {
       closeDetail('cancel');
     },
@@ -81,8 +79,9 @@ export function useCrudTableDetail(props, ctx, callbacks) {
 
   // 审核相关
   const auditDialog = ref(false);
-  const auditData = ref({ status: 0, reason: '' });
+  const auditData = ref({ status: 1, reason: '' });
   const auditRow = ref(null);
+  const auditSubmitting = ref(false);
 
   // 详情错误状态（page 模式）
   const detailError = ref(null);
@@ -104,7 +103,12 @@ export function useCrudTableDetail(props, ctx, callbacks) {
    * @param {string} [tempOpenType] - 临时打开模式（优先使用）
    * @param {object} [rowData] - 行数据（来自列表），用于立即填充表单
    */
-  async function openDetail(id, isEdit = true, tempOpenType = null, rowData = null) {
+  async function openDetail(
+    id,
+    isEdit = true,
+    tempOpenType = null,
+    rowData = null,
+  ) {
     // 解析 OpenMode
     const requested =
       tempOpenType ?? (id ? props.openMode?.detail : props.openMode?.create);
@@ -281,7 +285,6 @@ export function useCrudTableDetail(props, ctx, callbacks) {
           saving.value = false;
           return;
         }
-        console.log('saveFormat',result)
         payload = result;
       }
 
@@ -379,7 +382,6 @@ export function useCrudTableDetail(props, ctx, callbacks) {
         { apiUrl: props.apiUrl, apiPrefix: props.apiPrefix },
         false,
       );
-      const resource = new Resource(url);
       const idKey = props.idKey || 'id';
       await new Resource(`${url}/${row[idKey]}/audit`).store({
         status,
@@ -399,15 +401,17 @@ export function useCrudTableDetail(props, ctx, callbacks) {
    */
   function openAuditDialog(row) {
     auditRow.value = row;
-    auditData.value = { status: 0, reason: '' };
+    auditData.value = { status: 1, reason: '' };
     auditDialog.value = true;
   }
 
   /**
    * 提交审核
    */
-  async function submitAudit() {
-    const { status, reason } = auditData.value;
+  async function submitAudit(data = auditData.value) {
+    if (auditSubmitting.value) return;
+
+    const { status, reason } = data;
 
     // 校验：不通过时 reason 必填
     if (status === 0 && (!reason || !reason.trim())) {
@@ -415,17 +419,23 @@ export function useCrudTableDetail(props, ctx, callbacks) {
       return;
     }
 
+    const row = auditRow.value;
+    const idKey = props.idKey || 'id';
+    if (!row || row[idKey] === undefined || row[idKey] === null) {
+      message.error('审核对象不存在');
+      return;
+    }
+
+    auditSubmitting.value = true;
     try {
-      const row = auditRow.value;
-      const idKey = props.idKey || 'id';
       const url = buildApiUrl(
         { apiUrl: props.apiUrl, apiPrefix: props.apiPrefix },
         false,
       );
-      await new Resource(`${url}/${row[idKey]}/audit`).store(auditData.value);
+      await new Resource(`${url}/${row[idKey]}/audit`).store(data);
 
       auditDialog.value = false;
-      auditData.value = { status: 0, reason: '' };
+      auditData.value = { status: 1, reason: '' };
       auditRow.value = null;
 
       message.success('审核成功');
@@ -434,6 +444,9 @@ export function useCrudTableDetail(props, ctx, callbacks) {
       }
     } catch (error) {
       console.error('[AppCrudTable] submitAudit error:', error);
+      message.error(error?.message || '审核失败');
+    } finally {
+      auditSubmitting.value = false;
     }
   }
 
@@ -487,6 +500,8 @@ export function useCrudTableDetail(props, ctx, callbacks) {
     auditDialog,
     auditData,
     auditRow,
+    auditSubmitting,
+    submitAudit,
     deleteItem,
     detailError,
     navigateToList,

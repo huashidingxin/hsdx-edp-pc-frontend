@@ -5,11 +5,39 @@
 
 /* eslint-disable vue/one-component-per-file */
 
-import type { UploadChangeParam, UploadFile, UploadProps } from 'antdv-next';
+import type {
+  AutoCompleteProps,
+  ButtonProps,
+  CascaderProps,
+  CheckboxGroupProps,
+  CheckboxProps,
+  DatePickerProps,
+  DividerProps,
+  InputNumberProps,
+  InputProps,
+  MentionsProps,
+  RadioGroupProps,
+  RadioProps,
+  RangePickerProps,
+  RateProps,
+  SelectProps,
+  SpaceProps,
+  SwitchProps,
+  TextAreaProps,
+  TimePickerProps,
+  TreeSelectProps,
+  UploadChangeParam,
+  UploadFile,
+  UploadProps,
+} from 'antdv-next';
 
 import type { Component, Ref } from 'vue';
 
-import type { BaseFormComponentType } from '@vben/common-ui';
+import type {
+  ApiComponentSharedProps,
+  BaseFormComponentType,
+  IconPickerProps,
+} from '@vben/common-ui';
 import type { Recordable } from '@vben/types';
 
 import {
@@ -34,6 +62,14 @@ import { $t } from '@vben/locales';
 import { isEmpty } from '@vben/utils';
 
 import { message, Modal, notification } from 'antdv-next';
+
+type AdapterUploadProps = UploadProps & {
+  aspectRatio?: string;
+  crop?: boolean;
+  handleChange?: (event: UploadChangeParam) => void;
+  maxSize?: number;
+  onHandleChange?: (event: UploadChangeParam) => void;
+};
 
 const AutoComplete = defineAsyncComponent(
   () => import('antdv-next/dist/auto-complete/index'),
@@ -100,8 +136,8 @@ const PreviewGroup = defineAsyncComponent(() =>
   import('antdv-next/dist/image/index').then((res) => res.ImagePreviewGroup),
 );
 
-const withDefaultPlaceholder = <T extends Component>(
-  component: T,
+const withDefaultPlaceholder = (
+  component: Component,
   type: 'input' | 'select',
   componentProps: Recordable<any> = {},
 ) => {
@@ -521,6 +557,39 @@ export type ComponentType =
   | 'Upload'
   | BaseFormComponentType;
 
+/**
+ * 与 {@link ComponentType} 中注册的组件名一一对应，便于 Schema 上 `component` + `componentProps` 联动提示
+ */
+export interface ComponentPropsMap {
+  ApiCascader: ApiComponentSharedProps & CascaderProps;
+  ApiSelect: ApiComponentSharedProps & SelectProps;
+  ApiTreeSelect: ApiComponentSharedProps & TreeSelectProps;
+  AutoComplete: AutoCompleteProps;
+  Cascader: CascaderProps;
+  Checkbox: CheckboxProps;
+  CheckboxGroup: CheckboxGroupProps;
+  DatePicker: DatePickerProps;
+  DefaultButton: ButtonProps;
+  Divider: DividerProps;
+  IconPicker: IconPickerProps;
+  Input: InputProps;
+  InputNumber: InputNumberProps;
+  InputPassword: InputProps;
+  Mentions: MentionsProps;
+  PrimaryButton: ButtonProps;
+  Radio: RadioProps;
+  RadioGroup: RadioGroupProps;
+  RangePicker: RangePickerProps;
+  Rate: RateProps;
+  Select: SelectProps;
+  Space: SpaceProps;
+  Switch: SwitchProps;
+  Textarea: TextAreaProps;
+  TimePicker: TimePickerProps;
+  TreeSelect: TreeSelectProps;
+  Upload: AdapterUploadProps;
+}
+
 async function initComponentAdapter() {
   const components: Partial<Record<ComponentType, Component>> = {
     // 如果你的组件体积比较大，可以使用异步加载
@@ -564,7 +633,9 @@ async function initComponentAdapter() {
       modelValueProp: 'value',
     }),
     Input: withDefaultPlaceholder(Input, 'input'),
-    InputNumber: withDefaultPlaceholder(InputNumber, 'input'),
+    InputNumber: withDefaultPlaceholder(InputNumber, 'input', {
+      style: { width: '100%' },
+    }),
     InputPassword: withDefaultPlaceholder(InputPassword, 'input'),
     Mentions: withDefaultPlaceholder(Mentions, 'input'),
     // 自定义主要按钮

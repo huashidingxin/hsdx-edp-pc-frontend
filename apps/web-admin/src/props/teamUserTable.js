@@ -1,5 +1,5 @@
 export default {
-  apiUrl: "team-users",
+  apiUrl: "project-users",
   resourceName: "项目成员",
   requestData: {},
   options: {

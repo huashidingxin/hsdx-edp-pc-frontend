@@ -17,7 +17,6 @@ declare module 'vue' {
     AppList: typeof import('./components/AppList.vue')['default']
     AppTable: typeof import('./components/AppTable.vue')['default']
     AppUpload: typeof import('./components/AppUpload.vue')['default']
-    copy: typeof import('./components/AppField copy.vue')['default']
     CrudAuditModal: typeof import('./components/app-crud-table/parts/CrudAuditModal.vue')['default']
     CrudDetailView: typeof import('./components/app-crud-table/parts/CrudDetailView.vue')['default']
     CrudFilterBar: typeof import('./components/app-crud-table/parts/CrudFilterBar.vue')['default']

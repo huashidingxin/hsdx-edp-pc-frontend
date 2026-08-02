@@ -114,7 +114,8 @@ const formSchema = computed((): VbenFormSchema[] => {
 
 // 获取短信验证码
 async function getSmsCode() {
-  const formApi = regRef.value.getFormApi()
+  const formApi = regRef.value?.getFormApi();
+  if (!formApi) return false;
   const { mobile } = await formApi.getValues()
   // 验证手机号
   if (!mobile || !/^1[3-9]\d{9}$/.test(mobile)) {

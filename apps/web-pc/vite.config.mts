@@ -10,7 +10,7 @@ export default defineConfig(async () => {
     application: {},
 
     vite: {
-      // base: '/admin/', 
+      // base: '/admin/',
       plugins: [
         VueRouter({
           dts: 'src/typed-router.d.ts',

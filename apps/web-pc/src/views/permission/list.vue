@@ -17,8 +17,9 @@ const filterFields = ref([
     attrs: {
       allowClear: true,
       items: [
-        { id: 1, name: '页面' },
+        { id: 1, name: 'PC 菜单' },
         { id: 2, name: '功能' },
+        { id: 4, name: 'APP 菜单' },
       ],
     },
   },
@@ -35,8 +36,9 @@ const formFields = ref([
     span: 12,
     attrs: {
       items: [
-        { id: 1, name: '页面' },
+        { id: 1, name: 'PC 菜单' },
         { id: 2, name: '功能' },
+        { id: 4, name: 'APP 菜单' },
       ],
     },
   },
@@ -62,8 +64,10 @@ const gridColumns = ref([
   { field: 'created_at', title: '创建时间', width: 160 },
 ]);
 
+const typeMap = { 1: 'PC 菜单', 2: '功能', 4: 'APP 菜单' };
+const typeColorMap = { 1: 'blue', 2: 'green', 4: 'orange' };
 function typeText(t) {
-  return t === 1 ? '页面' : (t === 2 ? '功能' : '-');
+  return typeMap[t] || '-';
 }
 
 async function loadPermissions() {
@@ -86,14 +90,14 @@ onMounted(loadPermissions);
     :filter-fields="filterFields"
     :fields="formFields"
     permission-name="permission"
-    :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
+    :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true }}"
     :open-mode="{ create: 'modal', detail: 'modal' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
     title="权限管理"
     class="p-4"
   >
     <template #default_type="{ row }">
-      <Tag :color="row.type === 1 ? 'blue' : 'green'">{{ typeText(row.type) }}</Tag>
+      <Tag :color="typeColorMap[row.type] || 'default'">{{ typeText(row.type) }}</Tag>
     </template>
     <template #default_parent="{ row }">
       {{ row.parent?.display_name || '-' }}
