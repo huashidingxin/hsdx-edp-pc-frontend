@@ -28,7 +28,7 @@
     "bootstrap": "pnpm install",
     "build": "cross-env NODE_OPTIONS=--max-old-space-size=8192 turbo build",
     "build:analyze": "turbo build:analyze",
-    "build:pc": "pnpm run build --filter=web-pc",
+    "build:antd": "pnpm run build --filter=@vben/web-antd",
     "build:docker": "./scripts/deploy/build-local-docker-image.sh",
     "build:docs": "pnpm run build --filter=@vben/docs",
     "build:ele": "pnpm run build --filter=@vben/web-ele",
@@ -44,33 +44,36 @@
     "clean": "node ./scripts/clean.mjs",
     "commit": "czg",
     "dev": "turbo-run dev",
-    "dev:pc": "pnpm -F web-pc run dev",
+    "dev:antd": "pnpm -F @vben/web-antd run dev",
     "dev:antdv-next": "pnpm -F @vben/web-antdv-next run dev",
     "dev:docs": "pnpm -F @vben/docs run dev",
-    "dev:ele": "pnpm -F @vben/web-ele run dev",
+    "dev:pc": "pnpm -F web-pc run dev",
     "dev:naive": "pnpm -F @vben/web-naive run dev",
     "dev:tdesign": "pnpm -F @vben/web-tdesign run dev",
     "dev:play": "pnpm -F @vben/playground run dev",
     "format": "vsh lint --format",
     "lint": "vsh lint",
-    "postinstall": "pnpm -r run stub --if-present",
+    "postinstall": "pnpm -r run --if-present stub",
     "preinstall": "npx only-allow pnpm",
     "prepare": "is-ci || pnpm exec lefthook install",
     "preview": "turbo-run preview",
     "publint": "vsh publint",
-    "reinstall": "pnpm clean --del-lock && pnpm install",
+    "reinstall": "pnpm run clean -- --del-lock && pnpm install",
+    "test:benchmark": "vitest bench --run",
     "test:unit": "vitest run --dom",
     "test:e2e": "turbo run test:e2e",
     "update:deps": "npx taze -r -w",
     "version": "pnpm exec changeset version && pnpm install --no-frozen-lockfile",
-    "catalog": "pnpx codemod pnpm/catalog"
+    "catalog": "pnpm dlx codemod pnpm/catalog"
+  },
+  "dependencies": {
+    "sortablejs": "catalog:"
   },
   "devDependencies": {
     "@changesets/changelog-github": "catalog:",
     "@changesets/cli": "catalog:",
     "@tsdown/css": "catalog:",
     "@types/node": "catalog:",
-    "@vue/test-utils": "catalog:",
     "@vben/commitlint-config": "workspace:*",
     "@vben/eslint-config": "workspace:*",
     "@vben/oxfmt-config": "workspace:*",
@@ -85,6 +88,7 @@
     "@vitejs/plugin-vue-jsx": "catalog:",
     "cross-env": "catalog:",
     "cspell": "catalog:",
+    "eslint": "catalog:",
     "happy-dom": "catalog:",
     "is-ci": "catalog:",
     "lefthook": "catalog:",
@@ -103,8 +107,8 @@
     "vue-tsc": "catalog:"
   },
   "engines": {
-    "node": "^22.18.0 || ^24.0.0",
-    "pnpm": ">=10.0.0"
+    "node": "^22.18.0 || ^24.12.0",
+    "pnpm": ">=11.0.0"
   },
-  "packageManager": "pnpm@10.33.4"
+  "packageManager": "pnpm@11.16.0"
 }

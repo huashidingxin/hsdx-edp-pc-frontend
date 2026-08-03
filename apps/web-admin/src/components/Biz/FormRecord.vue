@@ -295,13 +295,9 @@ const submitForm = async () => {
     return;
   }
 
-  // 替换为您的API调用
-  const api = new uni.Resource('task-activity-submissions');
-  const {data} = await api.store({
-    values: formData.value,
-    warnings: warnings.value,
-    rules: rules.value
-  });
+  // P2-001/P7-010 旧任务活动提交链已停用，统一走 task-submissions/task 提交（P2-005 统一提交服务接管）
+  // 提交逻辑由各业务表单页面实现
+  return;
 };
 
 async function validate() {

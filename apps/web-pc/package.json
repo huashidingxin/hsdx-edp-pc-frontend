@@ -67,7 +67,6 @@
     "fontverter": "^2.0.0",
     "jspdf": "^4.2.1",
     "lodash-es": "^4.17.23",
-    "lucide-vue-next": "catalog:",
     "lunar-javascript": "^1.7.7",
     "markdown-it": "^14.1.1",
     "markstream-vue": "0.0.10-beta.4",

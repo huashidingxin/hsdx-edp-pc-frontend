@@ -88,7 +88,7 @@ export function vbenAlert(
     render(vnode, container);
 
     // 保存组件实例引用
-    alertRef.instance = vnode.component?.proxy as unknown as Component;
+    alertRef.instance = vnode.component?.proxy as Component;
 
     // 将实例和容器添加到alerts数组中
     alerts.value.push(alertRef);

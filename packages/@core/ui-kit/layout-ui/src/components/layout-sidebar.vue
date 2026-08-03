@@ -3,9 +3,8 @@ import type { CSSProperties } from 'vue';
 
 import { computed, onUnmounted, shallowRef, useSlots, watchEffect } from 'vue';
 
+import { useScrollLock } from '@vben-core/composables';
 import { VbenScrollbar } from '@vben-core/shadcn-ui';
-
-import { useScrollLock } from '@vueuse/core';
 
 import { useSidebarDrag } from '../hooks/use-sidebar-drag';
 import { SidebarCollapseButton, SidebarFixedButton } from './widgets';
@@ -26,6 +25,10 @@ interface Props {
    * @default true
    */
   domVisible?: boolean;
+  /**
+   * 扩展区域extra-title的高度
+   */
+  extraTitleHeight?: number;
   /**
    * 扩展区域宽度
    */
@@ -97,6 +100,7 @@ const props = withDefaults(defineProps<Props>(), {
   collapseHeight: 42,
   collapseWidth: 48,
   domVisible: true,
+  extraTitleHeight: undefined,
   fixedExtra: false,
   isSidebarMixed: false,
   marginTop: 0,
@@ -116,7 +120,7 @@ const expandOnHovering = defineModel<boolean>('expandOnHovering');
 const expandOnHover = defineModel<boolean>('expandOnHover');
 const extraVisible = defineModel<boolean>('extraVisible');
 
-const isLocked = useScrollLock(document.body);
+const isLocked = useScrollLock({ immediate: false });
 const slots = useSlots();
 
 const asideRef = shallowRef<HTMLElement | null>(null);
@@ -149,10 +153,10 @@ const extraStyle = computed((): CSSProperties => {
 });
 
 const extraTitleStyle = computed((): CSSProperties => {
-  const { headerHeight } = props;
+  const { extraTitleHeight, headerHeight } = props;
 
   return {
-    height: `${headerHeight - 1}px`,
+    height: `${extraTitleHeight ?? headerHeight - 1}px`,
   };
 });
 
@@ -185,9 +189,10 @@ const headerStyle = computed((): CSSProperties => {
 });
 
 const extraContentStyle = computed((): CSSProperties => {
-  const { collapseHeight, headerHeight } = props;
+  const { collapseHeight, extraTitleHeight, headerHeight } = props;
+  const titleHeight = extraTitleHeight ?? headerHeight;
   return {
-    height: `calc(100% - ${headerHeight + collapseHeight}px)`,
+    height: `calc(100% - ${titleHeight + collapseHeight}px)`,
   };
 });
 

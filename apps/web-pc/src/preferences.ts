@@ -12,8 +12,8 @@ export const overridesPreferences = defineOverridesPreferences({
     accessMode: 'backend',
     name: import.meta.env.VITE_APP_TITLE,
     watermark: false,
-    authPageLayout:'panel-center',
-    enablePreferences:false,
+    // authPageLayout:'panel-center',
+    // enablePreferences:true,
     // defaultHomePath: '/analytics',
   },
   copyright: {
