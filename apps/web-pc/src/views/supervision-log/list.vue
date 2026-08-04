@@ -1,12 +1,37 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 
 import { Tag } from 'antdv-next';
 
+import { useAppStore } from '#/store';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
 
+const appStore = useAppStore();
+
+// 全局选择的项目 ID（"所有项目"时为空）
+const currentProjectId = computed(() => appStore.defaultProject?.id || undefined);
+
+// 仅当未明确选择项目（全部项目）时显示"项目"列
+type GridColumn = { field: string; title: string; width?: number; minWidth?: number; slots?: { default: string } };
+const gridColumns = computed<GridColumn[]>(() => {
+  const columns: GridColumn[] = [
+    { field: 'date', title: '日志日期', width: 120 },
+    { field: 'user.name', title: '填写人', width: 100 },
+    {
+      field: 'submission_state',
+      title: '状态',
+      width: 100,
+      slots: { default: 'default_state' },
+    },
+    { field: 'submission.created_at', title: '最近提交时间', width: 160 },
+  ];
+  if (!currentProjectId.value) {
+    columns.splice(2, 0, { field: 'project.name', title: '项目', minWidth: 160 });
+  }
+  return columns;
+});
+
 const filterFields = ref([
-  { field: 'project_id', label: '项目ID', type: 'number', span: 8 },
   { field: 'date', label: '日志日期', type: 'date', span: 8 },
   { field: 'user_id', label: '填写人ID', type: 'number', span: 8 },
   {
@@ -35,24 +60,10 @@ const filterFields = ref([
 
 const formFields = ref([
   { field: 'date', type: 'text', label: '日志日期', span: 12, displayOnly: true },
-  { field: 'user__name', type: 'text', label: '填写人', span: 12, displayOnly: true },
-  { field: 'project__name', type: 'text', label: '项目', span: 24, displayOnly: true },
+  { field: 'user_id', type: 'text', label: '填写人ID', span: 12, displayOnly: true },
   { field: 'submission_state_label', type: 'text', label: '审核状态', span: 12, displayOnly: true },
-  { field: 'submission__created_at', type: 'text', label: '最近提交时间', span: 12, displayOnly: true },
+  { field: 'submission.id', type: 'text', label: '提交记录', span: 12, displayOnly: true },
   { field: 'timeline', type: 'slot', label: '提交/审核历史时间线', span: 24 },
-]);
-
-const gridColumns = ref([
-  { field: 'date', title: '日志日期', width: 120 },
-  { field: 'user__name', title: '填写人', width: 100 },
-  { field: 'project__name', title: '项目', minWidth: 160 },
-  {
-    field: 'submission_state',
-    title: '状态',
-    width: 100,
-    slots: { default: 'default_state' },
-  },
-  { field: 'submission__created_at', title: '最近提交时间', width: 160 },
 ]);
 
 const stateMap: Record<number, { text: string; color: string }> = {
@@ -72,6 +83,7 @@ function stateLabel(state: number | null) {
     api-url="supervision-logs"
     :filter-fields="filterFields"
     :fields="formFields"
+    :extra-query="{ project_id: currentProjectId }"
     permission-name="supervision_log"
     :inline-actions="['view']"
     :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
