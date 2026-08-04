@@ -14,6 +14,7 @@ declare module 'vue' {
     AppField: typeof import('./components/AppField.vue')['default']
     AppFreeDate: typeof import('./components/app-free-date/index.vue')['default']
     AppList: typeof import('./components/AppList.vue')['default']
+    AppProject: typeof import('./components/AppProject.vue')['default']
     AppTable: typeof import('./components/AppTable.vue')['default']
     AppUpload: typeof import('./components/AppUpload.vue')['default']
     CrudAuditModal: typeof import('./components/app-crud-table/parts/CrudAuditModal.vue')['default']

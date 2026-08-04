@@ -18,34 +18,34 @@ class Resource {
     }
     this.options = { ...options, responseReturn: 'body' };
   }
-  destroy(id: string) {
+  destroy(id: string): Promise<any> {
     return request(`${this.uri}/${id}`, {
       method: 'delete',
       ...this.options,
     });
   }
-  get(id: string, params = {}) {
+  get(id: string, params: object = {}): Promise<any> {
     return request(`${this.uri}/${id}`, {
       method: 'get',
       params,
       ...this.options,
     });
   }
-  list(query: object) {
+  list(query: object = {}): Promise<any> {
     return request(`${this.uri}`, {
       method: 'get',
       params: query,
       ...this.options,
     });
   }
-  store(resource: object) {
+  store(resource: object): Promise<any> {
     return request(`${this.uri}`, {
       data: resource,
       method: 'post',
       ...this.options,
     });
   }
-  update(id: string, resource: object) {
+  update(id: string, resource: object): Promise<any> {
     return request(`${this.uri}/${id}`, {
       data: resource,
       method: 'put',

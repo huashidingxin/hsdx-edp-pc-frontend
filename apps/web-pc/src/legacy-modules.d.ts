@@ -1,10 +1,3 @@
-declare module '#/store/app' {
-  export const useAppStore: () => {
-    loadSetting: () => Promise<void>;
-    setting: Record<string, unknown>;
-  };
-}
-
 declare module '#/store/socket' {
   export const useSocketStore: () => {
     connect: (options?: Record<string, unknown>) => void;

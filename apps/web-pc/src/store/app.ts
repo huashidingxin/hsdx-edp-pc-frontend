@@ -1,0 +1,248 @@
+import { defineStore } from 'pinia';
+
+import { useAccessStore, useTabbarStore, useUserStore } from '@vben/stores';
+
+import Resource from '#/api/resource';
+import { generateAccess } from '#/router/access';
+import { resetRoutes, router } from '#/router';
+import { accessRoutes } from '#/router/routes';
+
+interface ProjectRole {
+  id?: string | number;
+  display_name?: string;
+  name?: string;
+  [key: string]: any;
+}
+
+interface ProjectItem {
+  id?: number | string;
+  name?: string;
+  short_name?: string;
+  code?: string;
+  roles?: string[] | ProjectRole[];
+  is_default?: boolean;
+  [key: string]: any;
+}
+
+interface AppState {
+  setting: Record<string, any>;
+  projects: ProjectItem[];
+  defaultProject: ProjectItem;
+  dashboard: Record<string, any>;
+}
+
+function pickRoleName(role: any): string {
+  if (!role) return '';
+  if (typeof role === 'string') return role;
+  return role.display_name || role.name || '';
+}
+
+export const useAppStore = defineStore('app', {
+  state: (): AppState => ({
+    setting: {},
+    projects: [],
+    defaultProject: {},
+    dashboard: {},
+  }),
+
+  getters: {
+    currentProject: (state) =>
+      state.defaultProject?.id ? state.defaultProject : state.projects?.[0],
+
+    defaultRoleName(): string {
+      const role = (this.defaultProject as any)?.role;
+      return pickRoleName(role);
+    },
+
+    todo: (state) => state.dashboard?.todo || {},
+
+    personalTodoCount: (state) => {
+      const todo = state.dashboard || {};
+      const taskPersonalPending = todo.task?.personal_pending || 0;
+      const taskPersonalLogTobeSubmit =
+        todo.task?.personal_log_tobe_submit || 0;
+      const supervisionLogPersonalTobeSubmit =
+        todo.supervision_log?.personal_tobe_submit || 0;
+      return (
+        taskPersonalPending +
+        taskPersonalLogTobeSubmit +
+        supervisionLogPersonalTobeSubmit
+      );
+    },
+  },
+
+  actions: {
+    setTemp(_key: string, _value: any) {
+      // 预留：临时数据存储
+    },
+
+    async loadSetting() {
+      try {
+        const api = new Resource('settings');
+        const { data } = await api.list();
+        this.setting = data;
+      } catch (e) {
+        console.log(e);
+      }
+    },
+
+    async getPermissions(projectId: number | string | undefined = 0) {
+      const accessStore = useAccessStore();
+      try {
+        const api = new Resource('auth');
+        const { data } = await api.get('codes', {
+          project_id: projectId || undefined,
+        });
+        accessStore.setAccessCodes(data);
+        return data;
+      } catch (e) {
+        console.log(e);
+      }
+    },
+
+    getDashboard() {
+      return new Promise(async (resolve, reject) => {
+        const accessStore = useAccessStore();
+        if (!accessStore.isAccessChecked) return;
+        try {
+          const api = new Resource('dashboards');
+          const { data } = await api.list({
+            project_id: this.defaultProject?.id,
+          });
+          this.dashboard = data;
+          resolve(data);
+        } catch (e) {
+          reject(e);
+        }
+      });
+    },
+
+    getProjects(perPage: 'all' | number = 'all') {
+      return new Promise<void>(async (resolve, reject) => {
+        try {
+          const api = new Resource('user-projects');
+          const { data } = await api.list({
+            per_page: perPage,
+            with_stats: 1,
+            status: 1,
+            sort_by: JSON.stringify([{ key: 'is_default', order: 'desc' }]),
+          });
+          if (perPage === 'all') {
+            this.projects = data || [];
+          }
+          if (!this.defaultProject?.name) {
+            this.defaultProject = data?.[0] || {};
+          }
+          resolve();
+        } catch (error) {
+          console.log(error);
+          reject(error);
+        }
+      });
+    },
+
+    setDefaultProject(project: ProjectItem) {
+      this.defaultProject = project as any;
+      if (!project?.id) {
+        this.defaultProject = { name: '所有项目' } as ProjectItem;
+        return Promise.resolve();
+      }
+      return new Promise<void>(async (resolve, reject) => {
+        try {
+          const api = new Resource('project/default');
+          await api.store({ project_id: project.id });
+          resolve();
+        } catch (error) {
+          console.log(error);
+          reject(error);
+        }
+      });
+    },
+
+    /**
+     * 切换当前项目并执行 SPA 内软重载。
+     *
+     * 设计要点：
+     *  - 菜单：不显式 setAccessMenus([]) —— 中间空帧会让顶部菜单闪一下空白。
+     *    直接在 generateAccess 完成后 setAccessMenus(newMenus) 原地覆盖，
+     *    UI 从旧菜单直接替换为新菜单，无明显空白帧。
+     *  - 标签：只保留当前激活标签，其余全部关闭；切换后强制刷新当前标签
+     *    （重挂载当前页面组件，重新拉取新项目数据），不再尝试恢复 affix 或首页。
+     */
+    async switchProject(project: ProjectItem) {
+      const accessStore = useAccessStore();
+      const userStore = useUserStore();
+      const tabbarStore = useTabbarStore();
+
+      // 记录当前激活的标签（切换后要保留它）
+      const currentFullPath = router.currentRoute.value.fullPath;
+      const currentTab = tabbarStore.getTabByKey(currentFullPath);
+
+      // 1. 通知后端记录新默认项目
+      await this.setDefaultProject(project);
+
+      // 2. 清业务缓存
+      this.dashboard = {};
+
+      // 3. 移除上一项目的动态路由（保留静态路由），让 generateAccessible 能原地替换而非合并
+      try {
+        resetRoutes();
+      } catch (e) {
+        console.warn('switchProject: reset routes failed', e);
+      }
+
+      // 4. 重新拉权限码
+      await this.getPermissions(project?.id);
+
+      // 5. 主动生成菜单/路由
+      const userInfo = userStore.userInfo;
+      const userRoles = userInfo?.roles ?? [];
+
+      let result: { accessibleMenus: any[]; accessibleRoutes: any[] };
+      try {
+        result = await generateAccess({
+          roles: userRoles,
+          router,
+          routes: accessRoutes,
+        } as any);
+      } catch (e) {
+        console.error('switchProject: generateAccess failed', e);
+        return;
+      }
+
+      // 6. 原地覆盖菜单与路由（不在前面清空，避免 UI 空白帧）
+      accessStore.setAccessRoutes(result.accessibleRoutes);
+      accessStore.setAccessMenus(result.accessibleMenus);
+      accessStore.setIsAccessChecked(true);
+
+      // 7. 只保留当前激活标签，其余全部关闭（affix 也关闭，不恢复首页）
+      try {
+        tabbarStore.tabs = currentTab
+          ? ([currentTab] as any)
+          : ([] as any);
+        tabbarStore.cachedTabs = currentTab
+          ? new Set([currentTab.key as string])
+          : new Set();
+        tabbarStore.cachedRoutes = new Map();
+      } catch (e) {
+        console.warn('switchProject: keep active tab failed', e);
+      }
+
+      // 8. 强制刷新当前标签：renderRouteView toggle 会卸载并重挂载
+      //    <RouterView>，当前页面组件重新创建，onMounted 重新拉取新项目数据。
+      //    刷新前当前标签已在 tabs 中，刷新后仍保留。
+      try {
+        await tabbarStore.refresh(router);
+      } catch (e) {
+        console.warn('switchProject: refresh tab failed', e);
+      }
+    },
+  },
+
+  persist: {
+    storage: localStorage,
+    pick: ['defaultProject'],
+  },
+});
+
+export type { AppState, ProjectItem, ProjectRole };

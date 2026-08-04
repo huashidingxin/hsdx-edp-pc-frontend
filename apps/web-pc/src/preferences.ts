@@ -12,9 +12,13 @@ export const overridesPreferences = defineOverridesPreferences({
     accessMode: 'backend',
     name: import.meta.env.VITE_APP_TITLE,
     watermark: false,
-    // authPageLayout:'panel-center',
+    authPageLayout:'panel-center',
     // enablePreferences:true,
-    // defaultHomePath: '/analytics',
+    defaultHomePath: '/workspace',
+    "layout": "header-sidebar-nav",
+  },
+  "breadcrumb": {
+    "enable": false
   },
   copyright: {
     companyName: '华视鼎信',

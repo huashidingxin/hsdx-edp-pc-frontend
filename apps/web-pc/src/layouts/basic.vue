@@ -12,12 +12,14 @@ import { useAccessStore, useUserStore } from '@vben/stores';
 import { Form, FormItem, InputPassword, Modal, message } from 'antdv-next';
 
 import { changePasswordApi } from '#/api';
-import { useAuthStore } from '#/store';
+import AppProject from '#/components/AppProject.vue';
+import { useAppStore, useAuthStore } from '#/store';
 import LoginForm from '#/views/_core/authentication/login.vue';
 
 const userStore = useUserStore();
 const authStore = useAuthStore();
 const accessStore = useAccessStore();
+const appStore = useAppStore();
 const { destroyWatermark, updateWatermark } = useWatermark();
 
 const passwordFormRef = ref();
@@ -59,6 +61,13 @@ const menus = [
 
 const avatar = computed(() => {
   return userStore.userInfo?.avatar ?? preferences.app.defaultAvatar;
+});
+
+const currentRoleName = computed(() => {
+  const role = (appStore.defaultProject as any)?.role;
+  if (!role) return '';
+  if (typeof role === 'string') return role;
+  return role.display_name || role.name || '';
 });
 
 async function handleLogout() {
@@ -121,11 +130,15 @@ watch(
 
 <template>
   <BasicLayout @clear-preferences-and-logout="handleLogout">
+    <template #header-left-1>
+      <AppProject />
+    </template>
     <template #user-dropdown>
       <UserDropdown
         :avatar
         :menus
         :text="userStore.userInfo?.realName"
+        :description="currentRoleName"
         @logout="handleLogout"
       />
     </template>
