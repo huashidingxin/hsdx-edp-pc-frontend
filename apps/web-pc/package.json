@@ -71,12 +71,13 @@
     "markdown-it": "^14.1.1",
     "markstream-vue": "0.0.10-beta.4",
     "mitt": "^3.0.1",
+    "ol": "^10.10.0",
     "pinia": "catalog:",
     "vue": "catalog:",
     "vue-cropper": "^1.1.4",
     "vue-router": "catalog:",
-    "vxe-table": "catalog:",
-    "vxe-pc-ui": "catalog:"
+    "vxe-pc-ui": "catalog:",
+    "vxe-table": "catalog:"
   },
   "devDependencies": {
     "@antdv-next/auto-import-resolver": "^1.0.6",

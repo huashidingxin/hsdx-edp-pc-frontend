@@ -1047,6 +1047,9 @@ importers:
       mitt:
         specifier: ^3.0.1
         version: 3.0.1
+      ol:
+        specifier: ^10.10.0
+        version: 10.10.0
       pinia:
         specifier: ^4.0.2
         version: 4.0.2(@vue/devtools-api@8.1.5)(typescript@6.0.3)(vue@3.5.40(typescript@6.0.3))
