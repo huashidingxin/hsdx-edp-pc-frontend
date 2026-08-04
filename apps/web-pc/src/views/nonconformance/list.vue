@@ -1,11 +1,15 @@
 <script setup>
-import { reactive, ref } from 'vue';
+import { computed, reactive, ref } from 'vue';
 
 import { Button, DatePicker, Input, InputNumber, message, Modal, Select, Tag } from 'antdv-next';
 
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
 
+import { useAppStore } from '#/store';
 import { requestClient } from '#/api/request';
+
+// 全局选择的项目 ID（"所有项目"时为空），列表请求自动携带
+const currentProjectId = computed(() => useAppStore().defaultProject?.id || undefined);
 
 const stateOptions = [
   { label: '草稿', value: 0 },
@@ -168,6 +172,8 @@ function pollExport(id) {
     api-url="nonconformances"
     :filter-fields="filterFields"
     :fields="formFields"
+    :extra-query="{ project_id: currentProjectId }"
+    :list-scope="2"
     permission-name="nonconformance"
     :inline-actions="['view', 'audit']"
     :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"

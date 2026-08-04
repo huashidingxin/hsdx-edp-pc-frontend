@@ -1,9 +1,21 @@
 <script setup>
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 
-import { Tag } from 'antdv-next';
+import { Radio, Tag } from 'antdv-next';
 
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
+
+import { useAppStore } from '#/store';
+
+// 全局选择的项目 ID（"所有项目"时为空），列表请求自动携带
+const currentProjectId = computed(() => useAppStore().defaultProject?.id || undefined);
+
+// 查询范围：2=项目范围（最大权限，默认） 1=仅本人
+const listScope = ref(2);
+const scopeOptions = [
+  { label: '全部', value: 2 },
+  { label: '只看自己的', value: 1 },
+];
 
 const filterFields = ref([
   { field: 'project_id', label: '项目ID', type: 'number', span: 8 },
@@ -48,6 +60,8 @@ const gridColumns = ref([
     api-url="task-backfills"
     :filter-fields="filterFields"
     :fields="formFields"
+    :extra-query="{ project_id: currentProjectId }"
+    :list-scope="listScope"
     permission-name="task_backfill"
     :inline-actions="['view', 'audit']"
     :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
@@ -56,6 +70,17 @@ const gridColumns = ref([
     title="后补任务记录申请"
     class="p-4"
   >
+    <template #filter-prepend>
+      <div class="mb-3 flex items-center gap-2">
+        <span class="text-sm text-gray-500">查询范围</span>
+        <Radio.Group
+          v-model:value="listScope"
+          :options="scopeOptions"
+          option-type="button"
+          size="small"
+        />
+      </div>
+    </template>
     <template #default_state="{ row }">
       <Tag :color="stateColors[row.state] || 'default'">{{ row.state_label || '-' }}</Tag>
     </template>
