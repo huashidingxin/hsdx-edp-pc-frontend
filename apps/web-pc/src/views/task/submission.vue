@@ -33,6 +33,12 @@ const scopeOptions = [
 
 const editingItem = ref({});
 const submissionRef = ref(null);
+// 详情打开时是否编辑模式（view=false / edit=true），决定 SubmissionEdit 只读
+const isEditing = ref(true);
+
+function onShowDetail(editing) {
+  isEditing.value = editing;
+}
 
 // ---- 筛选（对齐后端 TaskSubmissionController::index filters）----
 const executorOptions = ref([]);
@@ -221,6 +227,7 @@ watch(() => appStore.defaultProject?.id, refreshAll);
       :toolbar="{ filter: true, create: false, refresh: true }"
       title="任务记录"
       class="p-4"
+      @show-detail="onShowDetail"
     >
       <template #filter-prepend>
         <Radio.Group
@@ -291,15 +298,17 @@ watch(() => appStore.defaultProject?.id, refreshAll);
             :project-id="editingItem.project_id"
             :values="editingItem.submission?.values || []"
             :rules="editingItem.submission?.rules || {}"
-            :readonly="false"
+            :readonly="!isEditing"
           />
           <div v-else class="py-10 text-center text-gray-400">该任务未配置表单</div>
         </div>
       </template>
 
       <template #form-action>
-        <Button @click="reset">重置</Button>
-        <Button type="primary" @click="save">提交</Button>
+        <template v-if="isEditing">
+          <Button @click="reset">重置</Button>
+          <Button type="primary" @click="save">提交</Button>
+        </template>
       </template>
 
       <template #default_code="{ row }">
