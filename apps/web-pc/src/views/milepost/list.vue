@@ -1,10 +1,11 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue';
 
-import { Button, InputNumber, message, Modal, Select } from 'antdv-next';
+import { Button, message, Modal, Select } from 'antdv-next';
 
 import { requestClient } from '#/api/request';
 import Resource from '#/api/resource';
+import AppChooseLocation from '#/components/AppChooseLocation.vue';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
 import AppMapDraw from '#/components/AppMapDraw.vue';
 import { useAppStore } from '#/store';
@@ -151,30 +152,13 @@ watch(
       </template>
 
       <template #field_location="{ modelValue, update }">
-        <div class="grid grid-cols-2 gap-4">
-          <div>
-            <label class="mb-1 block text-sm text-gray-500">经度</label>
-            <InputNumber
-              :value="modelValue?.longitude"
-              :step="0.000001"
-              :precision="6"
-              style="width: 100%"
-              placeholder="经度"
-              @change="(v) => update({ ...(modelValue || {}), longitude: v })"
-            />
-          </div>
-          <div>
-            <label class="mb-1 block text-sm text-gray-500">纬度</label>
-            <InputNumber
-              :value="modelValue?.latitude"
-              :step="0.000001"
-              :precision="6"
-              style="width: 100%"
-              placeholder="纬度"
-              @change="(v) => update({ ...(modelValue || {}), latitude: v })"
-            />
-          </div>
-        </div>
+        <AppChooseLocation
+          :model-value="modelValue || {}"
+          :return-address="false"
+          label="桩号位置"
+          placeholder="点击地图选点"
+          @update:model-value="update"
+        />
       </template>
 
       <template #field_boundary="{ modelValue, update }">

@@ -4,6 +4,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { DatePicker, Tag } from 'antdv-next';
 
 import Resource from '#/api/resource';
+import AppChooseLocation from '#/components/AppChooseLocation.vue';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
 
 // 项目分类选项（主分类/多分类共用，categories?type=project）
@@ -27,7 +28,7 @@ const formFields = ref([
   { field: 'categories', type: 'select', span: 12, label: '分类', required: true, attrs: { options: [], multiple: true } },
   { field: 'category_id', type: 'select', span: 12, label: '主分类', required: true, attrs: { options: [] } },
   { field: 'start_end_time', type: 'slot', span: 12, label: '起止时间', required: true },
-  { field: 'address.detail', type: 'text', span: 12, label: '详细地址', required: true },
+  { field: 'location', type: 'slot', span: 12, label: '项目位置', required: true },
   { field: 'state', type: 'select', span: 12, label: '状态', required: true, attrs: { options: [
     { value: 1, label: '待启动' },
     { value: 2, label: '进行中' },
@@ -51,16 +52,16 @@ const gridColumns = ref([
 
 const stateColorMap = { 1: 'orange', 2: 'blue', 3: 'green' };
 
-// 详情回显：起止时间、多分类 id 数组、地址展开
+// 详情回显：起止时间、多分类 id 数组、地址对象（地图选点回显）
 function detailFormat(e) {
   const data = { ...e };
   if (data.start_time) data.start_end_time = [data.start_time, data.end_time];
   if (Array.isArray(data.categories)) data.categories = data.categories.map((c) => c.id);
-  data['address.detail'] = data.address?.detail || '';
+  data.location = data.address || {};
   return data;
 }
 
-// 保存：时间拆分、多分类 [{id}]、address 对象组装（无地图组件，位置降级为详细地址文本）
+// 保存：时间拆分、多分类 [{id}]、address 对象组装（含经纬度，来自地图选点）
 function saveFormat(e) {
   const payload = { ...e };
   if (Array.isArray(payload.start_end_time)) {
@@ -69,13 +70,20 @@ function saveFormat(e) {
   }
   delete payload.start_end_time;
   if (Array.isArray(payload.categories)) payload.categories = payload.categories.map((id) => ({ id }));
-  const detail = payload['address.detail'];
-  delete payload['address.detail'];
+  const loc = payload.location || {};
+  delete payload.location;
   payload.address = {
-    detail: detail || '',
-    province: payload.address?.province || '',
-    city: payload.address?.city || '',
-    area: payload.address?.area || '',
+    detail: loc.detail || '',
+    province: loc.province || '',
+    province_id: loc.province_id,
+    city: loc.city || '',
+    city_id: loc.city_id,
+    area: loc.area || '',
+    area_id: loc.area_id,
+    town: loc.town || '',
+    town_id: loc.town_id,
+    longitude: loc.longitude,
+    latitude: loc.latitude,
   };
   return payload;
 }
@@ -121,6 +129,16 @@ onMounted(loadCategories);
         style="width: 100%"
         placeholder="['开始时间', '结束时间']"
         @change="update"
+      />
+    </template>
+
+    <template #field_location="{ modelValue, update }">
+      <AppChooseLocation
+        :model-value="modelValue || {}"
+        :return-address="true"
+        label="项目位置"
+        placeholder="点击地图选点定位项目"
+        @update:model-value="update"
       />
     </template>
 
