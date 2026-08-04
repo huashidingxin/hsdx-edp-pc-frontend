@@ -16,17 +16,32 @@ type GridColumn = { field: string; title: string; width?: number; minWidth?: num
 const gridColumns = computed<GridColumn[]>(() => {
   const columns: GridColumn[] = [
     { field: 'date', title: '日志日期', width: 120 },
-    { field: 'user.name', title: '填写人', width: 100 },
     {
-      field: 'submission_state',
+      field: 'user.name',
+      title: '填写人',
+      width: 100,
+      slots: { default: 'default_user' },
+    },
+    {
+      field: 'submission.state',
       title: '状态',
       width: 100,
       slots: { default: 'default_state' },
     },
-    { field: 'submission.created_at', title: '最近提交时间', width: 160 },
+    {
+      field: 'submission.created_at',
+      title: '最近提交时间',
+      width: 160,
+      slots: { default: 'default_submitted' },
+    },
   ];
   if (!currentProjectId.value) {
-    columns.splice(2, 0, { field: 'project.name', title: '项目', minWidth: 160 });
+    columns.splice(1, 0, {
+      field: 'project.name',
+      title: '项目',
+      minWidth: 160,
+      slots: { default: 'default_project' },
+    });
   }
   return columns;
 });
@@ -61,8 +76,8 @@ const filterFields = ref([
 const formFields = ref([
   { field: 'date', type: 'text', label: '日志日期', span: 12, displayOnly: true },
   { field: 'user_id', type: 'text', label: '填写人ID', span: 12, displayOnly: true },
-  { field: 'submission_state_label', type: 'text', label: '审核状态', span: 12, displayOnly: true },
-  { field: 'submission.id', type: 'text', label: '提交记录', span: 12, displayOnly: true },
+  { field: 'submission_state', type: 'text', label: '审核状态', span: 12, displayOnly: true },
+  { field: 'submission_id', type: 'text', label: '提交记录', span: 12, displayOnly: true },
   { field: 'timeline', type: 'slot', label: '提交/审核历史时间线', span: 24 },
 ]);
 
@@ -76,6 +91,13 @@ const stateMap: Record<number, { text: string; color: string }> = {
 function stateLabel(state: number | null) {
   return stateMap[state ?? 0]?.text ?? `状态${state}`;
 }
+
+// 列表行状态：已提交取 submission.state（1待审/2通过/3退回），未提交为 0
+function rowState(row: Record<string, unknown>): number {
+  const submission = row.submission as { state?: number } | null;
+  if (submission?.state != null) return Number(submission.state);
+  return 0;
+}
 </script>
 
 <template>
@@ -84,6 +106,7 @@ function stateLabel(state: number | null) {
     :filter-fields="filterFields"
     :fields="formFields"
     :extra-query="{ project_id: currentProjectId }"
+    :list-scope="2"
     permission-name="supervision_log"
     :inline-actions="['view']"
     :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
@@ -92,9 +115,18 @@ function stateLabel(state: number | null) {
     class="p-4"
   >
     <template #default_state="{ row }">
-      <Tag :color="stateMap[row.submission_state ?? 0]?.color || 'default'">
-        {{ stateLabel(row.submission_state ?? 0) }}
+      <Tag :color="stateMap[rowState(row)]?.color || 'default'">
+        {{ stateLabel(rowState(row)) }}
       </Tag>
+    </template>
+    <template #default_user="{ row }">
+      {{ row.user?.name || '-' }}
+    </template>
+    <template #default_project="{ row }">
+      {{ row.project?.name || '-' }}
+    </template>
+    <template #default_submitted="{ row }">
+      {{ row.submission?.created_at || '-' }}
     </template>
 
     <!-- P3-L02 提交/审核历史时间线 -->
