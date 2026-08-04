@@ -1,13 +1,61 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 
-import { DatePicker, Radio, Select, Tag } from 'antdv-next';
+import { Button, DatePicker, message, Radio, Select, Tag } from 'antdv-next';
+
+import { useUserStore } from '@vben/stores';
 
 import Resource from '#/api/resource';
 import { useAppStore } from '#/store';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
+import SubmissionEdit from '#/components/SubmissionEdit.vue';
 
 const appStore = useAppStore();
+const userStore = useUserStore();
+
+const editingItem = ref<Record<string, any>>({});
+const submissionRef = ref(null);
+// 详情打开是否编辑模式（view=false / edit=true）
+const isEditing = ref(false);
+function onShowDetail(editing: boolean) {
+  isEditing.value = editing;
+}
+
+// ---- 详情：解析 values/form_id 供 SubmissionEdit ----
+const defaultValues = ref<any[]>([]);
+function detailFormat(data: any) {
+  defaultValues.value = JSON.parse(JSON.stringify(data.submission?.values || []));
+  editingItem.value._values = JSON.parse(JSON.stringify(defaultValues.value));
+  editingItem.value._formId = data.form_id || data.submission?.form_id || data.projects?.supervision_log_form_id;
+  editingItem.value._projectId = data.project_id;
+  return data;
+}
+
+// ---- 提交：PUT supervision-logs/{id} { form_id, values } ----
+async function save() {
+  const formData = await submissionRef.value?.getFormData();
+  if (!formData) return;
+  if (!formData.validated) {
+    message.error('请检查表单');
+    return;
+  }
+  try {
+    await new Resource('supervision-logs').update(editingItem.value.id, {
+      form_id: editingItem.value._formId,
+      values: formData.values,
+    });
+    message.success('提交成功');
+    tableRef.value?.reload?.();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+function reset() {
+  editingItem.value._values = JSON.parse(JSON.stringify(defaultValues.value));
+}
+
+const tableRef = ref(null);
 
 // 全局选择的项目 ID（"所有项目"时为空）
 const currentProjectId = computed(() => appStore.defaultProject?.id || undefined);
@@ -138,7 +186,7 @@ const formFields = ref([
   { field: 'date', type: 'text', label: '日志日期', span: 12, displayOnly: true },
   { field: 'user_id', type: 'text', label: '填写人ID', span: 12, displayOnly: true },
   { field: 'submission_state', type: 'text', label: '审核状态', span: 12, displayOnly: true },
-  { field: 'submission_id', type: 'text', label: '提交记录', span: 12, displayOnly: true },
+  { field: 'content', type: 'slot', label: '记录内容', span: 24 },
   { field: 'timeline', type: 'slot', label: '提交/审核历史时间线', span: 24 },
 ]);
 
@@ -163,17 +211,30 @@ function rowState(row: Record<string, unknown>): number {
 
 <template>
   <AppCrudTable
+    ref="tableRef"
+    v-model="editingItem"
     api-url="supervision-logs"
     :filter-fields="filterFields"
     :fields="formFields"
     :extra-query="{ project_id: currentProjectId }"
     :list-scope="listScope"
     permission-name="supervision_log"
-    :inline-actions="['view']"
+    :inline-actions="['view', 'edit']"
+    :actions-config="[
+      { key: 'view', visible: () => true },
+      {
+        key: 'edit',
+        visible: (row) =>
+          row.user_id === userStore.userInfo?.id &&
+          (row.submission_id === 0 || (row.submission_id > 0 && row.submission?.state !== 2)),
+      },
+    ]"
+    :detail-format="detailFormat"
     :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
     :open-mode="{ create: false, detail: 'modal' }"
     title="监理日志"
     class="p-4"
+    @show-detail="onShowDetail"
   >
     <template #filter-prepend>
       <div class="mb-3 flex items-center gap-2">
@@ -234,6 +295,30 @@ function rowState(row: Record<string, unknown>): number {
       <Tag :color="row.submission_timeout ? 'error' : 'processing'">
         {{ row.submission_timeout ? '超时' : '正常' }}
       </Tag>
+    </template>
+
+    <template #field_content>
+      <div v-if="editingItem.id" class="min-h-[200px]">
+        <SubmissionEdit
+          v-if="editingItem._formId"
+          ref="submissionRef"
+          :form-id="editingItem._formId"
+          :project-id="editingItem._projectId"
+          :values="editingItem._values || []"
+          :rules="editingItem.submission?.rules || {}"
+          :readonly="!isEditing"
+        />
+        <div v-else class="py-6 text-center text-gray-400">
+          该项目未配置监理日志表单
+        </div>
+      </div>
+    </template>
+
+    <template #form-action>
+      <template v-if="isEditing">
+        <Button @click="reset">重置</Button>
+        <Button type="primary" @click="save">提交</Button>
+      </template>
     </template>
 
     <!-- P3-L02 提交/审核历史时间线 -->
