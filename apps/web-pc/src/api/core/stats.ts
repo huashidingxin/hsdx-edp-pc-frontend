@@ -20,7 +20,11 @@ export interface StatsOverviews {
   issue: OverviewItem;
 }
 
-export async function getStatsOverviews(params: { project_id?: number | string } = {}) {
+export async function getStatsOverviews(params: {
+  project_id?: number | string;
+  date_from?: string;
+  date_to?: string;
+} = {}) {
   const res = await requestClient.get<{ data: StatsOverviews }>('/stats/overviews', { params });
   return res.data;
 }
@@ -43,7 +47,11 @@ export interface RateCard {
   data: RateDataItem[];
 }
 
-export async function getStatsRates(params: { project_id?: number | string } = {}) {
+export async function getStatsRates(params: {
+  project_id?: number | string;
+  date_from?: string;
+  date_to?: string;
+} = {}) {
   const res = await requestClient.get<{ data: Record<string, RateCard> }>('/stats/rates', { params });
   return res.data;
 }

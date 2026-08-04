@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 
-import { Card, Col, Empty, Modal, Row, Select, Table, Tag } from 'antdv-next';
+import { Card, Col, DatePicker, Empty, Modal, Row, Select, Table, Tag } from 'antdv-next';
 
 import type {
   BackfillStatsResult,
@@ -35,12 +35,30 @@ const rangeOptions = [
 ];
 const range = ref('month');
 
+// 日期范围筛选（用于 rates/overviews，P3-S05）
+const dateRange = ref<[string, string] | null>(null);
+
 const typeMeta = {
   supervision_log: { label: '监理日志', color: '#5ab1ef' },
   task: { label: '任务', color: '#36cfc9' },
   nonconformance: { label: '不符合项', color: '#ffa940' },
   issue: { label: '问题', color: '#73d13d' },
 } satisfies Record<string, { label: string; color: string }>;
+
+function dateFilterParams() {
+  if (!dateRange.value?.[0] || !dateRange.value?.[1]) return {};
+  return { date_from: dateRange.value[0], date_to: dateRange.value[1] };
+}
+
+function onDateRangeChange(values: unknown) {
+  const arr = values as Array<{ format?: (f: string) => string }> | null;
+  if (arr?.length === 2 && arr[0]?.format && arr[1]?.format) {
+    dateRange.value = [arr[0].format('YYYY-MM-DD'), arr[1].format('YYYY-MM-DD')];
+  } else {
+    dateRange.value = null;
+  }
+  loadAll();
+}
 
 // ── 穿透明细 ─────────────────────────────────────────────────────────
 const drillOpen = ref(false);
@@ -86,7 +104,8 @@ const drillColumns = [
 async function loadAll() {
   loading.value = true;
   try {
-    const [ov, rt] = await Promise.all([getStatsOverviews(), getStatsRates()]);
+    const dateParams = dateFilterParams();
+    const [ov, rt] = await Promise.all([getStatsOverviews(dateParams), getStatsRates(dateParams)]);
     overviews.value = ov;
     rates.value = rt;
   } catch (e) {
@@ -171,6 +190,17 @@ onMounted(loadAll);
 
 <template>
   <div class="p-4">
+    <div class="mb-4 flex items-center justify-between rounded-lg bg-white p-3 shadow-sm">
+      <span class="text-sm font-medium text-gray-600">统计范围</span>
+      <DatePicker.RangePicker
+        v-model:value="dateRange"
+        allow-clear
+        class="w-64"
+        :placeholder="['开始日期', '结束日期']"
+        @change="onDateRangeChange"
+      />
+    </div>
+
     <Row :gutter="16" class="mb-4">
       <Col v-for="card in overviewCards" :key="card.key" :span="6">
         <Card hoverable class="cursor-pointer" @click="openDrilldown(card.key, card.label)">
