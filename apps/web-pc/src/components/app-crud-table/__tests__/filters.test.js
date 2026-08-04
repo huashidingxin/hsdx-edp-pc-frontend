@@ -1,4 +1,5 @@
 import { nextTick } from 'vue';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { useCrudTableFilters } from '../composables/useCrudTableFilters.js';
@@ -8,6 +9,7 @@ function createFilters(overrides = {}) {
     excludeFilters: ['hidden'],
     filterCollapseRows: 1,
     filterExpandDefault: false,
+    filterActionable: true,
     filterFields: [
       { col: 12, default: 'active', field: 'state' },
       { col: 12, field: 'keyword' },
@@ -36,7 +38,6 @@ describe('useCrudTableFilters', () => {
 
     expect(api.visibleFilterFields.value.map((field) => field.field)).toEqual([
       'state',
-      'keyword',
     ]);
     expect(api.canToggleExpand.value).toBe(true);
     api.toggleExpand();
@@ -45,6 +46,23 @@ describe('useCrudTableFilters', () => {
       'keyword',
       'owner',
     ]);
+  });
+
+  it('does not expose expand controls when fields fit or actions are hidden', () => {
+    const fitting = createFilters({
+      filterFields: [
+        { col: 6, field: 'one' },
+        { col: 6, field: 'two' },
+        { col: 6, field: 'three' },
+      ],
+    });
+
+    expect(fitting.api.canToggleExpand.value).toBe(false);
+    expect(fitting.api.visibleFilterFields.value).toHaveLength(3);
+
+    const withoutActions = createFilters({ filterActionable: false });
+    expect(withoutActions.api.canToggleExpand.value).toBe(false);
+    expect(withoutActions.api.visibleFilterFields.value).toHaveLength(3);
   });
 
   it('applies, resets, and emits filter state', async () => {

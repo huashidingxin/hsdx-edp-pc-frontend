@@ -2,11 +2,12 @@
 /**
  * CrudFilterBar - 筛选区
  *
- * Props: fields, modelValue, expanded, collapseRows, canExpand
+ * Props: fields, modelValue, expanded, canExpand
  * Slots: 动态 filter_<field>, prepend, actions
  * Events: update:modelValue, reset, apply, update:expanded
  */
 import { computed, watch } from 'vue';
+
 import { Button, Col, Form, Row, Space } from 'antdv-next';
 
 import AppField from '#/components/AppField.vue';
@@ -15,7 +16,6 @@ const props = defineProps({
   fields: { type: Array, default: () => [] },
   modelValue: { type: Object, default: () => ({}) },
   expanded: { type: Boolean, default: false },
-  collapseRows: { type: Number, default: 1 },
   canExpand: { type: Boolean, default: false },
   showActions: { type: Boolean, default: true },
   filterImmediate: { type: Boolean, default: false },
@@ -55,30 +55,8 @@ watch(
   { deep: true }
 );
 
-// 每行最大 4 列（span=6），操作按钮占 1 列
-const ACTION_SPAN = 6;
-
-// 收起时可见字段（根据 span 动态计算，总和不超过 18）
-const collapsedInfo = computed(() => {
-  const result = [];
-  let usedSpan = 0;
-  const maxSpan = 24 - ACTION_SPAN; // 18
-  for (const field of props.fields) {
-    const span = field.col || field.span || 6;
-    if (usedSpan + span <= maxSpan) {
-      result.push(field);
-      usedSpan += span;
-    } else {
-      break;
-    }
-  }
-  return result;
-});
-
-// 当前可见字段（展开时全部显示，收起时只显示 collapsedInfo）
-const visibleFields = computed(() => {
-  return props.expanded ? props.fields : collapsedInfo.value;
-});
+// 展开/收起由 useCrudTableFilters 统一计算，避免壳组件和筛选栏重复截断字段。
+const visibleFields = computed(() => props.fields);
 </script>
 
 <template>
@@ -107,8 +85,8 @@ const visibleFields = computed(() => {
           />
         </Col>
 
-        <!-- 操作区：紧跟最后一个可见字段，自动换行到尾部 -->
-        <Col v-if="showActions" :span="6">
+        <!-- 操作区：紧跟筛选字段，展开/收起与查询按钮保持邻近 -->
+        <Col v-if="showActions" :span="6" class="filter-actions-col">
           <slot
             name="actions"
             :reset="handleReset"
@@ -117,10 +95,17 @@ const visibleFields = computed(() => {
             :expanded="expanded"
           >
             <Space :size="8" class="filter-actions pb-3">
+              <Button size="middle" @click="handleReset">
+                <i class="icon-[mdi--restore]"></i> 重置
+              </Button>
+              <Button type="primary" size="middle" @click="handleApply">
+                <i class="icon-[mdi--magnify]"></i> 查询
+              </Button>
               <Button
                 v-if="canExpand"
                 type="link"
                 size="small"
+                class="filter-expand-btn"
                 @click="toggleExpand"
               >
                 {{ expanded ? '收起' : '展开' }}
@@ -131,12 +116,6 @@ const visibleFields = computed(() => {
                       : 'icon-[mdi--chevron-down]'
                   "
                 ></i>
-              </Button>
-              <Button size="middle" @click="handleReset">
-                <i class="icon-[mdi--restore]"></i> 重置
-              </Button>
-              <Button type="primary" size="middle" @click="handleApply">
-                <i class="icon-[mdi--magnify]"></i> 查询
               </Button>
             </Space>
           </slot>
@@ -160,5 +139,19 @@ const visibleFields = computed(() => {
   justify-content: flex-end;
   height: 100%;
   align-items: center;
+}
+
+.filter-actions-col {
+  display: flex;
+  align-items: center;
+}
+
+.filter-expand-btn {
+  padding-inline: 4px !important;
+  color: #667085;
+}
+
+.filter-expand-btn:hover {
+  color: #1677ff;
 }
 </style>

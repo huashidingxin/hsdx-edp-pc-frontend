@@ -56,7 +56,7 @@ defineExpose({
 </script>
 
 <template>
-  <div class="h-full rounded-md bg-card">
+  <div class="crud-grid h-full bg-card">
     <VxeGrid
       ref="gridRef"
       class="p-2"

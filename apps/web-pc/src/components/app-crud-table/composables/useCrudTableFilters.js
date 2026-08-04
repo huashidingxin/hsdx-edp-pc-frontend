@@ -51,11 +51,13 @@ export function useCrudTableFilters(props, ctx, dataApi) {
    */
   function computeCollapseCount(fields, rows) {
     const r = rows ?? props.filterCollapseRows ?? 1;
-    const capacity = ROW_TOTAL_COLS * r;
+    // 操作区与字段共用首行时，为操作区预留一列（6/24）。
+    const actionSpan = props.filterActionable === false ? 0 : 6;
+    const capacity = ROW_TOTAL_COLS * r - actionSpan;
     let used = 0;
     let count = 0;
     for (const f of fields) {
-      const c = Number.isFinite(f.col) ? f.col : 6;
+      const c = Number(f.col ?? f.span ?? 6) || 6;
       if (used + c > capacity) break;
       used += c;
       count += 1;
@@ -71,7 +73,8 @@ export function useCrudTableFilters(props, ctx, dataApi) {
    * 当前可见的筛选字段
    */
   const visibleFilterFields = computed(() => {
-    if (filterExpand.value) {
+    // 无操作区时没有展开/收起入口，不能把字段折叠到页面不可访问。
+    if (filterExpand.value || props.filterActionable === false) {
       return formatedFilterFields.value;
     }
     return formatedFilterFields.value.slice(0, collapsedCount.value);
@@ -81,7 +84,9 @@ export function useCrudTableFilters(props, ctx, dataApi) {
    * 是否可以切换展开/收起
    */
   const canToggleExpand = computed(
-    () => formatedFilterFields.value.length > collapsedCount.value,
+    () =>
+      props.filterActionable !== false &&
+      formatedFilterFields.value.length > collapsedCount.value,
   );
 
   /**

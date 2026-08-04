@@ -2,9 +2,9 @@
 /**
  * CrudToolbar - 顶部工具栏
  *
- * Props: title, toolbarConfig, filterExpand, canCreate
+ * Props: title, toolbarConfig, canCreate
  * Slots: prepend, append, sub-title
- * Events: update:filterExpand, create, refresh, print, export
+ * Events: create, refresh, print, export
  */
 import { computed } from 'vue';
 
@@ -13,23 +13,15 @@ import { Button, Dropdown, Menu, Space } from 'antdv-next';
 const props = defineProps({
   title: { type: String, default: '' },
   toolbarConfig: { type: [Object, Boolean], default: true },
-  filterExpand: { type: Boolean, default: false },
   canCreate: { type: Boolean, default: true },
 });
 
-const emit = defineEmits([
-  'update:filterExpand',
-  'create',
-  'refresh',
-  'print',
-  'export',
-]);
+const emit = defineEmits(['create', 'refresh', 'print', 'export']);
 
 const config = computed(() => {
   if (props.toolbarConfig === false) return null;
   if (props.toolbarConfig === true || !props.toolbarConfig) {
     return {
-      filter: true,
       create: true,
       refresh: true,
       print: false,
@@ -38,7 +30,6 @@ const config = computed(() => {
     };
   }
   return {
-    filter: props.toolbarConfig.filter !== false,
     create: props.toolbarConfig.create !== false,
     refresh: props.toolbarConfig.refresh !== false,
     print: !!props.toolbarConfig.print,
@@ -52,10 +43,6 @@ const showMore = computed(
     !!config.value?.more &&
     (config.value.refresh || config.value.print || config.value.export),
 );
-
-function toggleFilterExpand() {
-  emit('update:filterExpand', !props.filterExpand);
-}
 </script>
 
 <template>
@@ -74,16 +61,6 @@ function toggleFilterExpand() {
       <div class="flex items-center gap-1.5">
         <slot name="append">
           <Space :size="6">
-            <Button
-              v-if="config.filter"
-              type="text"
-              size="middle"
-              class="toolbar-btn"
-              :class="[{ 'toolbar-btn--active': filterExpand }]"
-              @click="toggleFilterExpand"
-            >
-              <i class="icon-[mdi--filter-outline] text-[16px]"></i>
-            </Button>
             <Button
               v-if="config.create && canCreate"
               type="primary"
@@ -142,11 +119,6 @@ function toggleFilterExpand() {
 .toolbar-btn:hover {
   background-color: rgba(0, 0, 0, 0.04);
   color: #333;
-}
-
-.toolbar-btn--active {
-  color: #1677ff;
-  background-color: rgba(22, 119, 255, 0.06);
 }
 
 :deep(.toolbar-create-btn) {

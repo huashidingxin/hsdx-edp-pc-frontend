@@ -397,6 +397,14 @@ watch(
   { deep: true },
 );
 
+// 查询范围（scope）变化时重新加载列表
+watch(
+  () => props.listScope,
+  () => {
+    if (isListMode.value) dataApi.handlePageData();
+  },
+);
+
 // ========================= Provide =========================
 provide('crudTableContext', {
   isNested: routeApi.isNested,
