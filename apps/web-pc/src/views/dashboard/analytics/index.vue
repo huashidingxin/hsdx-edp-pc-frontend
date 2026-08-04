@@ -18,6 +18,10 @@ import {
 } from '#/api/core/stats';
 import { EchartsUI, type EchartsUIType, useEcharts } from '@vben/plugins/echarts';
 
+import { useAppStore } from '#/store';
+
+const appStore = useAppStore();
+
 const chartRef = ref<EchartsUIType>();
 const { renderEcharts } = useEcharts(chartRef);
 
@@ -37,6 +41,14 @@ const range = ref('month');
 
 // 日期范围筛选（用于 rates/overviews，P3-S05）
 const dateRange = ref<[string, string] | null>(null);
+
+// 组织（项目）筛选：跟随全局项目，切换项目时页面重挂载自动重新加载
+const projectId = computed(() => appStore.defaultProject?.id || undefined);
+const projectLabel = computed(() => appStore.defaultProject?.name || '所有项目');
+
+function projectFilterParams() {
+  return projectId.value ? { project_id: projectId.value } : {};
+}
 
 const typeMeta = {
   supervision_log: { label: '监理日志', color: '#5ab1ef' },
@@ -84,6 +96,7 @@ async function loadDrilldown(page: number) {
       per_page: 10,
       page,
       ...drillParams.value,
+      ...projectFilterParams(),
     });
     drill.value = res;
   } catch (e) {
@@ -105,7 +118,11 @@ async function loadAll() {
   loading.value = true;
   try {
     const dateParams = dateFilterParams();
-    const [ov, rt] = await Promise.all([getStatsOverviews(dateParams), getStatsRates(dateParams)]);
+    const projectParams = projectFilterParams();
+    const [ov, rt] = await Promise.all([
+      getStatsOverviews({ ...dateParams, ...projectParams }),
+      getStatsRates({ ...dateParams, ...projectParams }),
+    ]);
     overviews.value = ov;
     rates.value = rt;
   } catch (e) {
@@ -118,7 +135,11 @@ async function loadAll() {
 
 async function loadTrends() {
   try {
-    trends.value = await getStatsTrends({ type: trendType.value, range: range.value });
+    trends.value = await getStatsTrends({
+      type: trendType.value,
+      range: range.value,
+      ...projectFilterParams(),
+    });
     renderChart();
   } catch (e) {
     console.error(e);
@@ -127,7 +148,10 @@ async function loadTrends() {
 
 async function loadBackfill() {
   try {
-    const res = await getTaskBackfillStats({ scope: 2 });
+    const res = await getTaskBackfillStats({
+      scope: 2,
+      ...projectFilterParams(),
+    });
     if (res && 'total' in res && res.record_type) {
       backfill.value = res as BackfillStatsResult;
     }
@@ -191,7 +215,11 @@ onMounted(loadAll);
 <template>
   <div class="p-4">
     <div class="mb-4 flex items-center justify-between rounded-lg bg-white p-3 shadow-sm">
-      <span class="text-sm font-medium text-gray-600">统计范围</span>
+      <div class="flex items-center gap-2">
+        <span class="text-sm font-medium text-gray-600">统计范围</span>
+        <Tag color="blue">{{ projectLabel }}</Tag>
+        <span class="text-xs text-gray-400">跟随顶部全局项目选择</span>
+      </div>
       <DatePicker.RangePicker
         v-model:value="dateRange"
         allow-clear
