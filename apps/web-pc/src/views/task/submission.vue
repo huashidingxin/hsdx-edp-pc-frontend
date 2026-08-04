@@ -9,7 +9,7 @@
  */
 import { computed, ref, watch } from 'vue';
 
-import { Button, DatePicker, message, Modal, Radio, Select, Tag } from 'antdv-next';
+import { Button, DatePicker, Input, message, Modal, Radio, Select, Tag } from 'antdv-next';
 
 import { useUserStore } from '@vben/stores';
 
@@ -164,6 +164,44 @@ async function save() {
 function reset() {
   if (editingItem.value.submission) {
     editingItem.value.submission.values = JSON.parse(JSON.stringify(defaultValues.value));
+  }
+}
+
+// ---- 记录审核（submissions/{id}/audit）----
+const auditDialog = ref(false);
+const auditRow = ref(null);
+const auditData = ref({ status: 1, reason: '' });
+const auditSubmitting = ref(false);
+
+function canAudit(row) {
+  return row.submission_id > 0 && !row.submission?.audit_id;
+}
+
+function openAudit(row) {
+  auditRow.value = row;
+  auditData.value = { status: 1, reason: '' };
+  auditDialog.value = true;
+}
+
+async function submitAudit() {
+  if (auditSubmitting.value) return;
+  if (auditData.value.status === 0 && !auditData.value.reason) {
+    message.error('退回时请输入原因');
+    return;
+  }
+  auditSubmitting.value = true;
+  try {
+    await new Resource(`submissions/${auditRow.value.submission_id}/audit`).store({
+      status: auditData.value.status,
+      reason: auditData.value.reason,
+    });
+    message.success('审核成功');
+    auditDialog.value = false;
+    tableRef.value?.reload?.();
+  } catch (e) {
+    console.error(e);
+  } finally {
+    auditSubmitting.value = false;
   }
 }
 
@@ -338,7 +376,47 @@ watch(() => appStore.defaultProject?.id, refreshAll);
           {{ row.submission_timeout ? '超时' : '正常' }}
         </Tag>
       </template>
+
+      <template #row-action-extra="{ row }">
+        <Button
+          v-if="canAudit(row)"
+          type="link"
+          size="small"
+          @click="openAudit(row)"
+        >
+          审核
+        </Button>
+      </template>
     </AppCrudTable>
+
+    <!-- 记录审核弹窗 -->
+    <Modal
+      v-model:open="auditDialog"
+      title="记录审核"
+      ok-text="提交"
+      cancel-text="取消"
+      :confirm-loading="auditSubmitting"
+      @ok="submitAudit"
+    >
+      <div class="space-y-4">
+        <Radio.Group
+          v-model:value="auditData.status"
+          :options="[
+            { label: '通过', value: 1 },
+            { label: '退回', value: 0 },
+          ]"
+          option-type="button"
+        />
+        <div v-if="auditData.status === 0">
+          <label class="mb-1 block text-sm text-gray-500">退回原因</label>
+          <Input.TextArea
+            v-model:value="auditData.reason"
+            :rows="3"
+            placeholder="请输入退回原因"
+          />
+        </div>
+      </div>
+    </Modal>
 
     <!-- 不符合项弹窗 -->
     <Modal
