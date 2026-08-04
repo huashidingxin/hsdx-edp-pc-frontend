@@ -445,9 +445,7 @@ defineExpose({
         <CrudToolbar
           :title="pageTitle"
           :toolbar-config="toolbar"
-          :filter-expand="filterExpand"
           :can-create="permissionApi.checkPermission('create')"
-          @update:filter-expand="filterApi.toggleExpand"
           @create="handleCreate"
           @refresh="handleRefresh"
           @print="handlePrint"
@@ -488,7 +486,7 @@ defineExpose({
             <slot name="filter-prepend"></slot>
           </template>
 
-          <template #actions="scope">
+          <template v-if="slots['filter-actions']" #actions="scope">
             <slot name="filter-actions" v-bind="scope"></slot>
           </template>
         </CrudFilterBar>
@@ -686,12 +684,14 @@ defineExpose({
   width: 100%;
   height: 100%;
   overflow: hidden;
+  border-radius: 8px;
 }
 
 .app-crud-table :deep(.crud-grid) {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  border-radius: 0 0 8px 8px;
 }
 
 .app-crud-table :deep(.crud-grid .h-full) {
@@ -700,8 +700,9 @@ defineExpose({
 
 .crud-header {
   flex-shrink: 0;
+  overflow: hidden;
   background-color: #fff;
-  border-radius: 8px;
+  border-radius: 8px 8px 0 0;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
 }
 </style>
