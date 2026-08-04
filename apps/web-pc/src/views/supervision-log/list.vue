@@ -4,6 +4,7 @@ import { computed, ref, watch } from 'vue';
 import { Button, DatePicker, Input, message, Modal, Radio, Select, Tag } from 'antdv-next';
 
 import { useUserStore } from '@vben/stores';
+import { useAccess } from '@vben/access';
 
 import Resource from '#/api/resource';
 import { useAppStore } from '#/store';
@@ -12,6 +13,7 @@ import SubmissionEdit from '#/components/SubmissionEdit.vue';
 
 const appStore = useAppStore();
 const userStore = useUserStore();
+const { hasAccessByCodes } = useAccess();
 
 const editingItem = ref<Record<string, any>>({});
 const submissionRef = ref(null);
@@ -64,7 +66,11 @@ const auditData = ref<{ status: number; reason: string }>({ status: 1, reason: '
 const auditSubmitting = ref(false);
 
 function canAudit(row: Record<string, any>) {
-  return row.submission_id > 0 && !row.submission?.audit_id;
+  return (
+    row.submission_id > 0 &&
+    !row.submission?.audit_id &&
+    hasAccessByCodes(['submission.audit'])
+  );
 }
 
 function openAudit(row: Record<string, any>) {

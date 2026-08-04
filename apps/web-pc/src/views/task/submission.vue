@@ -12,6 +12,7 @@ import { computed, ref, watch } from 'vue';
 import { Button, DatePicker, Input, message, Modal, Radio, Select, Tag } from 'antdv-next';
 
 import { useUserStore } from '@vben/stores';
+import { useAccess } from '@vben/access';
 
 import Resource from '#/api/resource';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
@@ -21,6 +22,7 @@ import { useAppStore } from '#/store';
 
 const appStore = useAppStore();
 const userStore = useUserStore();
+const { hasAccessByCodes } = useAccess();
 const currentProjectId = computed(() => appStore.defaultProject?.id || undefined);
 const extraQuery = computed(() => ({ project_id: currentProjectId.value }));
 
@@ -174,7 +176,11 @@ const auditData = ref({ status: 1, reason: '' });
 const auditSubmitting = ref(false);
 
 function canAudit(row) {
-  return row.submission_id > 0 && !row.submission?.audit_id;
+  return (
+    row.submission_id > 0 &&
+    !row.submission?.audit_id &&
+    hasAccessByCodes(['submission.audit'])
+  );
 }
 
 function openAudit(row) {
