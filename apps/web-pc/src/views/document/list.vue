@@ -1,16 +1,26 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue';
 
-import { DatePicker, Radio, Select, Tag } from 'antdv-next';
+import { Button, DatePicker, message, Radio, Select, Tag } from 'antdv-next';
 
 import Resource from '#/api/resource';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
+import SubmissionEdit from '#/components/SubmissionEdit.vue';
 import { useAppStore } from '#/store';
 
 const appStore = useAppStore();
 
 const currentProjectId = computed(() => appStore.defaultProject?.id || undefined);
 const extraQuery = computed(() => ({ project_id: currentProjectId.value }));
+
+const editingItem = ref({});
+const submissionRef = ref(null);
+// 详情打开即填写（文档台账记录提交），查看/编辑同入口
+const isEditing = ref(true);
+
+function onShowDetail(editing) {
+  isEditing.value = editing;
+}
 
 // 查询范围：2=项目范围（默认） 1=仅本人
 const listScope = ref(2);
@@ -73,6 +83,43 @@ const gridColumns = ref([
 
 const stateColorMap = { 0: 'default', 1: 'blue', 2: 'green', 3: 'red' };
 
+// ---- 详情：加载 values 到 editingItem（供 SubmissionEdit）----
+const defaultValues = ref({});
+function detailFormat(data) {
+  // 备份（重置用）；values 为 submission_fields 数组（show 返回）
+  defaultValues.value = JSON.parse(JSON.stringify(data.values || data.submission?.values || []));
+  editingItem.value._values = JSON.parse(JSON.stringify(defaultValues.value));
+  editingItem.value._formId = data.form_id || data.submission?.form_id;
+  editingItem.value._projectId = data.project_id;
+  return data;
+}
+
+function reset() {
+  editingItem.value._values = JSON.parse(JSON.stringify(defaultValues.value));
+}
+
+// ---- 提交：PUT documents/{id} { values } → createSubmission('document') ----
+async function save() {
+  const formData = await submissionRef.value?.getFormData();
+  if (!formData) return;
+  if (!formData.validated) {
+    message.error('请检查表单');
+    return;
+  }
+  try {
+    await new Resource('documents').update(editingItem.value.id, {
+      form_id: editingItem.value._formId,
+      values: formData.values,
+    });
+    message.success('提交成功');
+    tableRef.value?.reload?.();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+const tableRef = ref(null);
+
 onMounted(() => {
   loadForms();
   loadUsers();
@@ -83,18 +130,23 @@ watch(() => appStore.defaultProject?.id, loadUsers);
 
 <template>
   <AppCrudTable
+    ref="tableRef"
+    v-model="editingItem"
     api-url="documents"
     permission-name="document"
     :list-scope="listScope"
     :extra-query="extraQuery"
     :filter-fields="filterFields"
     :fields="detailFields"
-    :inline-actions="['view']"
+    :inline-actions="['view', 'edit']"
+    :actions-config="[{ key: 'view', visible: () => true }, { key: 'edit', visible: () => true }]"
+    :detail-format="detailFormat"
     :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
     :toolbar="{ filter: true, create: false, refresh: true }"
     :open-mode="{ create: 'drawer', detail: 'drawer' }"
     title="项目文档台账"
     class="p-4"
+    @show-detail="onShowDetail"
   >
     <template #filter-prepend>
       <Radio.Group
@@ -128,6 +180,24 @@ watch(() => appStore.defaultProject?.id, loadUsers);
         allow-clear
         @change="update"
       />
+    </template>
+
+    <template #form-default>
+      <div v-if="editingItem.id" class="min-h-[300px]">
+        <SubmissionEdit
+          ref="submissionRef"
+          :form-id="editingItem._formId"
+          :project-id="editingItem._projectId"
+          :values="editingItem._values || []"
+          :rules="{}"
+          :readonly="false"
+        />
+      </div>
+    </template>
+
+    <template #form-action>
+      <Button @click="reset">重置</Button>
+      <Button type="primary" @click="save">提交</Button>
     </template>
 
     <template #default_code="{ row }">
