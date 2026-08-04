@@ -11,6 +11,7 @@ defineProps({
   rowKey: { type: String, default: 'id' },
   showActions: { type: Boolean, default: true },
   resolveRowActions: { type: Function, default: null },
+  actionOverflow: { type: String, default: 'more' },
 });
 
 const emit = defineEmits([
@@ -89,6 +90,7 @@ defineExpose({
           v-if="showActions && resolveRowActions"
           :row="row"
           :actions="resolveRowActions(row)"
+          :action-overflow="actionOverflow"
         >
           <template #extra="{ row: actionRow, location }">
             <slot

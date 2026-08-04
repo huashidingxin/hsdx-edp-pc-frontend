@@ -39,6 +39,21 @@ export function useCrudTableActions(props, ctx, callbacks, permissionApi) {
   );
 
   /**
+   * 操作溢出模式：'wrap'（全部展开换行）| 'more'（超出阈值收起为更多）
+   */
+  const actionOverflow = computed(() =>
+    props.actionOverflow === 'wrap' ? 'wrap' : 'more',
+  );
+
+  /**
+   * more 模式下，单行最多显示的 inline 按钮数量
+   */
+  const maxInlineActions = computed(() => {
+    const n = Number(props.maxInlineActions);
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 3;
+  });
+
+  /**
    * 合并所有 ActionDef（内置 + 配置 + 运行时）
    */
   function getAllDefs() {
@@ -123,7 +138,31 @@ export function useCrudTableActions(props, ctx, callbacks, permissionApi) {
       .filter((a) => !inlineKeys.has(a.key))
       .sort((a, b) => a.order - b.order);
 
-    return { inline, more };
+    return applyOverflowPolicy(inline, more);
+  }
+
+  /**
+   * 根据 actionOverflow / maxInlineActions 调整 inline / more 的最终划分
+   *
+   * - 'wrap'：全部平铺换行，不出现“更多”下拉
+   * - 'more'：当 inline 超过 maxInlineActions 时，把末尾（按 order）超出的项
+   *   连同原 more 合并为新的 more 组，inline 仅保留前 maxInlineActions 项
+   */
+  function applyOverflowPolicy(inline, more) {
+    if (actionOverflow.value === 'wrap') {
+      // 全部平铺（顺序：inline 在前，more 在后，各按 order 升序）
+      return { inline: [...inline, ...more], more: [] };
+    }
+
+    const max = maxInlineActions.value;
+    if (inline.length <= max) return { inline, more };
+
+    // 保留 order 较小的前 max 个为 inline；其余转入 more（保持相对顺序）
+    const overflow = inline.slice(max);
+    return {
+      inline: inline.slice(0, max),
+      more: [...overflow, ...more],
+    };
   }
 
   /**

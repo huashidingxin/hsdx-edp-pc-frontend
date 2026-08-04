@@ -68,6 +68,14 @@ const props = defineProps({
   showActions: { type: Boolean, default: true },
   inlineActions: { type: Array, default: () => ['view', 'edit', 'delete'] },
   actionsConfig: { type: Array, default: () => [] },
+  // 操作按钮溢出展示模式：'wrap'（全部展开，超出换行）| 'more'（超出阈值收为“更多”下拉）
+  actionOverflow: {
+    type: String,
+    default: 'more',
+    validator: (v) => v === 'wrap' || v === 'more',
+  },
+  // 'more' 模式下，操作列单行最多显示的 inline 按钮数量（超出部分收进“更多”）
+  maxInlineActions: { type: Number, default: 3 },
 
   // 详情
   openMode: {
@@ -485,6 +493,7 @@ defineExpose({
         :row-key="idKey"
         :show-actions="showActions"
         :resolve-row-actions="actionsApi.resolveRowActions"
+        :action-overflow="actionOverflow"
         @cell-click="handleCellClick"
         @cell-dblclick="handleCellDblclick"
         @sort-change="handleSortChange"
