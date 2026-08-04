@@ -9,6 +9,7 @@ declare module 'vue' {
   export interface GlobalComponents {
     AIGenerateImageModal: typeof import('./components/AIGenerateImageModal.vue')['default']
     AppAddress: typeof import('./components/AppAddress.vue')['default']
+    AppCancelDialog: typeof import('./components/AppCancelDialog.vue')['default']
     AppCrudTable: typeof import('./components/app-crud-table/AppCrudTable.vue')['default']
     AppEditor: typeof import('./components/app-editor/index.vue')['default']
     AppField: typeof import('./components/AppField.vue')['default']
@@ -28,5 +29,6 @@ declare module 'vue' {
     PersonForm: typeof import('./components/PersonForm.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    SubmissionEdit: typeof import('./components/SubmissionEdit.vue')['default']
   }
 }

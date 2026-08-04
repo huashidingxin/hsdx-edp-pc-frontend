@@ -1,413 +1,793 @@
 <script setup>
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
+/**
+ * SubmissionEdit —— 动态表单填写引擎
+ *
+ * 数据契约（对齐后端 Submission::saveFields / SubmissionService::createSubmission）：
+ *   - values 形如 { '_<fieldId>': scalar | array }
+ *       * 普通字段：标量（text/number/switch 0|1/select 值/datetime 字符串/file → 单文件 url / images/file/multiselect → 数组）
+ *       * list 字段：二维行数组 [ row, ... ]，row = { '_<subFieldId>': scalar|array } （saveFields 检测二维数组递归存储，parent_id 指向 list 字段的 submission_field.id）
+ *   - rules 形如 { '_<fieldId>': rule_id | null | nested }（list 字段为嵌套 rules 数组，按行对应）
+ *   - 文件字段值含 '?upload' 时，后端 saveFields 触发 UploadService.mapping 挂到 'submission_file'
+ *
+ * 校验契约（对齐 web-admin AppForm.formatRule）：
+ *   - field.rules 来自 field 内置 required 等；field.base_rules 来自受控规范（按 rule_category 互斥取一个 rule_id 应用）
+ *   - rule level=1 → errors 阻止提交；level=2 → warnings 触发业务层不符合项弹窗
+ *
+ * 暴露接口（与 web-admin submission/edit.vue 对齐）：formRef / formFields / getFormData / setFormData / validate
+ */
+import { computed, nextTick, reactive, ref, watch } from 'vue';
 
-import { Form, Input, InputNumber, message } from 'antdv-next';
+import { Button, Form, FormItem, message, Select } from 'antdv-next';
 
 import Resource from '#/api/resource';
 import AppField from '#/components/AppField.vue';
 
 const props = defineProps({
-  // 已填入的字段值数组（后端 submission_fields 结构 {field_id,type,content,parent_id,id}）
+  // 已存在 submission 的字段值（后端 show 返回 submission_fields 数组，扁平 [{id, field_id, type, name, parent_id, content, rule_id, ...}]）
   values: {
     type: Array,
     default: () => [],
   },
-  // 表单 ID（加载 form.fields 配置）
+  // 已存在 submission 的 rules 快照（{ _field_id: rule_id }），用于回显 base_rule 选中
+  rules: {
+    type: Object,
+    default: () => ({}),
+  },
+  // 表单 ID（用于加载 form.fields 配置 + base_rules）
   formId: {
     type: [String, Number],
     default: undefined,
   },
-  // 项目 ID（远程选项上下文）
   projectId: {
     type: [String, Number],
     default: undefined,
   },
-  // 已存在的 submission ID（编辑模式）
-  id: {
-    type: [String, Number],
-    default: undefined,
-  },
-  title: {
-    type: String,
-    default: '记录',
-  },
-  // 只读模式（仅展示，不编辑）
+  // 只读模式（详情/审核场景仅展示）
   readonly: {
     type: Boolean,
     default: false,
   },
 });
 
-const emit = defineEmits(['restoreDraft', 'saveDraft', 'saved']);
+const emit = defineEmits(['saved', 'saveDraft', 'restoreDraft']);
 
-// 表单字段配置（form.fields 后端返回）
-const formFieldsConfig = ref([]);
-// 渲染字段（map 后给 AppField 使用，扁平化非 list 字段；list 行单独管理）
-const renderFields = ref([]);
-// 表单数据模型 field_id -> value
-const formData = ref({});
-// 警告（rule level=2 通过但提示）
-const warnings = ref({});
-// list 类型字段状态：field_id -> [行对象数组]
-const listRows = ref({});
+// ---- 表单字段配置 ----
+const formFields = ref([]); // 后端 form.show 的 fields 数组（含 rules/base_rules/options）
+
+// ---- 渲染用字段（按 sort 排序，list 字段提取子字段列表）----
+const renderFields = ref([]); // 顶层渲染字段
+const listChildren = ref({}); // field_id -> 子字段配置数组（list 字段的 children）
+
+// ---- 表单数据模型 ----
+const formData = ref({}); // { _fieldId: scalar | array }
+const listRows = ref({}); // { _listFieldId: [ row, row, ... ] }
+
+// ---- base_rules 选中状态（按 rule_category 互斥）----
+const baseRuleSelected = ref({}); // { ruleCategoryId: rule_id }
+const fieldBaseRule = ref({}); // { _fieldId: 当前应用的 rule_id }
+
+// ---- 单位工程字段联动 ----
+const unitProjectFieldId = ref(null);
+const unitProjectCodeFieldId = ref(null);
+const unitProjects = ref([]);
+
+// ---- 字段 ref 集合（用于 AppField.upload 批次）----
+const fieldRefs = ref({}); // _fieldId -> AppField 实例
+const listFieldRefs = ref({}); // `${listFieldId}_${rowIndex}_${subFieldId}` -> AppField 实例
 
 const formRef = ref(null);
 
-// 字段值键名采用后端约定：'_' + field_id
+// ---- 工具 ----
 function fkey(f) {
   return `_${f.id}`;
 }
 
-// 远程选项预加载：相关方、单位工程
-const stakeholderItems = ref([]);
-const stakeholderTypeItems = ref([]); // type=construction 时
-const unitProjectItems = ref([]);
-const unitProjectCodeFieldId = ref(null);
-const unitProjectFieldId = ref(null);
-
-async function getStakeholders(type) {
-  const params = { per_page: 'all', project_id: props.projectId };
-  if (type === 'construction') params.type = 2;
-  else params.types = [2, 3, 4, 5];
-  const { data } = await new Resource('stakeholders').list(params);
-  return data || [];
+function subListKey(listFieldId, rowIndex, subFieldId) {
+  return `_${listFieldId}__${rowIndex}__${subFieldId}`;
 }
 
-async function getUnitProjects() {
-  const { data } = await new Resource('divisions').list({
-    per_page: 'all',
-    project_id: props.projectId,
-    level: 1,
-  });
-  return data || [];
+// 字段类型映射（保留后端 type 语义；AppField 已支持大部分类型，少量映射）
+function mapType(field) {
+  const type = field.type || 'text';
+  // 后端 FormController.show 对 type=stakeholder/construction 已转为 multiselect 并填好 options
+  switch (type) {
+    case 'text':
+    case 'textarea':
+    case 'switch':
+    case 'number':
+    case 'digit':
+    case 'date':
+    case 'time':
+    case 'datetime':
+    case 'select':
+    case 'multiselect':
+    case 'image':
+    case 'images':
+    case 'file':
+    case 'video':
+    case 'videos':
+      return type;
+    case 'temperature':
+    case 'humidity':
+    case 'wind':
+      return 'number';
+    case 'unit_project':
+      return 'select';
+    case 'unit_project_code':
+      return 'text';
+    case 'list':
+      return 'list';
+    default:
+      return 'text';
+  }
 }
 
-// 字段类型映射 -> AppField type/attrs
-function mapFieldType(field) {
+function mapAttrs(field) {
   const type = field.type || 'text';
   const attrs = { ...(field.attrs || {}) };
-  let fieldType = 'text';
-  let needStakeholders = false;
-  let stakeholderType = null;
-
-  if (type === 'text') fieldType = 'text';
-  else if (type === 'textarea') fieldType = 'textarea';
-  else if (type === 'switch') fieldType = 'switch';
-  else if (type === 'number') fieldType = 'number';
-  else if (type === 'digit') {
-    fieldType = 'number';
-    attrs.step = 0.01;
-  } else if (type === 'select') {
-    fieldType = 'select';
-    attrs.options = (field.options || []).map((o) => ({ value: o, label: o }));
-  } else if (type === 'multiselect') {
-    fieldType = 'select';
-    attrs.multiple = true;
-    attrs.options = (field.options || []).map((o) => ({ value: o, label: o }));
-  } else if (type === 'stakeholders' || type === 'construction') {
-    fieldType = 'select';
-    attrs.multiple = true;
-    needStakeholders = true;
-    stakeholderType = type;
-  } else if (type === 'unit_project') {
-    fieldType = 'select';
-    attrs.options = unitProjectItems.value.map((u) => ({ value: u.name, label: u.name }));
-  } else if (type === 'unit_project_code') {
-    fieldType = 'text';
-    attrs.disabled = true;
-  } else if (type === 'date') fieldType = 'date';
-  else if (type === 'time') fieldType = 'time';
-  else if (type === 'datetime') fieldType = 'datetime';
-  else if (type === 'image') {
-    fieldType = 'image';
-    attrs.limit = 1;
-  } else if (type === 'images') {
-    fieldType = 'image';
-    attrs.multiple = true;
-  } else if (type === 'file') {
-    fieldType = 'file';
-    attrs.multiple = true;
-  } else if (type === 'video') {
-    fieldType = 'video';
-    attrs.limit = 1;
-  } else if (type === 'temperature' || type === 'humidity' || type === 'wind') {
-    fieldType = 'number';
-  } else if (type === 'list') {
-    fieldType = 'list';
-  }
-
   attrs.placeholder = field.placeholder || `请输入${field.name}`;
   if (field.hint) attrs.hint = field.hint;
-  if (props.readonly) {
-    attrs.readonly = true;
-    attrs.disabled = true;
+  if (type === 'select' || type === 'multiselect') {
+    attrs.options = (field.options || []).map((o) => {
+      if (typeof o === 'object') return o;
+      return { value: o, label: o };
+    });
+    if (type === 'multiselect' || (field.type === 'construction' && field.options?.length)) {
+      attrs.multiple = true;
+    }
+  } else if (type === 'unit_project') {
+    attrs.options = unitProjects.value.map((u) => ({ value: u.name, label: u.name }));
+  } else if (type === 'digit') {
+    attrs.step = 0.01;
+  } else if (type === 'image') {
+    attrs.limit = 1;
+    attrs.fileType = 'image';
+  } else if (type === 'file' || type === 'images' || type === 'video' || type === 'videos') {
+    attrs.multiple = type !== 'image' && type !== 'video';
+    attrs.fileType = type === 'videos' || type === 'video' ? 'video' : (type === 'images' || type === 'image' ? 'image' : 'file');
   }
-  // AppField hideDetails 等价：通过 FormItem 控制
-
-  return { fieldType, attrs, needStakeholders, stakeholderType };
+  if (props.readonly) {
+    attrs.disabled = true;
+    attrs.readonly = true;
+  }
+  return attrs;
 }
 
-// 调整 AppField 可以接受 list 字段——这里用 slot 自定义渲染：list 字段标记后由 template 单独渲染
-// 为简化，list 字段不进 AppField（renderFields 里放占位标识，template 检测单独渲染子表）
+// 初始化 base_rules（按 rule_category 互斥取一个 rule_id）
+function initBaseRules() {
+  const categories = {};
+  for (const field of formFields.value) {
+    const baseRules = field.rules?.filter((r) => r.rule_id > 0) || [];
+    for (const r of baseRules) {
+      const catId = r.rule_category_id;
+      if (!categories[catId]) {
+        categories[catId] = { id: catId, name: r.rule_category_name, rules: [] };
+      }
+      const exists = categories[catId].rules.find((x) => x.id === r.rule_id);
+      if (!exists) {
+        categories[catId].rules.push({
+          id: r.rule_id,
+          category_id: catId,
+          name: r.rule_name,
+          _initial: r, // 保留原始 base_rule（便于附加 level/message/type/value）
+        });
+      }
+    }
+  }
+  // 默认选每个分类的第一条；若外部 rules 已指定，则取其匹配
+  for (const catId in categories) {
+    const list = categories[catId].rules;
+    baseRuleSelected.value[catId] = list[0].id;
+    for (const fieldKey in props.rules) {
+      const matched = list.find((r) => r.id == props.rules[fieldKey]);
+      if (matched) {
+        baseRuleSelected.value[catId] = matched.id;
+        break;
+      }
+    }
+  }
+  // 为每个字段计算其当前应用的 base_rule rule_id
+  recomputeFieldBaseRule();
+}
 
-async function formatFields(fields) {
-  const sorted = [...fields].sort((a, b) => (a.sort || 0) - (b.sort || 0));
-  const result = [];
+function recomputeFieldBaseRule() {
+  for (const field of formFields.value) {
+    const baseRules = field.rules?.filter((r) => r.rule_id > 0) || [];
+    if (!baseRules.length) {
+      fieldBaseRule.value[fkey(field)] = null;
+      continue;
+    }
+    const catId = baseRules[0].rule_category_id;
+    fieldBaseRule.value[fkey(field)] = baseRuleSelected.value[catId] ?? null;
+  }
+}
 
-  // 预处理 list 字段的子字段（按 parent_id 索引）
+function changeBaseRule(categoryId, ruleId) {
+  baseRuleSelected.value[categoryId] = ruleId;
+  recomputeFieldBaseRule();
+}
+
+// ---- 加载 form.fields ----
+async function loadForm() {
+  if (!props.formId) return;
+  const { data } = await new Resource('forms').get(props.formId, {
+    project_id: props.projectId,
+  });
+  formFields.value = data.fields || [];
+  // 提取 list 字段的子字段（parent_id 指向 list 字段 id 的子字段）
+  const topLevel = [];
   const childrenOf = {};
-  for (const f of sorted) {
+  for (const f of formFields.value) {
     if (f.parent_id) {
       childrenOf[f.parent_id] = childrenOf[f.parent_id] || [];
       childrenOf[f.parent_id].push(f);
     }
   }
-
-  for (const f of sorted) {
-    // 跳过 list 字段的子字段（由父 list 单独管理）
-    if (f.parent_id && fields.some((p) => p.id === f.parent_id && p.type === 'list')) continue;
-
+  for (const f of formFields.value) {
     if (f.type === 'list') {
-      unitProjectFieldId.value = unitProjectFieldId.value; // 保留占位
-      const subFields = (childrenOf[f.id] || []).map((sf) => {
-        const sub = mapFieldType(sf);
-        return {
-          ...sf,
-          _fType: sub.fieldType,
-          _attrs: sub.attrs,
-          required: !!sf.required,
-        };
-      });
-      result.push({
-        id: f.id,
-        field: fkey(f),
-        label: f.name,
-        type: 'list',
-        subFields,
-        required: !!f.required,
-      });
-      listRows.value[fkey(f)] = [];
+      listChildren.value[f.id] = childrenOf[f.id] || [];
+      f._subFields = listChildren.value[f.id];
+    }
+  }
+  // 顶层字段（排除 list 的子字段）
+  for (const f of formFields.value) {
+    if (f.parent_id && formFields.value.some((p) => p.id === f.parent_id && p.type === 'list')) {
       continue;
     }
+    topLevel.push(f);
+  }
+  // 渲染字段
+  renderFields.value = topLevel.map((f) => ({
+    ...f,
+    _renderType: mapType(f),
+    _attrs: mapAttrs(f),
+    _key: fkey(f),
+  }));
 
-    const mapped = mapFieldType(f);
-    if (f.type === 'unit_project') unitProjectFieldId.value = f.id;
-    if (f.type === 'unit_project_code') unitProjectCodeFieldId.value = f.id;
+  // 单位工程字段联动记录
+  unitProjectFieldId.value =
+    formFields.value.find((f) => f.type === 'unit_project')?.id || null;
+  unitProjectCodeFieldId.value =
+    formFields.value.find((f) => f.type === 'unit_project_code')?.id || null;
 
-    const rules = [];
-    if (f.required) {
-      rules.push({
-        required: true,
-        message: (f.name.length < 10 ? f.name : '该字段') + '必填',
-        trigger: 'blur',
-      });
-    }
+  initBaseRules();
 
-    result.push({
-      id: f.id,
-      field: fkey(f),
-      label: f.name,
-      type: mapped.fieldType,
-      attrs: mapped.attrs,
-      required: !!f.required,
-      hint: f.hint,
-      rules,
-      // 标识远程选项类型（异步加载完成后填充）
-      _remoteStakeholder: mapped.needStakeholders ? mapped.stakeholderType : null,
-    });
+  // 单位工程选项加载（只有需要时）
+  if (unitProjectFieldId.value) {
+    await loadUnitProjects();
   }
 
-  renderFields.value = result;
+  setValues(props.values || []);
 }
 
-async function loadForm() {
-  if (!props.formId) return;
-  const { data } = await new Resource('forms').get(props.formId);
-  formFieldsConfig.value = data.fields || [];
-  await formatFields(data.fields || []);
-
-  // 预加载涉及远程选项的字段
-  const hasUnitProject = renderFields.value.some(
-    (f) => f.id === unitProjectFieldId.value,
-  );
-  if (hasUnitProject) {
-    unitProjectItems.value = await getUnitProjects();
-    for (const f of renderFields.value) {
-      if (f.id === unitProjectFieldId.value) {
-        f.attrs.options = unitProjectItems.value.map((u) => ({
-          value: u.name,
-          label: u.name,
-        }));
-      }
+async function loadUnitProjects() {
+  const { data } = await new Resource('divisions').list({
+    per_page: 'all',
+    project_id: props.projectId,
+    level: 1,
+  });
+  unitProjects.value = data || [];
+  for (const f of renderFields.value) {
+    if (f.type === 'unit_project') {
+      f._attrs.options = unitProjects.value.map((u) => ({ value: u.name, label: u.name }));
     }
   }
-
-  const hasStakeholders = renderFields.value.some(
-    (f) => f._remoteStakeholder === 'stakeholders' || f._remoteStakeholder === 'construction',
-  );
-  if (hasStakeholders) {
-    if (!stakeholderItems.value.length) stakeholderItems.value = await getStakeholders();
-    if (!stakeholderTypeItems.value.length) stakeholderTypeItems.value = await getStakeholders('construction');
-    for (const f of renderFields.value) {
-      if (f._remoteStakeholder === 'stakeholders') {
-        f.attrs.options = stakeholderItems.value.map((s) => ({ value: s.id, label: s.name }));
-      } else if (f._remoteStakeholder === 'construction') {
-        f.attrs.options = stakeholderTypeItems.value.map((s) => ({ value: s.id, label: s.name }));
-      }
-    }
-  }
-
-  setValues(props.values);
 }
 
-// 把后端 values（submission_fields 数组）填入 formData + listRows
-function setValues(values) {
-  if (!values || !values.length) {
-    formData.value = {};
-    return;
-  }
+// ---- values 回填（submission_fields 数组 → formData + listRows）----
+// submission_fields 行按 parent_id 关联：list 字段的子字段 parent_id 指向 list 字段的 submission_field.id
+function setValues(subFields) {
   formData.value = {};
   listRows.value = {};
 
-  const listFields = renderFields.value.filter((f) => f.type === 'list');
+  // 索引：submission_field.id -> row
+  const sfIndex = {};
+  for (const sf of subFields) sfIndex[sf.id] = sf;
 
-  for (const item of values) {
-    const key = fkey({ id: item.field_id });
-    const configField = renderFields.value.find((f) => f.id === item.field_id);
+  // 顶层字段（parent_id=null 或 ==0）
+  for (const sf of subFields) {
+    if (sf.parent_id) continue;
+    const key = fkey({ id: sf.field_id });
+    const config = formFields.value.find((f) => f.id === sf.field_id);
+    if (!config) continue;
 
-    if (configField && configField.type === 'list') {
-      // list 字段本身是占位，子字段在 children
+    if (config.type === 'list') {
+      // list 字段的占位 entry，content 通常为 null，行收集见下
       continue;
     }
+    formData.value[key] = coerceContent(config, sf.content);
+  }
 
-    if (item.parent_id) {
-      // list 子字段：归入对应 list 字段的行
-      const listField = listFields.find((lf) => lf.id === item.parent_id);
-      if (listField) {
-        listRows.value[fkey(listField)] = listRows.value[fkey(listField)] || [];
-        // 按 list item id（item.list_id 暂用 item.id 行标识，后端结构需明确）分组
-        // 简化：暂存为单一数组（按顺序），行分组留后端结构对齐
-        listRows.value[fkey(listField)].push({
-          field_id: item.field_id,
-          value: item.content,
-        });
+  // list 行：找出所有 list 字段的 submission_field.id，再收集其子字段按行分组
+  for (const config of formFields.value) {
+    if (config.type !== 'list') continue;
+    const listKey = fkey(config);
+    listRows.value[listKey] = [];
+    // 该 list 字段的所有 submission_field entry（顶层 parent_id=null/0，field_id=config.id）
+    const listFieldEntries = subFields.filter(
+      (sf) => !sf.parent_id && sf.field_id === config.id,
+    );
+    // 每行：以 list entry 的 id 为 parent_id 的所有子字段
+    for (const entry of listFieldEntries) {
+      const row = {};
+      const children = subFields.filter((sf) => sf.parent_id === entry.id);
+      for (const c of children) {
+        const subConfig = (config._subFields || []).find((sf) => sf.id === c.field_id);
+        if (!subConfig) continue;
+        row[fkey(subConfig)] = coerceContent(subConfig, c.content);
+        // 子字段 rule_id
+        // 暂不处理子字段 base_rule 回显（保存结构中保存 nested rules）
       }
-      continue;
+      listRows.value[listKey].push(row);
     }
-
-    formData.value[key] = item.content;
   }
 }
 
-// 单位工程名称变化联动单位工程编号
-function onFieldChange(field, val) {
-  if (unitProjectFieldId.value && unitProjectCodeFieldId.value && field.id === unitProjectFieldId.value) {
-    const up = unitProjectItems.value.find((u) => u.name === val);
-    formData.value[fkey({ id: unitProjectCodeFieldId.value })] = up?.code;
+// 内容按字段类型反序列化（参考 TaskSubmissionController::show）
+function coerceContent(config, content) {
+  const type = config.type;
+  if (content === null || content === undefined) {
+    if (type === 'multiselect' || type === 'images' || type === 'file' || type === 'videos') return [];
+    if (type === 'switch') return 0;
+    if (type === 'list') return [];
+    return '';
+  }
+  if (type === 'construction' || type === 'multiselect') {
+    if (Array.isArray(content)) return content;
+    try {
+      return JSON.parse(content) || [];
+    } catch {
+      return [];
+    }
+  }
+  if (type === 'images' || type === 'videos' || type === 'file') {
+    if (Array.isArray(content)) return content;
+    if (typeof content === 'string' && content.startsWith('[')) {
+      try {
+        return JSON.parse(content) || [];
+      } catch {
+        return [];
+      }
+    }
+    // 单文件：返回字符串
+    return content;
+  }
+  if (type === 'switch') {
+    return Number(!!Number(content) || content === true || content === 'true');
+  }
+  if (type === 'number' || type === 'digit' || type === 'temperature' || type === 'humidity' || type === 'wind') {
+    const n = Number(content);
+    return Number.isNaN(n) ? '' : n;
+  }
+  return content;
+}
+
+// ---- 字段值变化 ----
+function onFieldUpdate(field, value) {
+  formData.value[fkey(field)] = value;
+  // 单位工程 code 联动
+  if (field.type === 'unit_project' && unitProjectCodeFieldId.value) {
+    const up = unitProjects.value.find((u) => u.name === value);
+    if (up) {
+      formData.value[fkey({ id: unitProjectCodeFieldId.value })] = up.code;
+    }
   }
 }
 
-// list 子表：新增/删除行
+function onListFieldUpdate(listField, rowIndex, subField, value) {
+  const listKey = fkey(listField);
+  if (!listRows.value[listKey]) listRows.value[listKey] = [];
+  if (!listRows.value[listKey][rowIndex]) listRows.value[listKey][rowIndex] = {};
+  listRows.value[listKey][rowIndex][fkey(subField)] = value;
+}
+
+// ---- list 行操作 ----
 function addListRow(listField) {
   const key = fkey(listField);
-  listRows.value[key] = listRows.value[key] || [];
-  const newRow = {};
-  for (const sf of listField.subFields) {
-    newRow[fkey(sf)] = null;
+  if (!listRows.value[key]) listRows.value[key] = [];
+  const row = {};
+  for (const sf of listField._subFields || []) {
+    row[fkey(sf)] = defaultForType(sf.type);
   }
-  listRows.value[key].push(newRow);
+  listRows.value[key].push(row);
 }
 
-function removeListRow(listField, index) {
+function removeListRow(listField, rowIndex) {
   const key = fkey(listField);
-  listRows.value[key].splice(index, 1);
+  listRows.value[key].splice(rowIndex, 1);
 }
 
-// 校验
-async function validate() {
-  if (!formRef.value) return true;
-  try {
-    await formRef.value.validate();
-    return true;
-  } catch {
-    return false;
+function defaultForType(type) {
+  if (type === 'switch') return 0;
+  const arrTypes = ['multiselect', 'images', 'file', 'videos', 'list'];
+  if (arrTypes.includes(type)) return [];
+  return '';
+}
+
+// ---- ref 收集 ----
+function setFieldRef(field, el) {
+  if (el) fieldRefs.value[fkey(field)] = el;
+  else delete fieldRefs.value[fkey(field)];
+}
+
+function setListFieldRef(listField, rowIndex, subField, el) {
+  const key = subListKey(listField.id, rowIndex, subField.id);
+  if (el) listFieldRefs.value[key] = el;
+  else delete listFieldRefs.value[key];
+}
+
+// ---- 校验引擎 ----
+// 普通字段：内置规则（required）+ base_rules（按选中 rule_id 过滤）+ level 区分
+function formatRule(rule, fieldType) {
+  const type = rule.type;
+  const isNumeric = ['number', 'digit', 'temperature', 'humidity', 'wind'].includes(fieldType);
+  const errMsg = rule.message || '格式有误';
+  switch (type) {
+    case 'required':
+      if (fieldType !== 'switch' && !isNumeric) {
+        return (v) => {
+          if (v == null) return errMsg;
+          if (Array.isArray(v)) return v.length > 0 || errMsg;
+          if (typeof v === 'string') return v.trim().length > 0 || errMsg;
+          return !!v || errMsg;
+        };
+      }
+      return (v) => v !== undefined && v !== null || errMsg;
+    case 'min':
+    case 'minLength':
+      if (isNumeric) return (v) => v >= parseFloat(rule.value) || errMsg;
+      return (v) => (!!v && String(v).length >= Number(rule.value)) || errMsg;
+    case 'max':
+    case 'maxLength':
+      if (isNumeric) return (v) => v <= parseFloat(rule.value) || errMsg;
+      return (v) => (!!v && String(v).length <= Number(rule.value)) || errMsg;
+    case 'range': {
+      const range = Array.isArray(rule.value) ? rule.value : String(rule.value).split('-');
+      const lo = parseFloat(range[0]);
+      const hi = parseFloat(range[1]);
+      return (v) => (v >= lo && v <= hi) || errMsg;
+    }
+    case 'eq':
+      return (v) => v == rule.value || errMsg;
+    default:
+      return (v) => v == rule.value || errMsg;
   }
 }
 
-// 返回表单数据 + 文件上传处理（参考 CrudDetailView 文件上传逻辑）
+function getFieldRules(field) {
+  const list = { errors: [], warnings: [] };
+  const builtin = field.required ? [{ type: 'required', message: (field.name.length < 10 ? field.name : '该字段') + '必填', level: 1 }] : [];
+  const baseRules = (field.rules || []).filter((r) => r.rule_id > 0 && r.rule_id === fieldBaseRule.value[fkey(field)]);
+  const all = builtin.concat(baseRules);
+  for (const r of all) {
+    const fn = formatRule(r, field.type);
+    if (r.level === 2) list.warnings.push({ rule: r, fn });
+    else list.errors.push({ rule: r, fn });
+  }
+  return list;
+}
+
+// 计算所有字段的 warnings/errors
+function evaluateAll() {
+  const errors = {};
+  const warnings = {};
+  for (const field of renderFields.value) {
+    if (field._renderType === 'list') continue;
+    const { errors: fe, warnings: fw } = getFieldRules(field);
+    const v = formData.value[fkey(field)];
+    for (const item of fe) {
+      const r = item.fn(v);
+      if (r !== true && r !== undefined) {
+        errors[fkey(field)] = { rule: item.rule, value: v, message: r };
+      }
+    }
+    if (!errors[fkey(field)]) {
+      const ws = [];
+      for (const item of fw) {
+        const r = item.fn(v);
+        if (r !== true && r !== undefined) {
+          ws.push({ rule: item.rule, value: v, message: r });
+        }
+      }
+      if (ws.length) warnings[fkey(field)] = ws;
+    }
+  }
+  return { errors, warnings };
+}
+
+function evaluateList(listField, rowIndex) {
+  const errors = {};
+  const warnings = [];
+  const row = (listRows.value[fkey(listField)] || [])[rowIndex] || {};
+  for (const sub of listField._subFields || []) {
+    const builtin = sub.required
+      ? [{ type: 'required', message: `${sub.name}必填`, level: 1 }]
+      : [];
+    const baseRules = (sub.rules || []).filter(
+      (r) => r.rule_id > 0 && r.rule_id === fieldBaseRule.value[fkey(sub)],
+    );
+    const all = builtin.concat(baseRules);
+    const v = row[fkey(sub)];
+    for (const r of all) {
+      const fn = formatRule(r, sub.type);
+      const res = fn(v);
+      if (res !== true && res !== undefined) {
+        if (r.level === 2) {
+          warnings.push({ rule: r, value: v, message: res });
+        } else {
+          errors[subListKey(listField.id, rowIndex, sub.id)] = { rule: r, message: res };
+        }
+      }
+    }
+  }
+  return { errors, warnings };
+}
+
+function evaluateAllList() {
+  const errors = {};
+  const warnings = {};
+  for (const field of renderFields.value) {
+    if (field._renderType !== 'list') continue;
+    const rows = listRows.value[fkey(field)] || [];
+    for (let i = 0; i < rows.length; i++) {
+      const r = evaluateList(field, i);
+      Object.assign(errors, r.errors);
+      if (r.warnings.length) {
+        warnings[fkey(field)] = (warnings[fkey(field)] || []).concat(r.warnings);
+      }
+    }
+  }
+  return { errors, warnings };
+}
+
+async function validate() {
+  const { errors } = evaluateAll();
+  const listEval = evaluateAllList();
+  const allErrors = { ...errors, ...listEval.errors };
+  // ant Form 校验已内置 required 字段，但 base_rules 需手动校验
+  let antValid = true;
+  if (formRef.value) {
+    try {
+      await formRef.value.validate();
+    } catch {
+      antValid = false;
+    }
+  }
+  return antValid && Object.keys(allErrors).length === 0;
+}
+
+// ---- 文件字段上传前置 ----
+async function uploadPendingFiles() {
+  // 常规字段
+  const tasks = [];
+  for (const field of renderFields.value) {
+    if (!['file', 'image', 'images', 'video', 'videos'].includes(field._renderType)) continue;
+    const ref = fieldRefs.value[fkey(field)];
+    if (ref?.fieldRef?.upload) {
+      tasks.push(ref.fieldRef.upload());
+    }
+  }
+  // list 子字段 file
+  for (const field of renderFields.value) {
+    if (field._renderType !== 'list') continue;
+    const rows = listRows.value[fkey(field)] || [];
+    for (let i = 0; i < rows.length; i++) {
+      for (const sub of field._subFields || []) {
+        if (!['file', 'image', 'images', 'video', 'videos'].includes(mapType(sub))) continue;
+        const ref = listFieldRefs.value[subListKey(field.id, i, sub.id)];
+        if (ref?.fieldRef?.upload) tasks.push(ref.fieldRef.upload());
+      }
+    }
+  }
+  await Promise.all(tasks);
+}
+
+// ---- 输出提交数据（对齐 saveFields 入参）----
+function buildValues() {
+  const out = {};
+  for (const field of renderFields.value) {
+    const key = fkey(field);
+    if (field._renderType === 'list') {
+      // list：[[子字段组], ...] 每组满足 {子字段key: value}
+      const rows = listRows.value[key] || [];
+      out[key] = rows.map((row) => {
+        const r = {};
+        for (const sub of field._subFields || []) {
+          r[fkey(sub)] = serializeValue(sub, row[fkey(sub)]);
+        }
+        return r;
+      });
+    } else {
+      out[key] = serializeValue(field, formData.value[key]);
+    }
+  }
+  return out;
+}
+
+function serializeValue(field, value) {
+  const type = field.type;
+  if (type === 'multiselect' || type === 'images' || type === 'videos' || type === 'file' || type === 'construction') {
+    // 数组：后端 json_encode 存储；含 ?upload 的字符串后端会 mapping 单值
+    if (Array.isArray(value)) {
+      return value.filter((v) => v != null && v !== '');
+    }
+    return value;
+  }
+  return value;
+}
+
+function buildRules(values) {
+  // rules: { _fieldId: rule_id | null | nested(list 按 [行: rule_id| null] 对应) }
+  const out = {};
+  for (const field of renderFields.value) {
+    const key = fkey(field);
+    if (field._renderType === 'list') {
+      const rows = listRows.value[key] || [];
+      out[key] = rows.map(() => null); // list 子字段的 base_rule 回显暂不支持嵌套选择
+    } else {
+      out[key] = fieldBaseRule.value[key] || null;
+    }
+  }
+  return out;
+}
+
 async function getFormData() {
   const validated = await validate();
-  // 文件上传：遍历 AppField 实例 upload
-  // 简化：依赖 AppField 默认立即上传机制（后续可补 batch upload）
+  await uploadPendingFiles();
+  const { errors, warnings } = evaluateAll();
+  const listEval = evaluateAllList();
   return {
-    values: formData.value,
-    listValues: listRows.value,
-    warnings: warnings.value,
+    values: buildValues(),
+    rules: buildRules(),
+    warnings: { ...warnings, ...listEval.warnings },
+    errors: { ...errors, ...listEval.errors },
     validated,
   };
 }
 
 function setFormData(data) {
-  formData.value = data.values || {};
-  listRows.value = data.listValues || {};
+  if (data?.values) {
+    // 假设 values 已经是 { _fieldId: ... }
+    for (const key in data.values) {
+      formData.value[key] = data.values[key];
+    }
+  }
+  if (data?.rules) {
+    for (const key in data.rules) {
+      fieldBaseRule.value[key] = data.rules[key];
+    }
+  }
 }
 
 defineExpose({
   formRef,
-  formFields: formFieldsConfig,
+  formFields,
   getFormData,
   setFormData,
   validate,
+  uploadPendingFiles,
 });
 
-onMounted(loadForm);
+const baseRuleGroups = computed(() => {
+  const groups = {};
+  for (const catId in baseRuleSelected.value) {
+    const cat = { id: catId, name: '', rules: [] };
+    for (const f of formFields.value) {
+      const baseRules = f.rules?.filter((r) => r.rule_id > 0) || [];
+      for (const r of baseRules) {
+        if (r.rule_category_id == catId) {
+          cat.name = r.rule_category_name;
+          if (!cat.rules.find((x) => x.id === r.rule_id)) {
+            cat.rules.push({ id: r.rule_id, name: r.rule_name });
+          }
+        }
+      }
+    }
+    groups[catId] = cat;
+  }
+  return groups;
+});
 
+// 监听 values 外部变化（如切换编辑行）
 watch(
   () => props.values,
-  (v) => setValues(v),
-  { deep: true }
+  (v) => {
+    if (formFields.value.length) setValues(v || []);
+  },
+  { deep: true },
 );
+
+watch(
+  () => props.formId,
+  () => {
+    loadForm();
+  },
+  { immediate: false },
+);
+
+watch(
+  () => props.rules,
+  () => {
+    if (formFields.value.length) initBaseRules();
+  },
+  { deep: true },
+);
+
+loadForm();
 </script>
 
 <template>
   <div class="submission-edit">
+    <!-- base_rules 顶部选择区（按 rule_category 互斥）-->
+    <div
+      v-if="Object.keys(baseRuleGroups).length"
+      class="mb-4 rounded border border-gray-200 bg-gray-50 p-3"
+    >
+      <div class="mb-2 text-sm font-semibold text-gray-600">规范适用</div>
+      <div class="flex flex-wrap gap-4">
+        <div v-for="(cat, catId) in baseRuleGroups" :key="catId" class="flex items-center gap-2">
+          <span class="text-sm text-gray-500">{{ cat.name }}</span>
+          <Select
+            :value="baseRuleSelected[catId]"
+            style="width: 160px"
+            size="small"
+            @change="(v) => changeBaseRule(catId, v)"
+          >
+            <Select.Option v-for="r in cat.rules" :key="r.id" :value="r.id">
+              {{ r.name }}
+            </Select.Option>
+          </Select>
+        </div>
+      </div>
+    </div>
+
     <Form ref="formRef" :model="formData" layout="vertical">
-      <template v-for="field in renderFields" :key="field.field">
-        <!-- list 类型：嵌套子表 -->
-        <div v-if="field.type === 'list'" class="mb-4 rounded border p-3">
+      <template v-for="field in renderFields" :key="field._key">
+        <!-- list 字段：嵌套子表 -->
+        <div v-if="field._renderType === 'list'" class="mb-4 rounded border p-3">
           <div class="mb-2 flex items-center justify-between">
             <div class="text-sm font-semibold text-gray-600">
-              {{ field.label }}
-              <span v-if="field.required" class="text-red-500">*</span>
+              {{ field.name }}<span v-if="field.required" class="text-red-500">*</span>
             </div>
-            <a-button size="small" @click="addListRow(field)">+ 新增行</a-button>
+            <Button v-if="!readonly" size="small" type="dashed" @click="addListRow(field)">
+              + 新增行
+            </Button>
           </div>
           <div
-            v-for="(row, rowIndex) in listRows[field.field] || []"
+            v-for="(row, rowIndex) in listRows[field._key] || []"
             :key="rowIndex"
-            class="mb-2 flex items-end gap-2 rounded bg-gray-50 p-2"
+            class="mb-3 rounded bg-gray-50 p-3"
           >
-            <div
-              v-for="sf in field.subFields"
-              :key="sf.id"
-              class="flex-1"
-            >
-              <div class="mb-1 text-xs text-gray-500">{{ sf.name }}<span v-if="sf.required" class="text-red-500">*</span></div>
-              <AppField
-                :field="{
-                  field: `_${sf.id}`,
-                  type: sf._fType,
-                  label: sf.name,
-                  attrs: sf._attrs,
-                }"
-                :model-value="row[fkey(sf)]"
-                :show-form-item="false"
-                @update:model-value="(v) => (row[fkey(sf)] = v)"
-              />
+            <div class="flex flex-wrap gap-3">
+              <div
+                v-for="sub in field._subFields || []"
+                :key="sub.id"
+                class="min-w-[120px] flex-1"
+              >
+                <AppField
+                  :field="{
+                    field: subListKey(field.id, rowIndex, sub.id),
+                    type: mapType(sub),
+                    label: `${sub.name}${sub.required ? '*' : ''}`,
+                    attrs: mapAttrs(sub),
+                  }"
+                  :model-value="row[fkey(sub)]"
+                  :with-form-item="true"
+                  :ref="(el) => setListFieldRef(field, rowIndex, sub, el)"
+                  @update:model-value="(v) => onListFieldUpdate(field, rowIndex, sub, v)"
+                />
+              </div>
             </div>
-            <a-button type="link" danger size="small" @click="removeListRow(field, rowIndex)">删除</a-button>
+            <div v-if="!readonly" class="mt-2 text-right">
+              <Button type="link" danger size="small" @click="removeListRow(field, rowIndex)">
+                删除本行
+              </Button>
+            </div>
           </div>
-          <div v-if="!(listRows[field.field] || []).length" class="py-3 text-center text-sm text-gray-400">
+          <div
+            v-if="!(listRows[field._key] || []).length"
+            class="py-4 text-center text-sm text-gray-400"
+          >
             暂无数据，点击"+ 新增行"
           </div>
         </div>
@@ -416,24 +796,17 @@ watch(
         <AppField
           v-else
           :field="{
-            field: field.field,
-            type: field.type,
-            label: field.label,
-            attrs: field.attrs,
-            rules: field.rules,
+            field: field._key,
+            type: field._renderType,
+            label: field.name,
+            attrs: field._attrs,
           }"
-          :model-value="formData[field.field]"
-          @update:model-value="(v) => {
-            formData[field.field] = v;
-            onFieldChange(field, v);
-          }"
+          :model-value="formData[field._key]"
+          :with-form-item="true"
+          :ref="(el) => setFieldRef(field, el)"
+          @update:model-value="(v) => onFieldUpdate(field, v)"
         />
       </template>
-      <Form.Item v-if="Object.keys(warnings).length">
-        <div class="rounded border border-orange-300 bg-orange-50 p-2 text-sm text-orange-700">
-          {{ Object.values(warnings).join('；') }}
-        </div>
-      </Form.Item>
     </Form>
   </div>
 </template>
