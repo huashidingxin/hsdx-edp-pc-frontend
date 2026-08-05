@@ -6,6 +6,7 @@ import { Select, Tag } from 'antdv-next';
 import Resource from '#/api/resource';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
 import FormFieldList from './field-list.vue';
+import FormTemplateList from './form-template-list.vue';
 
 const editingItem = ref({});
 
@@ -160,8 +161,9 @@ loadCategories();
     </template>
 
     <template #form-default>
-      <div v-if="editingItem.id" class="mt-2">
+      <div v-if="editingItem.id" class="mt-2 space-y-4">
         <FormFieldList :key="formFieldListKey" :form-id="editingItem.id" />
+        <FormTemplateList :key="`tpl-${formFieldListKey}`" :form-id="editingItem.id" :type="editingItem.type" />
       </div>
     </template>
   </AppCrudTable>

@@ -17,6 +17,7 @@ declare module 'vue' {
     AppFreeDate: typeof import('./components/app-free-date/index.vue')['default']
     AppList: typeof import('./components/AppList.vue')['default']
     AppMapDraw: typeof import('./components/AppMapDraw.vue')['default']
+    AppOffice: typeof import('./components/AppOffice.vue')['default']
     AppProject: typeof import('./components/AppProject.vue')['default']
     AppTable: typeof import('./components/AppTable.vue')['default']
     AppUpload: typeof import('./components/AppUpload.vue')['default']
