@@ -209,6 +209,7 @@ const formFields = ref([
   },
   { field: 'measures', type: 'slot', label: '监理表单', span: 24 },
   { field: 'prerequisites', type: 'slot', label: '前置工序', span: 24 },
+  { field: 'log_keywords', type: 'slot', label: '日志检测关键字', span: 24 },
 ]);
 
 const filterFields = ref([
@@ -307,6 +308,20 @@ onMounted(() => {
         <Button size="small" @click="openPrereqDialog">
           配置（{{ (editingItem.prerequisites || []).length }}）
         </Button>
+      </div>
+    </template>
+
+    <template #field_log_keywords>
+      <div class="space-y-1">
+        <Select
+          v-model:value="editingItem.log_keywords"
+          mode="tags"
+          placeholder="输入关键字后回车（如：混凝土、浇筑）"
+          class="w-full"
+        />
+        <span class="text-xs text-gray-400">
+          监理日志内容命中这些关键字时，将检测当天该项目是否有对应工序任务；无任务则标记日志警告，提示补充任务。
+        </span>
       </div>
     </template>
   </AppCrudTable>

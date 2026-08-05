@@ -36,30 +36,8 @@ function onShowDetail(editing) {
 
 // ---- 详情：解析 values/form_id 供 SubmissionEdit ----
 const defaultValues = ref([]);
-const associatedTaskOptions = ref([]);
-const associatedTaskIds = ref([]);
-
-async function loadTaskOptions(log) {
-  associatedTaskOptions.value = [];
-  try {
-    const { data } = await new Resource('task-submissions').list({
-      per_page: 'all',
-      project_id: log.project_id,
-      start_time: log.date,
-      end_time: log.date,
-      executor_id: log.user_id,
-      submission_status: 1,
-    });
-    associatedTaskOptions.value = (data || []).map((t) => ({
-      value: t.id,
-      label:
-        `${t.measure?.name || t.measure_name || ''} ${t.procedure?.name || t.procedure_name || ''}`.trim() ||
-        `任务#${t.id}`,
-    }));
-  } catch (error) {
-    console.error('加载关联任务失败:', error);
-  }
-}
+// P3-L03 日志关键字警告（命中关键字且当天无对应工序任务时标记）
+const warnings = ref([]);
 
 function detailFormat(data) {
   defaultValues.value = JSON.parse(
@@ -71,9 +49,7 @@ function detailFormat(data) {
     data.submission?.form_id ||
     data.projects?.supervision_log_form_id;
   editingItem.value._projectId = data.project_id;
-  // P3-L04 关联任务（当日旁站/平检等任务记录）
-  associatedTaskIds.value = data.associated_tasks || [];
-  loadTaskOptions(data);
+  warnings.value = data.warnings || [];
   return data;
 }
 
@@ -86,12 +62,15 @@ async function save() {
     return;
   }
   try {
-    await new Resource('supervision-logs').update(editingItem.value.id, {
-      form_id: editingItem.value._formId,
-      values: formData.values,
-      associated_task_ids: associatedTaskIds.value,
-    });
+    const res = await new Resource('supervision-logs').update(
+      editingItem.value.id,
+      {
+        form_id: editingItem.value._formId,
+        values: formData.values,
+      },
+    );
     message.success('提交成功');
+    warnings.value = res?.data?.warnings || [];
     tableRef.value?.reload?.();
   } catch (error) {
     console.error(error);
@@ -125,6 +104,27 @@ function openPreview() {
     title: `${editingItem.value.submission?.code || '记录'}.docx`,
   };
   previewOpen.value = true;
+}
+
+// ---- P3-L03 关键字警告手动解除（总监/有权限成员，保留记录）----
+const canResolveWarning = computed(
+  () =>
+    appStore.isAdmin ||
+    hasAccessByCodes(['log_warning.resolve', 'submission.audit']),
+);
+
+async function resolveWarning(w) {
+  Modal.confirm({
+    title: '解除关键字任务核对警告',
+    content: `确认解除"${w.procedure_name}"（${w.keyword}）的警告？操作将保留记录。`,
+    okText: '确认解除',
+    cancelText: '取消',
+    onOk: async () => {
+      await new Resource(`log-warnings/${w.id}/resolve`).store({});
+      message.success('已解除');
+      warnings.value = warnings.value.filter((x) => x.id !== w.id);
+    },
+  });
 }
 
 // ---- 记录审核（submissions/{id}/audit）----
@@ -320,7 +320,7 @@ const formFields = ref([
     displayOnly: true,
   },
   { field: 'content', type: 'slot', label: '记录内容', span: 24 },
-  { field: 'associated_tasks', type: 'slot', label: '关联任务记录', span: 24 },
+  { field: 'warnings', type: 'slot', label: '关键字任务核对', span: 24 },
   { field: 'timeline', type: 'slot', label: '提交/审核历史时间线', span: 24 },
 ]);
 
@@ -463,27 +463,37 @@ function rowState(row) {
       </template>
     </template>
 
-    <template #field_associated_tasks>
+    <template #field_warnings>
       <div v-if="editingItem.id" class="space-y-2">
-        <Select
-          v-if="isEditing"
-          v-model:value="associatedTaskIds"
-          :options="associatedTaskOptions"
-          mode="multiple"
-          placeholder="选择关联任务记录（旁站/平检等）"
-          option-filter-prop="label"
-          class="w-full"
-        />
-        <div v-else-if="associatedTaskIds.length" class="text-sm">
-          <Tag v-for="id in associatedTaskIds" :key="id" color="blue">
-            {{
-              associatedTaskOptions.find((o) => o.value === id)?.label ||
-              `任务#${id}`
-            }}
-          </Tag>
+        <div v-if="warnings.length" class="space-y-2">
+          <div
+            v-for="w in warnings"
+            :key="w.id"
+            class="flex items-start gap-2 rounded border border-orange-200 bg-orange-50 p-2"
+          >
+            <Tag color="orange" class="mt-0.5 shrink-0">待补充任务</Tag>
+            <div class="min-w-0 flex-1 text-sm">
+              <div>
+                日志描述了
+                <span class="font-medium">{{ w.procedure_name }}</span>
+                工序工作（命中关键字"{{ w.keyword }}"），但当天未查询到该工序任务记录。
+              </div>
+              <div class="text-xs text-gray-500">
+                请补充该工序当天任务后自动解除，或由总监/有权限成员解除。
+              </div>
+            </div>
+            <Button
+              v-if="canResolveWarning"
+              size="small"
+              type="link"
+              @click="resolveWarning(w)"
+            >
+              解除警告
+            </Button>
+          </div>
         </div>
         <div v-else class="text-xs text-gray-400">
-          未关联任务记录。日志内容含有关键字（如混凝土、钢筋）时，需关联对应旁站/平检任务记录才能提交。
+          无关键字任务核对警告。日志内容命中工序关键字且当天无对应工序任务时，此处会提示补充任务（不影响提交）。
         </div>
       </div>
     </template>
