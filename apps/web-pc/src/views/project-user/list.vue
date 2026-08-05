@@ -181,8 +181,30 @@ async function submitLeave() {
   }
 }
 
-// ========================= 批量离岗 =========================
+// ========================= 批量操作 =========================
 const selectedRows = ref([]);
+const allSelected = ref(false);
+
+// 全选/取消全选（经 AppCrudTable 的 getGrid 拿到 VxeGrid 实例）
+function toggleSelectAll() {
+  const grid = tableRef.value?.getGrid?.();
+  if (!grid) return;
+  const target = !allSelected.value;
+  grid.setAllCheckboxRow(target);
+  allSelected.value = target;
+}
+
+// 勾选变化时同步全选状态
+function onSelectedChange(rows) {
+  selectedRows.value = rows;
+  const grid = tableRef.value?.getGrid?.();
+  if (grid && typeof grid.getCheckboxRecords === 'function') {
+    const total = grid.getFullData?.()?.length ?? 0;
+    const checked = grid.getCheckboxRecords().length;
+    allSelected.value = total > 0 && checked >= total;
+  }
+}
+
 const batchLeaveDialog = ref(false);
 const batchLeaveForm = ref({ type: 1, start_time: '', end_time: '', reason: '' });
 
@@ -223,6 +245,25 @@ async function submitBatchLeave() {
     });
     message.success(`已对 ${userIds.length} 名成员执行离岗`);
     batchLeaveDialog.value = false;
+    tableRef.value?.reload?.();
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+// 批量撤销离岗（后端自动过滤无有效离岗的成员）
+async function submitBatchCancel() {
+  const rows = selectedRows.value || [];
+  const ids = rows.map((r) => r.id).filter(Boolean);
+  if (!ids.length) {
+    message.warning('请先勾选成员');
+    return;
+  }
+  try {
+    const res = await new Resource('project-leaves/batch-cancel').store({ ids });
+    const count = res?.data?.count;
+    message.success(count ? `已撤销 ${count} 名成员离岗` : '操作完成');
+    allSelected.value = false;
     tableRef.value?.reload?.();
   } catch (error) {
     console.error(error);
@@ -275,6 +316,7 @@ onMounted(() => {
     ref="tableRef"
     v-model="editingItem"
     v-model:selected="selectedRows"
+    @update:selected="onSelectedChange"
     api-url="project-users"
     permission-name="project_user"
     :extra-query="extraQuery"
@@ -290,7 +332,13 @@ onMounted(() => {
     @show-detail="onShowDetail"
   >
     <template #toolbar-append>
-      <Button type="primary" ghost @click="openBatchLeave">批量离岗</Button>
+      <div class="flex items-center gap-2">
+        <Button size="small" @click="toggleSelectAll">
+          {{ allSelected ? '取消全选' : '全选' }}
+        </Button>
+        <Button size="small" type="primary" ghost @click="openBatchLeave">批量离岗</Button>
+        <Button size="small" danger @click="submitBatchCancel">批量撤销离岗</Button>
+      </div>
     </template>
 
     <template #field__add>
@@ -319,7 +367,7 @@ onMounted(() => {
     </template>
 
     <template #row-action-extra="{ row }">
-      <Button type="link" size="small" danger @click="openLeave(row)">
+      <Button type="link" size="small" danger @click.stop="openLeave(row)">
         {{ row.leave?.status === 'active' ? '撤销离岗' : '离岗' }}
       </Button>
     </template>
