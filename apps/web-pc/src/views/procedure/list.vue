@@ -10,9 +10,9 @@ import AppList from '#/components/AppList.vue';
 const editingItem = ref({});
 
 const scopeOptions = [
-  { value: 'global', label: '全局' },
-  { value: 'category', label: '按分类' },
-  { value: 'project', label: '按项目' },
+  { value: 'global', label: '全局（所有项目）' },
+  { value: 'category', label: '按项目分类' },
+  { value: 'project', label: '按具体项目' },
 ];
 const projectOptions = ref([]);
 async function loadProjects() {
@@ -382,6 +382,9 @@ onMounted(() => {
     <div v-else class="py-4 text-center text-gray-400">暂无前置工序配置</div>
     <div class="mt-3">
       <Button type="dashed" block @click="addPrereqRow">+ 增加一行</Button>
+    </div>
+    <div class="mt-3 rounded bg-gray-50 p-2 text-xs text-gray-500">
+      生效范围说明：全局=对所有项目生效；按项目分类=仅对该前置关系所选分类下的项目生效；按具体项目=仅对指定项目生效，且覆盖全局/分类规则。任务记录提交时按桩号检测，任一桩号的前置工序未完成即标记警告（可补录前置记录后自动解除，或有权限成员手动解除）。
     </div>
   </Modal>
 

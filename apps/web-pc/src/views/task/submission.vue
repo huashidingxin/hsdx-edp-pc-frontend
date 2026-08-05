@@ -152,17 +152,56 @@ async function save() {
 
   nonconformanceDialog.value = false;
   try {
-    await new Resource('task-submissions').store({
+    const res = await new Resource('task-submissions').store({
       task_id: editingItem.value.id,
       form_id: editingItem.value.form_id,
       ...formData,
       nonconformances: nonconformanceEditing.value,
     });
     message.success('保存成功');
+    // P3-T02 前置工序警告（桩号维度）：提交后如有缺失前置，弹窗提示
+    const respWarnings = res?.warnings || [];
+    if (Array.isArray(respWarnings) && respWarnings.length > 0) {
+      prereqWarnings.value = respWarnings;
+      prereqWarnDialog.value = true;
+    }
     tableRef.value?.reload?.();
   } catch (e) {
     console.error(e);
   }
+}
+
+// ---- P3-T02 前置工序警告（桩号维度：缺失前置工序提示/补全自动解除/手动解除留记录）----
+const prereqWarnings = ref([]);
+const prereqWarnDialog = ref(false);
+
+function openPrereqWarnings(row) {
+  new Resource('prerequisite-warnings')
+    .list({ task_id: row.id, per_page: 100 })
+    .then((res) => {
+      const data = res?.data?.data || res?.data || [];
+      prereqWarnings.value = Array.isArray(data) ? data.filter((w) => w.status === 1) : [];
+      if (!prereqWarnings.value.length) {
+        message.info('该任务无前置工序警告');
+        return;
+      }
+      prereqWarnDialog.value = true;
+    })
+    .catch(() => message.error('加载前置工序警告失败'));
+}
+
+async function resolvePrereqWarning(w) {
+  Modal.confirm({
+    title: '解除前置工序警告',
+    content: `确认解除"${w.milepost?.name || '项目'}"桩号缺失前置工序"${w.prerequisite_name}"的警告？操作将保留记录。`,
+    okText: '确认解除',
+    cancelText: '取消',
+    onOk: async () => {
+      await new Resource(`prerequisite-warnings/${w.id}/resolve`).store({});
+      message.success('已解除');
+      prereqWarnings.value = prereqWarnings.value.filter((x) => x.id !== w.id);
+    },
+  });
 }
 
 function reset() {
@@ -483,8 +522,54 @@ watch(() => appStore.defaultProject?.id, refreshAll);
         >
           审核
         </Button>
+        <Button
+          type="link"
+          size="small"
+          @click="openPrereqWarnings(row)"
+        >
+          前置警告
+        </Button>
       </template>
     </AppCrudTable>
+
+    <!-- P3-T02 前置工序警告弹窗（桩号维度） -->
+    <Modal
+      v-model:open="prereqWarnDialog"
+      title="前置工序警告"
+      ok-text="关闭"
+      :footer="null"
+      width="640px"
+    >
+      <div v-if="prereqWarnings.length" class="space-y-2">
+        <div
+          v-for="w in prereqWarnings"
+          :key="w.id"
+          class="flex items-start gap-2 rounded border border-orange-200 bg-orange-50 p-2"
+        >
+          <Tag color="orange" class="mt-0.5 shrink-0">前置缺失</Tag>
+          <div class="min-w-0 flex-1 text-sm">
+            <div>
+              桩号
+              <span class="font-medium">{{ w.milepost?.name || '项目整体' }}</span>
+              尚未完成前置工序
+              <span class="font-medium">{{ w.prerequisite_name }}</span>
+            </div>
+            <div class="text-xs text-gray-500">
+              请补充该桩号的前置工序任务记录后自动解除，或由总监/有权限成员解除（保留记录）。
+            </div>
+          </div>
+          <Button
+            v-if="hasAccessByCodes(['prerequisite_warning.resolve', 'submission.audit'])"
+            size="small"
+            type="link"
+            @click="resolvePrereqWarning(w)"
+          >
+            解除
+          </Button>
+        </div>
+      </div>
+      <div v-else class="py-4 text-center text-gray-400">暂无前置工序警告</div>
+    </Modal>
 
     <!-- 记录审核弹窗 -->
     <Modal
