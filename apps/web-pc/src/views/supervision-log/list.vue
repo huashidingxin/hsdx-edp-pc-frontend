@@ -483,7 +483,7 @@ function rowState(row) {
           </Tag>
         </div>
         <div v-else class="text-xs text-gray-400">
-          未关联任务记录。日志内容命中敏感词（如混凝土、钢筋）时，需关联对应旁站/平检任务记录才能提交。
+          未关联任务记录。日志内容含有关键字（如混凝土、钢筋）时，需关联对应旁站/平检任务记录才能提交。
         </div>
       </div>
     </template>

@@ -39,7 +39,7 @@ const formFields = ref([
   {
     field: 'keyword',
     type: 'text',
-    label: '敏感关键词',
+    label: '关键字',
     span: 12,
     required: true,
   },
@@ -95,9 +95,9 @@ const filterFields = ref([
 ]);
 
 const gridColumns = ref([
-  { field: 'keyword', title: '敏感关键词', minWidth: 140 },
-  { field: 'procedure.name', title: '关联工序', minWidth: 140 },
-  { field: 'measure.name', title: '关联监理方式', minWidth: 140 },
+  { field: 'keyword', title: '关键字', minWidth: 140 },
+  { field: 'procedure.name', title: '关联工序', minWidth: 140, slots: { default: 'default_procedure' } },
+  { field: 'measure.name', title: '关联监理方式', minWidth: 140, slots: { default: 'default_measure' } },
   {
     field: 'project_category_id',
     title: '生效分类',
@@ -140,9 +140,15 @@ onMounted(() => {
       columnConfig: { resizable: true },
     }"
     :open-mode="{ create: 'drawer', detail: 'drawer' }"
-    title="日志敏感词规则"
+    title="日志关键字规则"
     class="p-4"
   >
+    <template #default_procedure="{ row }">
+      {{ row.procedure?.name || '-' }}
+    </template>
+    <template #default_measure="{ row }">
+      {{ row.measure?.name || '-' }}
+    </template>
     <template #default_category="{ row }">
       {{
         categories.find((c) => c.id === row.project_category_id)?.name || '全局'
