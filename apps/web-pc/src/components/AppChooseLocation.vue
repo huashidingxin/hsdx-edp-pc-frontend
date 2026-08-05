@@ -11,18 +11,16 @@
 import { computed, nextTick, ref, watch } from 'vue';
 
 import { Button, Input, Modal, Spin } from 'antdv-next';
-
-import Draw from 'ol/interaction/Draw.js';
 import Feature from 'ol/Feature.js';
+import Point from 'ol/geom/Point.js';
+import TileLayer from 'ol/layer/Tile.js';
+import VectorLayer from 'ol/layer/Vector.js';
 import Map from 'ol/Map.js';
 import { get } from 'ol/proj.js';
-import VectorLayer from 'ol/layer/Vector.js';
-import TileLayer from 'ol/layer/Tile.js';
-import View from 'ol/View.js';
-import Point from 'ol/geom/Point.js';
-import { Icon, Style } from 'ol/style.js';
 import { XYZ } from 'ol/source.js';
 import VectorSource from 'ol/source/Vector.js';
+import { Icon, Style } from 'ol/style.js';
+import View from 'ol/View.js';
 
 import 'ol/ol.css';
 

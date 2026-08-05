@@ -1,16 +1,16 @@
 <script setup>
 import { computed, ref, watch } from 'vue';
 
+import { useAccess } from '@vben/access';
+import { useUserStore } from '@vben/stores';
+
 import { Button, DatePicker, Drawer, Input, message, Modal, Radio, Select, Tag } from 'antdv-next';
 
-import { useUserStore } from '@vben/stores';
-import { useAccess } from '@vben/access';
-
 import Resource from '#/api/resource';
-import { useAppStore } from '#/store';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
 import AppOffice from '#/components/AppOffice.vue';
 import SubmissionEdit from '#/components/SubmissionEdit.vue';
+import { useAppStore } from '#/store';
 
 const appStore = useAppStore();
 const userStore = useUserStore();
@@ -474,7 +474,7 @@ function rowState(row) {
     <div v-if="previewDocument" class="h-[calc(100vh-120px)]">
       <AppOffice
         :document="previewDocument"
-        :mode="'view'"
+        mode="view"
       />
     </div>
   </Drawer>

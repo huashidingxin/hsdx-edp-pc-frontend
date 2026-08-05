@@ -15,9 +15,9 @@
  *
  * 暴露接口（与 web-admin submission/edit.vue 对齐）：formRef / formFields / getFormData / setFormData / validate
  */
-import { computed, nextTick, reactive, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 
-import { Button, Form, FormItem, message, Select } from 'antdv-next';
+import { Button, Form, Select } from 'antdv-next';
 
 import Resource from '#/api/resource';
 import AppField from '#/components/AppField.vue';
@@ -91,32 +91,32 @@ function mapType(field) {
   const type = field.type || 'text';
   // 后端 FormController.show 对 type=stakeholder/construction 已转为 multiselect 并填好 options
   switch (type) {
-    case 'text':
-    case 'textarea':
-    case 'switch':
-    case 'number':
-    case 'digit':
     case 'date':
-    case 'time':
     case 'datetime':
-    case 'select':
-    case 'multiselect':
+    case 'digit':
+    case 'file':
     case 'image':
     case 'images':
-    case 'file':
+    case 'multiselect':
+    case 'number':
+    case 'select':
+    case 'switch':
+    case 'text':
+    case 'textarea':
+    case 'time':
     case 'video':
     case 'videos':
       return type;
-    case 'temperature':
     case 'humidity':
+    case 'temperature':
     case 'wind':
       return 'number';
+    case 'list':
+      return 'list';
     case 'unit_project':
       return 'select';
     case 'unit_project_code':
       return 'text';
-    case 'list':
-      return 'list';
     default:
       return 'text';
   }
@@ -420,9 +420,25 @@ function setListFieldRef(listField, rowIndex, subField, el) {
 // 普通字段：内置规则（required）+ base_rules（按选中 rule_id 过滤）+ level 区分
 function formatRule(rule, fieldType) {
   const type = rule.type;
-  const isNumeric = ['number', 'digit', 'temperature', 'humidity', 'wind'].includes(fieldType);
+  const isNumeric = ['digit', 'humidity', 'number', 'temperature', 'wind'].includes(fieldType);
   const errMsg = rule.message || '格式有误';
   switch (type) {
+    case 'eq':
+      return (v) => v == rule.value || errMsg;
+    case 'max':
+    case 'maxLength':
+      if (isNumeric) return (v) => v <= parseFloat(rule.value) || errMsg;
+      return (v) => (!!v && String(v).length <= Number(rule.value)) || errMsg;
+    case 'min':
+    case 'minLength':
+      if (isNumeric) return (v) => v >= parseFloat(rule.value) || errMsg;
+      return (v) => (!!v && String(v).length >= Number(rule.value)) || errMsg;
+    case 'range': {
+      const range = Array.isArray(rule.value) ? rule.value : String(rule.value).split('-');
+      const lo = parseFloat(range[0]);
+      const hi = parseFloat(range[1]);
+      return (v) => (v >= lo && v <= hi) || errMsg;
+    }
     case 'required':
       if (fieldType !== 'switch' && !isNumeric) {
         return (v) => {
@@ -433,22 +449,6 @@ function formatRule(rule, fieldType) {
         };
       }
       return (v) => v !== undefined && v !== null || errMsg;
-    case 'min':
-    case 'minLength':
-      if (isNumeric) return (v) => v >= parseFloat(rule.value) || errMsg;
-      return (v) => (!!v && String(v).length >= Number(rule.value)) || errMsg;
-    case 'max':
-    case 'maxLength':
-      if (isNumeric) return (v) => v <= parseFloat(rule.value) || errMsg;
-      return (v) => (!!v && String(v).length <= Number(rule.value)) || errMsg;
-    case 'range': {
-      const range = Array.isArray(rule.value) ? rule.value : String(rule.value).split('-');
-      const lo = parseFloat(range[0]);
-      const hi = parseFloat(range[1]);
-      return (v) => (v >= lo && v <= hi) || errMsg;
-    }
-    case 'eq':
-      return (v) => v == rule.value || errMsg;
     default:
       return (v) => v == rule.value || errMsg;
   }

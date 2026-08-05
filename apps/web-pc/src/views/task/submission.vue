@@ -9,10 +9,10 @@
  */
 import { computed, ref, watch } from 'vue';
 
-import { Button, DatePicker, Drawer, Input, message, Modal, Radio, Select, Tag } from 'antdv-next';
-
-import { useUserStore } from '@vben/stores';
 import { useAccess } from '@vben/access';
+import { useUserStore } from '@vben/stores';
+
+import { Button, DatePicker, Drawer, Input, message, Modal, Radio, Select, Tag } from 'antdv-next';
 
 import Resource from '#/api/resource';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
@@ -226,15 +226,10 @@ function setNonconformanceFields(warnings) {
     const field = submissionRef.value?.formFields?.find((f) => `_${f.id}` === fieldKey);
     if (!field) continue;
     const warns = warnings[fieldKey] || [];
-    let tips = '';
-    if (field.type === 'switch') {
-      const options = field.options || ['是', '否'];
-      tips = `检查结果：${options[warns[0]?.value == 1 ? 0 : 1] || '否'}（要求：${warns[0]?.message || ''}）`;
-    } else {
-      tips = warns
-        .map((w) => `检查结果：${w.value || '未填写'}，${w.message}`)
-        .join('；');
-    }
+    const tips =
+      field.type === 'switch'
+        ? `检查结果：${(field.options || ['是', '否'])[warns[0]?.value == 1 ? 0 : 1] || '否'}（要求：${warns[0]?.message || ''}）`
+        : warns.map((w) => `检查结果：${w.value || '未填写'}，${w.message}`).join('；');
     nonconformanceFields.value.push({
       field: `_${field.id}`,
       label: field.name,
@@ -562,7 +557,7 @@ watch(() => appStore.defaultProject?.id, refreshAll);
       <div v-if="previewDocument" class="h-[calc(100vh-120px)]">
         <AppOffice
           :document="previewDocument"
-          :mode="'view'"
+          mode="view"
         />
       </div>
     </Drawer>

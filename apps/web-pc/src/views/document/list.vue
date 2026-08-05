@@ -240,7 +240,7 @@ watch(() => appStore.defaultProject?.id, loadUsers);
     <div v-if="previewDocument" class="h-[calc(100vh-120px)]">
       <AppOffice
         :document="previewDocument"
-        :mode="'view'"
+        mode="view"
       />
     </div>
   </Drawer>

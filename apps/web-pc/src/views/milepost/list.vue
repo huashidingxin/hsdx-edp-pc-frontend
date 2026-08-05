@@ -5,8 +5,8 @@ import { Button, message, Modal, Select } from 'antdv-next';
 
 import { requestClient } from '#/api/request';
 import Resource from '#/api/resource';
-import AppChooseLocation from '#/components/AppChooseLocation.vue';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
+import AppChooseLocation from '#/components/AppChooseLocation.vue';
 import AppMapDraw from '#/components/AppMapDraw.vue';
 import { useAppStore } from '#/store';
 

@@ -11,8 +11,8 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
-import { useUserStore } from '@vben/stores';
 import { preferences } from '@vben/preferences';
+import { useUserStore } from '@vben/stores';
 
 import { Modal, Tag } from 'antdv-next';
 
@@ -255,7 +255,7 @@ onMounted(() => {
               <div class="min-w-0 flex-1">
                 <div class="font-medium">{{ item.name }}</div>
                 <div class="text-xs text-gray-400">
-                  {{ item.code || '' }}{{ item.roles?.join('、') ? ' · ' + item.roles.join('、') : '' }}
+                  {{ item.code || '' }}{{ item.roles?.join('、') ? ` · ${ item.roles.join('、')}` : '' }}
                 </div>
               </div>
             </div>
@@ -272,6 +272,7 @@ onMounted(() => {
       width="640px"
     >
       <div class="mb-3 text-sm text-gray-400">{{ currentNews?.created_at }}</div>
+      <!-- eslint-disable-next-line vue/no-v-html -->
       <div class="max-h-[60vh] overflow-y-auto" v-html="currentNews?.content"></div>
     </Modal>
   </div>

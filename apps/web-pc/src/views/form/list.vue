@@ -5,6 +5,7 @@ import { Select, Tag } from 'antdv-next';
 
 import Resource from '#/api/resource';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
+
 import FormFieldList from './field-list.vue';
 import FormTemplateList from './form-template-list.vue';
 
@@ -133,7 +134,7 @@ loadCategories();
     </template>
 
     <template #field_setting>
-      <div v-if="editingItem.type == 4" class="grid grid-cols-12 gap-4">
+      <div v-if="editingItem.type === 4" class="grid grid-cols-12 gap-4">
         <div class="col-span-3">
           <label class="mb-1 block text-sm text-gray-500">填写频率</label>
           <Select v-model:value="formSetting.frequency" :options="frequencyOptions" style="width: 100%" />
