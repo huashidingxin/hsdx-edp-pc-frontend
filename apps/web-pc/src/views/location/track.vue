@@ -15,7 +15,7 @@ import Point from 'ol/geom/Point.js';
 import TileLayer from 'ol/layer/Tile.js';
 import VectorLayer from 'ol/layer/Vector.js';
 import Map from 'ol/Map.js';
-import { get } from 'ol/proj.js';
+import { fromLonLat, get } from 'ol/proj.js';
 import { XYZ } from 'ol/source.js';
 import VectorSource from 'ol/source/Vector.js';
 import { Circle as CircleStyle, Fill, Stroke, Style, Text } from 'ol/style.js';
@@ -59,40 +59,103 @@ const selectedMember = ref(undefined);
 const trackDate = ref(null);
 
 // ── 地图 ─────────────────────────────────────────────
+// 统一使用 Web Mercator（EPSG:3857）：天地图/OSM 均可用，支持国际项目；
+// 点坐标一律 fromLonLat([lng, lat]) 转换。
 const mapEl = ref(null);
 let map = null;
 let pointSource = new VectorSource();
 let trackSource = new VectorSource();
 let pointLayer = null;
 let trackLayer = null;
+let baseLayer = null;
 
-function tiandiLayer(type, matrixSet) {
+// 底图：cn 中国（天地图） / world 全球（OSM）
+const baseMap = ref('cn');
+
+function tiandiLayer(type) {
   const key = import.meta.env.VITE_TIANDI_KEY;
   return new TileLayer({
     source: new XYZ({
-      url: `https://t{0-7}.tianditu.gov.cn/DataServer?T=${type}_${matrixSet}&tk=${key}&x={x}&y={y}&l={z}`,
-      projection: get('EPSG:4326'),
+      url: `https://t{0-7}.tianditu.gov.cn/DataServer?T=${type}_w&tk=${key}&x={x}&y={y}&l={z}`,
+      projection: get('EPSG:3857'),
     }),
   });
+}
+
+function osmLayer() {
+  return new TileLayer({
+    source: new XYZ({
+      url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      projection: get('EPSG:3857'),
+      crossOrigin: 'anonymous',
+    }),
+  });
+}
+
+function buildBaseLayer(base) {
+  return base === 'world' ? osmLayer() : [tiandiLayer('img'), tiandiLayer('cia')];
+}
+
+function switchBaseLayer(base) {
+  if (!map) return;
+  if (baseLayer) {
+    const layers = Array.isArray(baseLayer) ? baseLayer : [baseLayer];
+    layers.forEach((l) => map.removeLayer(l));
+  }
+  baseLayer = buildBaseLayer(base);
+  const layers = Array.isArray(baseLayer) ? baseLayer : [baseLayer];
+  layers.forEach((l) => map.addLayer(l));
+}
+
+function onBaseMapChange(v) {
+  baseMap.value = v;
+  switchBaseLayer(v);
+}
+
+// 项目经纬度中心：优先当前项目 address
+const defaultCenter = ref([113.5, 34.5]);
+let centered = false;
+
+async function loadProjectCenter() {
+  if (!projectId.value || !map) return;
+  try {
+    const res = await new Resource('projects').get(projectId.value);
+    const addr = res?.data?.address || res?.address;
+    const lat = Number(addr?.latitude);
+    const lng = Number(addr?.longitude);
+    if (lat && lng) {
+      const center = fromLonLat([lng, lat]);
+      defaultCenter.value = [lng, lat];
+      map.getView().setCenter(center);
+      map.getView().setZoom(14);
+      centered = true;
+    }
+  } catch (error) {
+    console.error('加载项目经纬度失败:', error);
+  }
 }
 
 function initMap() {
   if (!mapEl.value || map) return;
   map = new Map({
     target: mapEl.value,
-    layers: [tiandiLayer('img', 'c'), tiandiLayer('cia', 'c')],
+    layers: [],
     view: new View({
-      center: [113.5, 34.5],
+      center: fromLonLat(defaultCenter.value),
       zoom: 12,
       maxZoom: 18,
-      minZoom: 1,
+      minZoom: 2,
     }),
   });
+
+  switchBaseLayer(baseMap.value);
 
   pointLayer = new VectorLayer({ source: pointSource });
   trackLayer = new VectorLayer({ source: trackSource });
   map.addLayer(trackLayer);
   map.addLayer(pointLayer);
+
+  loadProjectCenter();
 }
 
 // ── 实时分布 ─────────────────────────────────────────
@@ -123,7 +186,7 @@ function renderLive() {
   const features = liveData.value.map((p) => {
     const online = Number(p.online) === 1;
     const feature = new Feature({
-      geometry: new Point([Number(p.lng), Number(p.lat)]),
+      geometry: new Point(fromLonLat([Number(p.lng), Number(p.lat)])),
       ...p,
     });
     feature.setStyle(
@@ -194,7 +257,9 @@ function renderTrack() {
   trackSource.clear();
   if (!map || !trackPoints.value.length) return;
 
-  const coords = trackPoints.value.map((p) => [Number(p.lng), Number(p.lat)]);
+  const coords = trackPoints.value.map((p) =>
+    fromLonLat([Number(p.lng), Number(p.lat)]),
+  );
   const line = new Feature({
     geometry: new LineString(coords),
   });
@@ -255,7 +320,7 @@ function pausePlay() {
 function updatePlayMarker() {
   const p = trackPoints.value[playIndex.value];
   if (!p || !playMarkerFeature || !map) return;
-  playMarkerFeature.setGeometry(new Point([Number(p.lng), Number(p.lat)]));
+  playMarkerFeature.setGeometry(new Point(fromLonLat([Number(p.lng), Number(p.lat)])));
   playMarkerFeature.setStyle(
     new Style({
       image: new CircleStyle({
@@ -271,7 +336,7 @@ function updatePlayMarker() {
       }),
     }),
   );
-  map.getView().setCenter([Number(p.lng), Number(p.lat)]);
+  map.getView().setCenter(fromLonLat([Number(p.lng), Number(p.lat)]));
 }
 
 function onSpeedChange(v) {
@@ -337,6 +402,16 @@ onBeforeUnmount(() => {
         @change="(e) => onModeChange(e.target.value)"
       />
       <span class="text-sm text-gray-500">项目：{{ projectLabel }}</span>
+
+      <Select
+        v-model:value="baseMap"
+        class="w-36"
+        :options="[
+          { value: 'cn', label: '中国影像' },
+          { value: 'world', label: '全球地图' },
+        ]"
+        @change="onBaseMapChange"
+      />
 
       <template v-if="mode === 'live'">
         <Tag color="green">实时定位（近30分钟）</Tag>
