@@ -2,7 +2,7 @@
 /**
  * 员工定位跟踪（P5-005/006）：
  * 实时分布（location.realtime）+ 历史轨迹回放/导出（location.history）。
- * 底图：天地图 EPSG:4326（OpenLayers）。
+ * 底图：EPSG:3857 Web Mercator，支持底图切换（中国卫星/中国矢量/全球卫星/全球矢量）。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
@@ -69,8 +69,15 @@ let pointLayer = null;
 let trackLayer = null;
 let baseLayer = null;
 
-// 底图：cn 中国（天地图） / world 全球（OSM）
-const baseMap = ref('cn');
+// 底图：区域（cn 中国 / world 全球）× 类型（sat 卫星 / vec 矢量）
+// 中国用天地图（国内影像完整）；全球用 Esri 卫星影像 / OpenStreetMap 矢量（覆盖全球，支持国际项目）
+const BASE_MAPS = {
+  'cn-sat': { label: '卫星·中国', layers: ['img', 'cia'] },
+  'cn-vec': { label: '矢量·中国', layers: ['vec', 'cva'] },
+  'world-sat': { label: '卫星·全球', layers: ['esri'] },
+  'world-vec': { label: '矢量·全球', layers: ['osm'] },
+};
+const baseMap = ref('cn-sat');
 
 function tiandiLayer(type) {
   const key = import.meta.env.VITE_TIANDI_KEY;
@@ -92,19 +99,30 @@ function osmLayer() {
   });
 }
 
+function esriLayer() {
+  return new TileLayer({
+    source: new XYZ({
+      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      projection: get('EPSG:3857'),
+      crossOrigin: 'anonymous',
+    }),
+  });
+}
+
 function buildBaseLayer(base) {
-  return base === 'world' ? osmLayer() : [tiandiLayer('img'), tiandiLayer('cia')];
+  const keys = BASE_MAPS[base]?.layers || ['img', 'cia'];
+  return keys.map((k) => {
+    if (k === 'osm') return osmLayer();
+    if (k === 'esri') return esriLayer();
+    return tiandiLayer(k);
+  });
 }
 
 function switchBaseLayer(base) {
   if (!map) return;
-  if (baseLayer) {
-    const layers = Array.isArray(baseLayer) ? baseLayer : [baseLayer];
-    layers.forEach((l) => map.removeLayer(l));
-  }
+  baseLayer?.forEach((l) => map.removeLayer(l));
   baseLayer = buildBaseLayer(base);
-  const layers = Array.isArray(baseLayer) ? baseLayer : [baseLayer];
-  layers.forEach((l) => map.addLayer(l));
+  baseLayer.forEach((l) => map.addLayer(l));
 }
 
 function onBaseMapChange(v) {
@@ -387,9 +405,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="p-4">
+  <div class="flex h-[calc(100vh-120px)] flex-col p-4">
     <div
-      class="mb-4 flex flex-wrap items-center gap-3 rounded-lg bg-white p-3 shadow-sm"
+      class="mb-4 flex flex-shrink-0 flex-wrap items-center gap-3 rounded-lg bg-white p-3 shadow-sm"
     >
       <Radio.Group
         :value="mode"
@@ -405,11 +423,8 @@ onBeforeUnmount(() => {
 
       <Select
         v-model:value="baseMap"
-        class="w-36"
-        :options="[
-          { value: 'cn', label: '中国影像' },
-          { value: 'world', label: '全球地图' },
-        ]"
+        class="w-40"
+        :options="Object.entries(BASE_MAPS).map(([value, m]) => ({ value, label: m.label }))"
         @change="onBaseMapChange"
       />
 
@@ -452,13 +467,13 @@ onBeforeUnmount(() => {
       <Empty description="无查看实时定位权限（需 location.realtime）" />
     </div>
 
-    <div class="relative overflow-hidden rounded-lg border bg-white">
-      <div ref="mapEl" class="h-[560px] w-full"></div>
+    <div class="relative min-h-0 flex-1 overflow-hidden rounded-lg border bg-white">
+      <div ref="mapEl" class="h-full w-full"></div>
 
-      <!-- 实时图例 -->
+      <!-- 实时图例（右上，避免遮挡左上缩放控件） -->
       <div
         v-if="mode === 'live'"
-        class="absolute left-3 top-3 z-10 rounded bg-white/90 p-2 text-xs shadow"
+        class="absolute right-3 top-3 z-10 rounded bg-white/90 p-2 text-xs shadow"
       >
         <div class="flex items-center gap-1">
           <span class="h-2.5 w-2.5 rounded-full bg-green-500"></span> 在线（10分钟内）
