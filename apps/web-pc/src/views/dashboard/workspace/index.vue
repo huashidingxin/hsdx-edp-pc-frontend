@@ -1,266 +1,278 @@
-<script lang="ts" setup>
-import type {
-  WorkbenchProjectItem,
-  WorkbenchQuickNavItem,
-  WorkbenchTodoItem,
-  WorkbenchTrendItem,
-} from '@vben/common-ui';
-
-import { ref } from 'vue';
+<script setup>
+/**
+ * 工作台（监理业务概览）—— 对齐 web-admin dashboard/workspace/index.vue
+ *
+ * - 顶部：问候语 + 当前项目（角色）+ 待办数 + 项目数
+ * - 通知公告（GET index → notices）
+ * - 最新文件（GET index → knowledge）
+ * - 待办事项（appStore.dashboard 八类统计，点击跳转）
+ * - 我的项目（appStore.projects）
+ */
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
-import {
-  AnalysisChartCard,
-  WorkbenchHeader,
-  WorkbenchProject,
-  WorkbenchQuickNav,
-  WorkbenchTodo,
-  WorkbenchTrends,
-} from '@vben/common-ui';
-import { preferences } from '@vben/preferences';
 import { useUserStore } from '@vben/stores';
-import { openWindow } from '@vben/utils';
+import { preferences } from '@vben/preferences';
 
-import AnalyticsVisitsSource from '../analytics/analytics-visits-source.vue';
+import { Modal, Tag } from 'antdv-next';
 
-const userStore = useUserStore();
-
-// 这是一个示例数据，实际项目中需要根据实际情况进行调整
-// url 也可以是内部路由，在 navTo 方法中识别处理，进行内部跳转
-// 例如：url: /dashboard/workspace
-const projectItems: WorkbenchProjectItem[] = [
-  {
-    color: '',
-    content: '不要等待机会，而要创造机会。',
-    date: '2021-04-01',
-    group: '开源组',
-    icon: 'carbon:logo-github',
-    title: 'Github',
-    url: 'https://github.com',
-  },
-  {
-    color: '#3fb27f',
-    content: '现在的你决定将来的你。',
-    date: '2021-04-01',
-    group: '算法组',
-    icon: 'ion:logo-vue',
-    title: 'Vue',
-    url: 'https://vuejs.org',
-  },
-  {
-    color: '#e18525',
-    content: '没有什么才能比努力更重要。',
-    date: '2021-04-01',
-    group: '上班摸鱼',
-    icon: 'ion:logo-html5',
-    title: 'Html5',
-    url: 'https://developer.mozilla.org/zh-CN/docs/Web/HTML',
-  },
-  {
-    color: '#bf0c2c',
-    content: '热情和欲望可以突破一切难关。',
-    date: '2021-04-01',
-    group: 'UI',
-    icon: 'ion:logo-angular',
-    title: 'Angular',
-    url: 'https://angular.io',
-  },
-  {
-    color: '#00d8ff',
-    content: '健康的身体是实现目标的基石。',
-    date: '2021-04-01',
-    group: '技术牛',
-    icon: 'bx:bxl-react',
-    title: 'React',
-    url: 'https://reactjs.org',
-  },
-  {
-    color: '#EBD94E',
-    content: '路是走出来的，而不是空想出来的。',
-    date: '2021-04-01',
-    group: '架构组',
-    icon: 'ion:logo-javascript',
-    title: 'Js',
-    url: 'https://developer.mozilla.org/zh-CN/docs/Web/JavaScript',
-  },
-];
-
-// 同样，这里的 url 也可以使用以 http 开头的外部链接
-const quickNavItems: WorkbenchQuickNavItem[] = [
-  {
-    color: '#1fdaca',
-    icon: 'ion:home-outline',
-    title: '首页',
-    url: '/',
-  },
-  {
-    color: '#bf0c2c',
-    icon: 'ion:grid-outline',
-    title: '仪表盘',
-    url: '/dashboard',
-  },
-  {
-    color: '#e18525',
-    icon: 'ion:layers-outline',
-    title: '组件',
-    url: '/demos/features/icons',
-  },
-  {
-    color: '#3fb27f',
-    icon: 'ion:settings-outline',
-    title: '系统管理',
-    url: '/demos/features/login-expired', // 这里的 URL 是示例，实际项目中需要根据实际情况进行调整
-  },
-  {
-    color: '#4daf1bc9',
-    icon: 'ion:key-outline',
-    title: '权限管理',
-    url: '/demos/access/page-control',
-  },
-  {
-    color: '#00d8ff',
-    icon: 'ion:bar-chart-outline',
-    title: '图表',
-    url: '/analytics',
-  },
-];
-
-const todoItems = ref<WorkbenchTodoItem[]>([
-  {
-    completed: false,
-    content: `审查最近提交到Git仓库的前端代码，确保代码质量和规范。`,
-    date: '2024-07-30 11:00:00',
-    title: '审查前端代码提交',
-  },
-  {
-    completed: true,
-    content: `检查并优化系统性能，降低CPU使用率。`,
-    date: '2024-07-30 11:00:00',
-    title: '系统性能优化',
-  },
-  {
-    completed: false,
-    content: `进行系统安全检查，确保没有安全漏洞或未授权的访问。 `,
-    date: '2024-07-30 11:00:00',
-    title: '安全检查',
-  },
-  {
-    completed: false,
-    content: `更新项目中的所有npm依赖包，确保使用最新版本。`,
-    date: '2024-07-30 11:00:00',
-    title: '更新项目依赖',
-  },
-  {
-    completed: false,
-    content: `修复用户报告的页面UI显示问题，确保在不同浏览器中显示一致。 `,
-    date: '2024-07-30 11:00:00',
-    title: '修复UI显示问题',
-  },
-]);
-const trendItems: WorkbenchTrendItem[] = [
-  {
-    avatar: 'svg:avatar-1',
-    content: `在 <a>开源组</a> 创建了项目 <a>Vue</a>`,
-    date: '刚刚',
-    title: '威廉',
-  },
-  {
-    avatar: 'svg:avatar-2',
-    content: `关注了 <a>威廉</a> `,
-    date: '1个小时前',
-    title: '艾文',
-  },
-  {
-    avatar: 'svg:avatar-3',
-    content: `发布了 <a>个人动态</a> `,
-    date: '1天前',
-    title: '克里斯',
-  },
-  {
-    avatar: 'svg:avatar-4',
-    content: `发表文章 <a>如何编写一个Vite插件</a> `,
-    date: '2天前',
-    title: 'Vben',
-  },
-  {
-    avatar: 'svg:avatar-1',
-    content: `回复了 <a>杰克</a> 的问题 <a>如何进行项目优化？</a>`,
-    date: '3天前',
-    title: '皮特',
-  },
-  {
-    avatar: 'svg:avatar-2',
-    content: `关闭了问题 <a>如何运行项目</a> `,
-    date: '1周前',
-    title: '杰克',
-  },
-  {
-    avatar: 'svg:avatar-3',
-    content: `发布了 <a>个人动态</a> `,
-    date: '1周前',
-    title: '威廉',
-  },
-  {
-    avatar: 'svg:avatar-4',
-    content: `推送了代码到 <a>Github</a>`,
-    date: '2021-04-01 20:00',
-    title: '威廉',
-  },
-  {
-    avatar: 'svg:avatar-4',
-    content: `发表文章 <a>如何编写使用 Admin Vben</a> `,
-    date: '2021-03-01 20:00',
-    title: 'Vben',
-  },
-];
+import Resource from '#/api/resource';
+import { useAppStore } from '#/store';
 
 const router = useRouter();
+const userStore = useUserStore();
+const appStore = useAppStore();
 
-// 这是一个示例方法，实际项目中需要根据实际情况进行调整
-// This is a sample method, adjust according to the actual project requirements
-function navTo(nav: WorkbenchProjectItem | WorkbenchQuickNavItem) {
-  if (nav.url?.startsWith('http')) {
-    openWindow(nav.url);
-    return;
-  }
-  if (nav.url?.startsWith('/')) {
-    router.push(nav.url).catch((error) => {
-      console.error('Navigation failed:', error);
+// ---- 首页数据（index API：notices / knowledge / weather）----
+const appData = ref({ notices: [], knowledge: [] });
+const loading = ref(false);
+
+async function getIndex() {
+  loading.value = true;
+  try {
+    const { data } = await new Resource('index').list({
+      project_id: appStore.defaultProject?.id,
     });
-  } else {
-    console.warn(`Unknown URL for navigation item: ${nav.title} -> ${nav.url}`);
+    appData.value = data || { notices: [], knowledge: [] };
+  } catch (e) {
+    console.error(e);
+  } finally {
+    loading.value = false;
   }
 }
+
+function getFileIcon(item) {
+  const url = appStore.setting?.file_category_icon_url;
+  if (!url) return '';
+  if (item.is_folder) return `${url}/0.svg`;
+  if (item.file) return `${url}/${item.file.category_id}.svg`;
+  return '';
+}
+
+function openFile(item) {
+  const preview = appStore.setting?.file_preview_url;
+  if (preview && item.file?.url) {
+    window.open(`${preview}?file=${encodeURIComponent(item.file.url)}`);
+  }
+}
+
+// ---- 通知公告弹窗 ----
+const newsDialog = ref(false);
+const currentNews = ref(null);
+function openNews(item) {
+  currentNews.value = item;
+  newsDialog.value = true;
+}
+
+// ---- 待办事项（appStore.dashboard 八类）----
+const todoConfig = [
+  { key: 'task_personal_pending', name: '监理任务', path: 'task.personal_pending', url: '/tasks' },
+  { key: 'task_personal_tobe_submit', name: '监理记录', path: 'task.personal_log_tobe_submit', url: '/task-submissions' },
+  { key: 'supervision_log_personal_tobe_submit', name: '监理日志', path: 'supervision_log.personal_tobe_submit', url: '/supervision-logs' },
+  { key: 'submission_team_task_log_pending_audit', name: '待审核任务记录', path: 'task.team_log_tobe_audit', url: '/task-submissions' },
+  { key: 'submission_team_supervision_log_pending_audit', name: '待审核监理日志', path: 'supervision_log.team_tobe_audit', url: '/supervision-logs' },
+  { key: 'project_user_team_pending_audit', name: '待审核项目成员', path: 'project_user.team_tobe_audit', url: '/project-user-applications' },
+  { key: 'nonconformance_team_pending_audit', name: '处理中不符合项', path: 'nonconformance.processing', url: '/nonconformances' },
+  { key: 'nonconformance_team_pending_audit2', name: '待审核不符合项', path: 'nonconformance.team_tobe_audit', url: '/nonconformances' },
+];
+
+function getObjectValue(obj, path) {
+  return path.split('.').reduce((o, k) => o?.[k], obj) || 0;
+}
+
+const todos = computed(() => {
+  const dashboard = appStore.dashboard || {};
+  const list = {};
+  for (const cfg of todoConfig) {
+    const value = getObjectValue(dashboard, cfg.path);
+    if (value > 0) list[cfg.key] = { ...cfg, value };
+  }
+  return list;
+});
+
+const todoCount = computed(() => appStore.personalTodoCount || 0);
+
+function openTodo(item) {
+  router.push(item.url);
+}
+
+// ---- 我的项目 ----
+const projectStateColorMap = { 1: 'orange', 2: 'blue', 3: 'default' };
+
+function switchToProject(item) {
+  if (appStore.defaultProject?.id !== item.id) {
+    appStore.switchProject(item);
+  }
+}
+
+// ---- 问候语 ----
+const nowTimestamp = ref(Math.floor(Date.now() / 1000));
+let timer = null;
+onMounted(() => {
+  timer = setInterval(() => {
+    nowTimestamp.value = Math.floor(Date.now() / 1000);
+  }, 60 * 1000);
+});
+onBeforeUnmount(() => clearInterval(timer));
+
+const greeting = computed(() => {
+  const hour = new Date(nowTimestamp.value * 1000).getHours();
+  if (hour >= 5 && hour < 9) return { g: '早安', a: '开启美好的一天吧。' };
+  if (hour >= 9 && hour < 12) return { g: '上午好', a: '开始高效工作吧。' };
+  if (hour >= 12 && hour < 14) return { g: '中午好', a: '记得休息一下哦。' };
+  if (hour >= 14 && hour < 18) return { g: '下午好', a: '继续加油，完成任务吧。' };
+  if (hour >= 18 && hour < 22) return { g: '晚上好', a: '放松一下，别太晚睡哦。' };
+  if (hour >= 22 || hour < 5) return { g: '夜深了', a: '早点休息，养精蓄锐。' };
+  return { g: '你好', a: '继续努力吧。' };
+});
+
+onMounted(() => {
+  getIndex();
+  if (!appStore.projects?.length) appStore.getProjects();
+  appStore.getDashboard();
+});
 </script>
 
 <template>
   <div class="p-5">
-    <WorkbenchHeader
-      :avatar="userStore.userInfo?.avatar || preferences.app.defaultAvatar"
-    >
-      <template #title>
-        早安, {{ userStore.userInfo?.realName }}, 开始您一天的工作吧！
-      </template>
-      <template #description> 今日晴，20℃ - 32℃！ </template>
-    </WorkbenchHeader>
-
-    <div class="mt-5 flex flex-col lg:flex-row">
-      <div class="mr-4 w-full lg:w-3/5">
-        <WorkbenchProject :items="projectItems" title="项目" @click="navTo" />
-        <WorkbenchTrends :items="trendItems" class="mt-5" title="最新动态" />
-      </div>
-      <div class="w-full lg:w-2/5">
-        <WorkbenchQuickNav
-          :items="quickNavItems"
-          class="mt-5 lg:mt-0"
-          title="快捷导航"
-          @click="navTo"
+    <!-- 顶部问候卡片 -->
+    <div class="rounded-lg bg-card p-4 shadow-sm">
+      <div class="flex items-center">
+        <img
+          :src="userStore.userInfo?.avatar || preferences.app.defaultAvatar"
+          class="h-[72px] w-[72px] rounded-full object-cover"
         />
-        <WorkbenchTodo :items="todoItems" class="mt-5" title="待办事项" />
-        <AnalysisChartCard class="mt-5" title="访问来源">
-          <AnalyticsVisitsSource />
-        </AnalysisChartCard>
+        <div class="ml-3">
+          <div class="text-lg">
+            {{ greeting.g }}，{{ userStore.userInfo?.name }}，{{ greeting.a }}
+          </div>
+          <div class="mt-1 flex items-center text-base font-semibold text-primary">
+            {{ appStore.defaultProject?.name || '未设置项目' }}
+            <span class="ml-1 text-primary">›</span>
+          </div>
+          <div v-if="appStore.defaultProject" class="text-sm text-gray-500">
+            {{ appStore.defaultProject?.roles?.length ? appStore.defaultProject.roles.join('、') : '未设置角色' }}
+          </div>
+        </div>
+        <div class="ml-auto flex items-end text-right">
+          <div class="flex flex-col items-center justify-center">
+            <span class="text-sm text-gray-500">待办</span>
+            <span class="text-2xl">{{ todoCount }}</span>
+          </div>
+          <div class="mx-8 flex flex-col items-center justify-center text-right md:mx-12">
+            <span class="text-sm text-gray-500">项目</span>
+            <span class="text-2xl">{{ appStore.projects?.length }}</span>
+          </div>
+        </div>
       </div>
     </div>
+
+    <div class="mt-5 flex flex-col gap-4 lg:flex-row">
+      <!-- 左栏：通知公告 + 最新文件 -->
+      <div class="w-full lg:w-3/5">
+        <div class="rounded-lg bg-card p-4 shadow-sm">
+          <div class="mb-2 font-semibold">通知公告</div>
+          <div v-if="!appData.notices?.length" class="flex h-[200px] items-center justify-center text-gray-400">
+            暂无通知
+          </div>
+          <div v-else class="divide-y">
+            <div
+              v-for="item in appData.notices"
+              :key="item.id"
+              class="cursor-pointer py-3"
+              @click="openNews(item)"
+            >
+              <div class="line-clamp-1 font-medium">{{ item.title }}</div>
+              <div class="text-sm text-gray-400">{{ item.summary || '' }}</div>
+              <div class="mt-1 text-xs text-gray-300">{{ item.created_at || '' }}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-4 rounded-lg bg-card p-4 shadow-sm">
+          <div class="mb-2 font-semibold">最新文件</div>
+          <div v-if="!appData.knowledge?.length" class="flex h-[200px] items-center justify-center text-gray-400">
+            暂无文件
+          </div>
+          <div v-else class="divide-y">
+            <div
+              v-for="item in appData.knowledge"
+              :key="item.id"
+              class="flex cursor-pointer items-center gap-3 py-3"
+              @click="openFile(item)"
+            >
+              <img v-if="getFileIcon(item)" :src="getFileIcon(item)" class="h-10 w-10" />
+              <div class="min-w-0 flex-1">
+                <div class="line-clamp-1 font-medium">{{ item.name }}</div>
+                <div class="text-xs text-gray-400">{{ item.created_at || '' }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右栏：待办事项 + 我的项目 -->
+      <div class="w-full lg:w-2/5">
+        <div class="rounded-lg bg-card p-4 shadow-sm">
+          <div class="mb-2 font-semibold">待办事项</div>
+          <div v-if="!Object.keys(todos).length" class="flex h-[200px] items-center justify-center text-gray-400">
+            暂无待办事项
+          </div>
+          <div v-else class="space-y-2">
+            <div
+              v-for="item in todos"
+              :key="item.key"
+              class="flex cursor-pointer items-center justify-between rounded border p-3 hover:bg-gray-50"
+              @click="openTodo(item)"
+            >
+              <div>
+                <div class="font-medium">{{ item.name }}</div>
+                <div class="text-sm text-gray-400">点击查看详情</div>
+              </div>
+              <div class="flex items-center gap-2">
+                <Tag color="red">{{ item.value }}</Tag>
+                <span class="text-primary">›</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-4 rounded-lg bg-card p-4 shadow-sm">
+          <div class="mb-2 font-semibold">我的项目</div>
+          <div v-if="!appStore.projects?.length" class="flex h-[200px] items-center justify-center text-gray-400">
+            暂未加入项目
+          </div>
+          <div v-else class="divide-y">
+            <div
+              v-for="item in appStore.projects"
+              :key="item.id"
+              class="flex cursor-pointer items-center gap-3 py-3"
+              @click="switchToProject(item)"
+            >
+              <Tag :color="projectStateColorMap[item.state] || 'default'">
+                {{ item.state_label || item.state }}
+              </Tag>
+              <div class="min-w-0 flex-1">
+                <div class="font-medium">{{ item.name }}</div>
+                <div class="text-xs text-gray-400">
+                  {{ item.code || '' }}{{ item.roles?.join('、') ? ' · ' + item.roles.join('、') : '' }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 通知详情弹窗 -->
+    <Modal
+      v-model:open="newsDialog"
+      :title="currentNews?.title || '通知'"
+      :footer="null"
+      width="640px"
+    >
+      <div class="mb-3 text-sm text-gray-400">{{ currentNews?.created_at }}</div>
+      <div class="max-h-[60vh] overflow-y-auto" v-html="currentNews?.content"></div>
+    </Modal>
   </div>
 </template>
