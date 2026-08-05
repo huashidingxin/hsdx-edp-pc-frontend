@@ -4,8 +4,12 @@ import Components from 'unplugin-vue-components/vite'
 import Fonts from 'unplugin-fonts/vite'
 import VueRouter from 'unplugin-vue-router/vite'
 import { fileURLToPath, URL } from 'node:url'
+import { loadEnv } from 'vite'
 
-export default defineConfig(async () => {
+export default defineConfig(async ({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
+  // 后端 API 代理目标：默认线上 dev；本地联调可 .env.development 设 VITE_PROXY_TARGET=http://127.0.0.1:8123/api
+  const proxyTarget = env.VITE_PROXY_TARGET || 'https://dev.cpzhongzhou.com/api'
   return {
     application: {},
 
@@ -52,8 +56,7 @@ export default defineConfig(async () => {
           '/api': {
             changeOrigin: true,
             rewrite: (path) => path.replace(/^\/api/, ''),
-            // mock代理目标地址
-            target: 'https://dev.cpzhongzhou.com/api',
+            target: proxyTarget,
             ws: true,
           },
         },

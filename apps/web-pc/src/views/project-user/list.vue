@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue';
 
-import { DatePicker, Input, message, Modal, Select, Tag } from 'antdv-next';
+import { Button, DatePicker, Input, message, Modal, Select, Tag } from 'antdv-next';
 
 import Resource from '#/api/resource';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
@@ -11,6 +11,12 @@ import { useAppStore } from '#/store';
 const appStore = useAppStore();
 const tableRef = ref(null);
 const editingItem = ref({});
+// 详情打开模式：view=false（单成员详情）/ edit=true（成员维护）
+const isEditing = ref(true);
+
+function onShowDetail(editing) {
+  isEditing.value = editing;
+}
 
 const currentProjectId = computed(() => appStore.defaultProject?.id || undefined);
 const extraQuery = computed(() => ({ project_id: currentProjectId.value }));
@@ -108,6 +114,7 @@ const filterFields = ref([
 ]);
 
 const gridColumns = ref([
+  { type: 'checkbox', width: 45, align: 'center' },
   { field: 'user.name', title: '姓名', minWidth: 110 },
   { field: 'user.mobile', title: '手机号', width: 130 },
   { field: 'project.name', title: '项目', minWidth: 140 },
@@ -174,11 +181,74 @@ async function submitLeave() {
   }
 }
 
-// ========================= 表单（创建/编辑 drawer） =========================
-const formFields = ref([
-  { field: '_add', type: 'slot', span: 24, label: '添加成员' },
-  { field: '_members', type: 'slot', span: 24, label: '成员明细' },
-]);
+// ========================= 批量离岗 =========================
+const selectedRows = ref([]);
+const batchLeaveDialog = ref(false);
+const batchLeaveForm = ref({ type: 1, start_time: '', end_time: '', reason: '' });
+
+function openBatchLeave() {
+  const rows = selectedRows.value || [];
+  if (!rows.length) {
+    message.warning('请先勾选成员');
+    return;
+  }
+  batchLeaveForm.value = { type: 1, start_time: '', end_time: '', reason: '' };
+  batchLeaveDialog.value = true;
+}
+
+async function submitBatchLeave() {
+  const form = batchLeaveForm.value;
+  if (!form.start_time) {
+    message.warning('请选择开始时间');
+    return;
+  }
+  if (form.type !== 3 && !form.end_time) {
+    message.warning('请选择结束时间');
+    return;
+  }
+  if (!form.reason.trim()) {
+    message.warning('请输入离岗原因');
+    return;
+  }
+  const rows = selectedRows.value || [];
+  const userIds = rows.map((r) => r.id).filter(Boolean);
+  if (!userIds.length) {
+    message.warning('未选中有效成员');
+    return;
+  }
+  try {
+    await new Resource('project-users/batch-leave').store({
+      ids: userIds,
+      ...form,
+    });
+    message.success(`已对 ${userIds.length} 名成员执行离岗`);
+    batchLeaveDialog.value = false;
+    tableRef.value?.reload?.();
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+// ========================= 表单 =========================
+// view 模式：单成员详情；edit 模式：成员维护（添加/改角色/删除，后端 store 全量替换）
+const formFields = computed(() => {
+  if (isEditing.value) {
+    return [
+      { field: '_add', type: 'slot', span: 24, label: '添加成员' },
+      { field: '_members', type: 'slot', span: 24, label: '成员明细' },
+    ];
+  }
+  return [
+    { field: 'user.name', type: 'text', span: 12, label: '姓名', displayOnly: true },
+    { field: 'user.mobile', type: 'text', span: 12, label: '手机号', displayOnly: true },
+    { field: 'project.name', type: 'text', span: 12, label: '项目', displayOnly: true },
+    { field: 'staff.joining_date', type: 'text', span: 12, label: '加入时间', displayOnly: true },
+    { field: 'roles', type: 'slot', span: 12, label: '角色' },
+    { field: 'departments.name', type: 'text', span: 12, label: '部门', displayOnly: true },
+    { field: 'positions.name', type: 'text', span: 12, label: '职位', displayOnly: true },
+    { field: 'leave', type: 'slot', span: 12, label: '状态' },
+  ];
+});
 
 const listFields = ref([
   { field: 'roles', type: 'select', attrs: { options: roleOptions, multiple: true } },
@@ -204,19 +274,25 @@ onMounted(() => {
   <AppCrudTable
     ref="tableRef"
     v-model="editingItem"
+    v-model:selected="selectedRows"
     api-url="project-users"
     permission-name="project_user"
     :extra-query="extraQuery"
     :filter-fields="filterFields"
     :fields="formFields"
     :inline-actions="['view', 'edit']"
-    :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
+    :grid-options="{ columns: gridColumns, checkboxConfig: { highlight: true, checkStrictly: true }, showOverflow: false, columnConfig: { resizable: true } }"
     :open-mode="{ create: 'drawer', detail: 'drawer' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
     title="项目成员"
     class="p-4"
     :save-format="saveFormat"
+    @show-detail="onShowDetail"
   >
+    <template #toolbar-append>
+      <Button type="primary" ghost @click="openBatchLeave">批量离岗</Button>
+    </template>
+
     <template #field__add>
       <Select
         v-model:value="addUserIds"
@@ -246,6 +322,19 @@ onMounted(() => {
       <Button type="link" size="small" danger @click="openLeave(row)">
         {{ row.leave?.status === 'active' ? '撤销离岗' : '离岗' }}
       </Button>
+    </template>
+
+    <!-- view 模式：单成员详情 -->
+    <template #field_roles="{ modelValue }">
+      <span class="text-sm">
+        {{ (modelValue || []).map((r) => r.name || r.display_name).join('、') || '-' }}
+      </span>
+    </template>
+    <template #field_leave="{ modelValue }">
+      <Tag v-if="modelValue?.status === 'active'" color="red">
+        {{ modelValue.type_label || leaveTypeName[modelValue.type] || '离岗中' }}
+      </Tag>
+      <Tag v-else color="green">在岗</Tag>
     </template>
 
     <template #default_roles="{ row }">
@@ -296,10 +385,56 @@ onMounted(() => {
           />
         </div>
         <div>
-          <div class="mb-1 text-sm text-gray-600">离岗原因</div>
-          <Input.TextArea v-model:value="leaveForm.reason" :rows="2" />
-        </div>
-      </div>
-    </Modal>
-  </AppCrudTable>
-</template>
+           <div class="mb-1 text-sm text-gray-600">离岗原因</div>
+           <Input.TextArea v-model:value="leaveForm.reason" :rows="2" />
+         </div>
+       </div>
+     </Modal>
+
+     <!-- 批量离岗弹窗 -->
+     <Modal
+       v-model:open="batchLeaveDialog"
+       title="批量离岗"
+       ok-text="提交"
+       @ok="submitBatchLeave"
+     >
+       <div class="space-y-4 py-2">
+         <div class="text-sm text-gray-500">
+           已选择 {{ (selectedRows || []).length }} 名成员
+         </div>
+         <div>
+           <div class="mb-1 text-sm text-gray-600">类型</div>
+           <Select
+             v-model:value="batchLeaveForm.type"
+             :options="leaveTypeOptions"
+             style="width: 100%"
+           />
+         </div>
+         <div>
+           <div class="mb-1 text-sm text-gray-600">开始时间</div>
+           <DatePicker
+             v-model:value="batchLeaveForm.start_time"
+             value-format="YYYY-MM-DD HH:mm:ss"
+             show-time
+             format="YYYY-MM-DD HH:mm"
+             style="width: 100%"
+           />
+         </div>
+         <div v-if="batchLeaveForm.type !== 3">
+           <div class="mb-1 text-sm text-gray-600">结束时间</div>
+           <DatePicker
+             v-model:value="batchLeaveForm.end_time"
+             value-format="YYYY-MM-DD HH:mm:ss"
+             show-time
+             format="YYYY-MM-DD HH:mm"
+             style="width: 100%"
+           />
+         </div>
+         <div>
+           <div class="mb-1 text-sm text-gray-600">离岗原因</div>
+           <Input.TextArea v-model:value="batchLeaveForm.reason" :rows="2" />
+         </div>
+       </div>
+     </Modal>
+   </AppCrudTable>
+ </template>
