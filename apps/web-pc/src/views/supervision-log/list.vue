@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script setup>
 import { computed, ref, watch } from 'vue';
 
 import { Button, DatePicker, Drawer, Input, message, Modal, Radio, Select, Tag } from 'antdv-next';
@@ -16,17 +16,17 @@ const appStore = useAppStore();
 const userStore = useUserStore();
 const { hasAccessByCodes } = useAccess();
 
-const editingItem = ref<Record<string, any>>({});
+const editingItem = ref({});
 const submissionRef = ref(null);
 // 详情打开是否编辑模式（view=false / edit=true）
 const isEditing = ref(false);
-function onShowDetail(editing: boolean) {
+function onShowDetail(editing) {
   isEditing.value = editing;
 }
 
 // ---- 详情：解析 values/form_id 供 SubmissionEdit ----
-const defaultValues = ref<any[]>([]);
-function detailFormat(data: any) {
+const defaultValues = ref([]);
+function detailFormat(data) {
   defaultValues.value = JSON.parse(JSON.stringify(data.submission?.values || []));
   editingItem.value._values = JSON.parse(JSON.stringify(defaultValues.value));
   editingItem.value._formId = data.form_id || data.submission?.form_id || data.projects?.supervision_log_form_id;
@@ -62,7 +62,7 @@ const tableRef = ref(null);
 
 // ---- 已提交记录预览（AppOffice 打开渲染 docx）----
 const previewOpen = ref(false);
-const previewDocument = ref<Record<string, any> | null>(null);
+const previewDocument = ref(null);
 
 function openPreview() {
   const filePath = editingItem.value.submission?.file_path;
@@ -81,11 +81,11 @@ function openPreview() {
 
 // ---- 记录审核（submissions/{id}/audit）----
 const auditDialog = ref(false);
-const auditRow = ref<Record<string, any> | null>(null);
-const auditData = ref<{ status: number; reason: string }>({ status: 1, reason: '' });
+const auditRow = ref(null);
+const auditData = ref({ status: 1, reason: '' });
 const auditSubmitting = ref(false);
 
-function canAudit(row: Record<string, any>) {
+function canAudit(row) {
   return (
     row.submission_id > 0 &&
     !row.submission?.audit_id &&
@@ -93,7 +93,7 @@ function canAudit(row: Record<string, any>) {
   );
 }
 
-function openAudit(row: Record<string, any>) {
+function openAudit(row) {
   auditRow.value = row;
   auditData.value = { status: 1, reason: '' };
   auditDialog.value = true;
@@ -132,7 +132,7 @@ const scopeOptions = [
 ];
 
 // 记录人选项（项目成员）
-const userOptions = ref<{ id: number; name: string }[]>([]);
+const userOptions = ref([]);
 async function loadUsers() {
   try {
     const api = new Resource('project-users');
@@ -152,9 +152,8 @@ watch(currentProjectId, loadUsers);
 loadUsers();
 
 // 列表列（参考 web-admin：编号/日期/记录人/状态/记录时间/项目/超时）
-type GridColumn = { field: string; title: string; width?: number; minWidth?: number; sortable?: boolean; slots?: { default: string } };
-const gridColumns = computed<GridColumn[]>(() => {
-  const columns: GridColumn[] = [
+const gridColumns = computed(() => {
+  const columns = [
     {
       field: 'submission.code',
       title: '编号',
@@ -254,20 +253,20 @@ const formFields = ref([
   { field: 'timeline', type: 'slot', label: '提交/审核历史时间线', span: 24 },
 ]);
 
-const stateMap: Record<number, { text: string; color: string }> = {
+const stateMap = {
   0: { text: '待提交', color: 'default' },
   1: { text: '待审核', color: 'orange' },
   2: { text: '审核通过', color: 'green' },
   3: { text: '已退回', color: 'red' },
 };
 
-function stateLabel(state: number | null) {
+function stateLabel(state) {
   return stateMap[state ?? 0]?.text ?? `状态${state}`;
 }
 
 // 列表行状态：已提交取 submission.state（1待审/2通过/3退回），未提交为 0
-function rowState(row: Record<string, unknown>): number {
-  const submission = row.submission as { state?: number } | null;
+function rowState(row) {
+  const submission = row.submission;
   if (submission?.state != null) return Number(submission.state);
   return 0;
 }
