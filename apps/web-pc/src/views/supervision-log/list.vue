@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 
-import { Button, DatePicker, Input, message, Modal, Radio, Select, Tag } from 'antdv-next';
+import { Button, DatePicker, Drawer, Input, message, Modal, Radio, Select, Tag } from 'antdv-next';
 
 import { useUserStore } from '@vben/stores';
 import { useAccess } from '@vben/access';
@@ -9,6 +9,7 @@ import { useAccess } from '@vben/access';
 import Resource from '#/api/resource';
 import { useAppStore } from '#/store';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
+import AppOffice from '#/components/AppOffice.vue';
 import SubmissionEdit from '#/components/SubmissionEdit.vue';
 
 const appStore = useAppStore();
@@ -58,6 +59,25 @@ function reset() {
 }
 
 const tableRef = ref(null);
+
+// ---- 已提交记录预览（AppOffice 打开渲染 docx）----
+const previewOpen = ref(false);
+const previewDocument = ref<Record<string, any> | null>(null);
+
+function openPreview() {
+  const filePath = editingItem.value.submission?.file_path;
+  if (!filePath) {
+    message.warning('该记录未配置打印模板或渲染失败');
+    return;
+  }
+  previewDocument.value = {
+    fileType: 'docx',
+    key: `submission-${editingItem.value.submission?.id || editingItem.value.id}`,
+    url: filePath,
+    title: `${editingItem.value.submission?.code || '记录'}.docx`,
+  };
+  previewOpen.value = true;
+}
 
 // ---- 记录审核（submissions/{id}/audit）----
 const auditDialog = ref(false);
@@ -359,6 +379,7 @@ function rowState(row: Record<string, unknown>): number {
     </template>
 
     <template #form-action>
+      <Button v-if="editingItem.submission_id" @click="openPreview">预览</Button>
       <template v-if="isEditing">
         <Button @click="reset">重置</Button>
         <Button type="primary" @click="save">提交</Button>
@@ -443,4 +464,19 @@ function rowState(row: Record<string, unknown>): number {
       </div>
     </div>
   </Modal>
+
+  <!-- 已提交记录预览（AppOffice 只读） -->
+  <Drawer
+    v-model:open="previewOpen"
+    title="记录预览"
+    width="90%"
+    destroy-on-close
+  >
+    <div v-if="previewDocument" class="h-[calc(100vh-120px)]">
+      <AppOffice
+        :document="previewDocument"
+        :mode="'view'"
+      />
+    </div>
+  </Drawer>
 </template>

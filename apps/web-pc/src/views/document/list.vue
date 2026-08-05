@@ -1,10 +1,11 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue';
 
-import { Button, DatePicker, message, Radio, Select, Tag } from 'antdv-next';
+import { Button, DatePicker, Drawer, message, Radio, Select, Tag } from 'antdv-next';
 
 import Resource from '#/api/resource';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
+import AppOffice from '#/components/AppOffice.vue';
 import SubmissionEdit from '#/components/SubmissionEdit.vue';
 import { useAppStore } from '#/store';
 
@@ -120,6 +121,25 @@ async function save() {
 
 const tableRef = ref(null);
 
+// ---- 已提交记录预览（AppOffice 打开渲染 docx）----
+const previewOpen = ref(false);
+const previewDocument = ref(null);
+
+function openPreview() {
+  const filePath = editingItem.value.submission?.file_path || editingItem.value.file_path;
+  if (!filePath) {
+    message.warning('该记录未配置打印模板或渲染失败');
+    return;
+  }
+  previewDocument.value = {
+    fileType: 'docx',
+    key: `submission-${editingItem.value.submission?.id || editingItem.value.id}`,
+    url: filePath,
+    title: `${editingItem.value.submission?.code || '记录'}.docx`,
+  };
+  previewOpen.value = true;
+}
+
 onMounted(() => {
   loadForms();
   loadUsers();
@@ -196,6 +216,7 @@ watch(() => appStore.defaultProject?.id, loadUsers);
     </template>
 
     <template #form-action>
+      <Button v-if="editingItem.submission_id" @click="openPreview">预览</Button>
       <Button @click="reset">重置</Button>
       <Button type="primary" @click="save">提交</Button>
     </template>
@@ -208,4 +229,19 @@ watch(() => appStore.defaultProject?.id, loadUsers);
       <Tag :color="stateColorMap[row.state] || 'default'">{{ row.state_label || '-' }}</Tag>
     </template>
   </AppCrudTable>
+
+  <!-- 已提交记录预览（AppOffice 只读） -->
+  <Drawer
+    v-model:open="previewOpen"
+    title="记录预览"
+    width="90%"
+    destroy-on-close
+  >
+    <div v-if="previewDocument" class="h-[calc(100vh-120px)]">
+      <AppOffice
+        :document="previewDocument"
+        :mode="'view'"
+      />
+    </div>
+  </Drawer>
 </template>

@@ -9,13 +9,14 @@
  */
 import { computed, ref, watch } from 'vue';
 
-import { Button, DatePicker, Input, message, Modal, Radio, Select, Tag } from 'antdv-next';
+import { Button, DatePicker, Drawer, Input, message, Modal, Radio, Select, Tag } from 'antdv-next';
 
 import { useUserStore } from '@vben/stores';
 import { useAccess } from '@vben/access';
 
 import Resource from '#/api/resource';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
+import AppOffice from '#/components/AppOffice.vue';
 import AppUpload from '#/components/AppUpload.vue';
 import SubmissionEdit from '#/components/SubmissionEdit.vue';
 import { useAppStore } from '#/store';
@@ -244,6 +245,25 @@ function setNonconformanceFields(warnings) {
   nonconformanceReady.value = true;
 }
 
+// ---- 已提交记录预览（AppOffice 打开渲染 docx）----
+const previewOpen = ref(false);
+const previewDocument = ref(null);
+
+function openPreview() {
+  const filePath = editingItem.value.submission?.file_path;
+  if (!filePath) {
+    message.warning('该记录未配置打印模板或渲染失败');
+    return;
+  }
+  previewDocument.value = {
+    fileType: 'docx',
+    key: `submission-${editingItem.value.submission?.id || editingItem.value.id}`,
+    url: filePath,
+    title: `${editingItem.value.submission?.code || '记录'}.docx`,
+  };
+  previewOpen.value = true;
+}
+
 const tableRef = ref(null);
 
 function refreshAll() {
@@ -349,6 +369,7 @@ watch(() => appStore.defaultProject?.id, refreshAll);
       </template>
 
       <template #form-action>
+        <Button v-if="editingItem.submission_id" @click="openPreview">预览</Button>
         <template v-if="isEditing">
           <Button @click="reset">重置</Button>
           <Button type="primary" @click="save">提交</Button>
@@ -455,5 +476,20 @@ watch(() => appStore.defaultProject?.id, refreshAll);
         </div>
       </div>
     </Modal>
+
+    <!-- 已提交记录预览（AppOffice 只读） -->
+    <Drawer
+      v-model:open="previewOpen"
+      title="记录预览"
+      width="90%"
+      destroy-on-close
+    >
+      <div v-if="previewDocument" class="h-[calc(100vh-120px)]">
+        <AppOffice
+          :document="previewDocument"
+          :mode="'view'"
+        />
+      </div>
+    </Drawer>
   </div>
 </template>
