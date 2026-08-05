@@ -94,6 +94,7 @@ const filterFields = ref([
 ]);
 
 const gridColumns = ref([
+  { type: 'checkbox', width: 45, align: 'center' },
   { field: 'submission.code', title: '编号', width: 140, slots: { default: 'default_code' } },
   { field: 'measure.name', title: '监理方式', minWidth: 100 },
   { field: 'procedure.name', title: '工序', minWidth: 100 },
@@ -266,6 +267,54 @@ function openPreview() {
 
 const tableRef = ref(null);
 
+// ---- 批量打印/导出（submission/batch）----
+const selectRows = ref([]);
+const batching = ref(false);
+
+// 勾选行中已提交的记录（未提交无法渲染）
+const selectableSubmissionIds = computed(() =>
+  selectRows.value.filter((r) => r.submission_id > 0).map((r) => r.submission_id),
+);
+
+async function batch(isExport) {
+  const ids = selectableSubmissionIds.value;
+  if (!ids.length) {
+    message.warning('请至少选择一条已提交的记录');
+    return;
+  }
+  batching.value = true;
+  try {
+    const { data } = await new Resource('submission').get('batch', {
+      merge: isExport ? 1 : 0,
+      signature: withSignature.value ? 1 : 0,
+      list: ids.join(','),
+    });
+    if (!data?.url) {
+      message.error('所选记录无打印模板');
+      return;
+    }
+    if (isExport) {
+      // 导出：下载 zip
+      window.open(data.url, '_blank');
+    } else {
+      // 打印：合并 docx 用 AppOffice 预览
+      previewDocument.value = {
+        fileType: 'docx',
+        key: `merge-${Date.now()}`,
+        url: data.url,
+        title: data.name || '合并文档.docx',
+      };
+      previewOpen.value = true;
+    }
+  } catch (e) {
+    console.error(e);
+  } finally {
+    batching.value = false;
+  }
+}
+
+const withSignature = ref(false);
+
 function refreshAll() {
   return Promise.all([loadExecutorOptions(), loadProcedures(), loadMeasures()]);
 }
@@ -275,9 +324,10 @@ watch(() => appStore.defaultProject?.id, refreshAll);
 
 <template>
   <div>
-    <AppCrudTable
+     <AppCrudTable
       ref="tableRef"
       v-model="editingItem"
+      v-model:selected="selectRows"
       api-url="task-submissions"
       permission-name="task_submission"
       :list-scope="listScope"
@@ -286,7 +336,7 @@ watch(() => appStore.defaultProject?.id, refreshAll);
       :actions-config="actionsConfig"
       :detail-format="detailFormat"
       :fields="[]"
-      :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
+      :grid-options="{ columns: gridColumns, checkboxConfig: { highlight: true, checkStrictly: true }, showOverflow: false, columnConfig: { resizable: true } }"
       :open-mode="{ create: 'drawer', detail: 'drawer' }"
       :toolbar="{ filter: true, create: false, refresh: true }"
       title="任务记录"
@@ -301,6 +351,31 @@ watch(() => appStore.defaultProject?.id, refreshAll);
           :options="scopeOptions"
           @change="(e) => (listScope = e.target.value)"
         />
+      </template>
+
+      <template #toolbar-append>
+        <div class="flex items-center gap-2">
+          <label class="flex items-center gap-1 text-sm text-gray-500">
+            <input v-model="withSignature" type="checkbox" />
+            包含签名
+          </label>
+          <Button
+            :disabled="!selectableSubmissionIds.length"
+            :loading="batching"
+            @click="batch(false)"
+          >
+            批量打印
+          </Button>
+          <Button
+            type="primary"
+            ghost
+            :disabled="!selectableSubmissionIds.length"
+            :loading="batching"
+            @click="batch(true)"
+          >
+            批量导出
+          </Button>
+        </div>
       </template>
 
       <template #filter_executor_id="{ modelValue, update }">
