@@ -4,10 +4,10 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { DatePicker, Tag } from 'antdv-next';
 
 import Resource from '#/api/resource';
-import AppChooseLocation from '#/components/AppChooseLocation.vue';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
+import AppChooseLocation from '#/components/AppChooseLocation.vue';
 
-// 项目分类选项（主分类/多分类共用，categories?type=project）
+// 项目分类选项（主分类/多分类/筛选共用，categories?type=project）
 const categories = ref([]);
 async function loadCategories() {
   const { data } = await new Resource('categories').list({
@@ -18,33 +18,143 @@ async function loadCategories() {
   const f = (field) => formFields.value.find((x) => x.field === field);
   f('categories').attrs.options = categories.value;
   f('category_id').attrs.options = categories.value;
+  const ff = (field) => filterFields.value.find((x) => x.field === field);
+  ff('categories').attrs.options = categories.value;
 }
+
+const stateNameMap = { 1: '待启动', 2: '进行中', 3: '已结束' };
+const stateOptions = [1, 2, 3].map((value) => ({
+  value,
+  label: stateNameMap[value],
+}));
+
+// P1-004 所属单位（公司）
+async function loadCompanies() {
+  try {
+    const { data } = await new Resource('companies').list({ per_page: 'all' });
+    const f = (field) => formFields.value.find((x) => x.field === field);
+    f('company_id').attrs.options = (data || []).map((c) => ({
+      value: c.id,
+      label: c.name,
+    }));
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+// 列表筛选：名称/编号 like，分类多选（categories.id in），状态多选（states in）
+const filterFields = ref([
+  { field: 'name', label: '名称', type: 'text', span: 6 },
+  { field: 'code', label: '编号', type: 'text', span: 6 },
+  {
+    field: 'categories',
+    label: '分类',
+    type: 'select',
+    span: 6,
+    attrs: { options: [], multiple: true },
+  },
+  {
+    field: 'states',
+    label: '状态',
+    type: 'select',
+    span: 6,
+    attrs: { options: stateOptions, multiple: true },
+  },
+]);
 
 const formFields = ref([
   { field: 'name', type: 'text', span: 12, label: '名称', required: true },
-  { field: 'code', type: 'text', span: 12, label: '编号', attrs: { placeholder: '输入编号或由系统自动生成' } },
-  { field: 'owner_name', type: 'text', span: 12, label: '业主单位', required: true },
-  { field: 'supervision_department_name', type: 'text', span: 12, label: '监理部', required: true },
-  { field: 'categories', type: 'select', span: 12, label: '分类', required: true, attrs: { options: [], multiple: true } },
-  { field: 'category_id', type: 'select', span: 12, label: '主分类', required: true, attrs: { options: [] } },
-  { field: 'start_end_time', type: 'slot', span: 12, label: '起止时间', required: true },
-  { field: 'location', type: 'slot', span: 12, label: '项目位置', required: true },
-  { field: 'state', type: 'select', span: 12, label: '状态', required: true, attrs: { options: [
-    { value: 1, label: '待启动' },
-    { value: 2, label: '进行中' },
-    { value: 3, label: '已结束' },
-  ] } },
+  {
+    field: 'code',
+    type: 'text',
+    span: 12,
+    label: '编号',
+    attrs: { placeholder: '输入编号或由系统自动生成' },
+  },
+  {
+    field: 'owner_name',
+    type: 'text',
+    span: 12,
+    label: '业主单位',
+    required: true,
+  },
+  {
+    field: 'supervision_department_name',
+    type: 'text',
+    span: 12,
+    label: '监理部',
+    required: true,
+  },
+  {
+    field: 'categories',
+    type: 'select',
+    span: 12,
+    label: '分类',
+    required: true,
+    attrs: { options: [], multiple: true },
+  },
+  {
+    field: 'category_id',
+    type: 'select',
+    span: 12,
+    label: '主分类',
+    required: true,
+    attrs: { options: [] },
+  },
+  {
+    field: 'start_end_time',
+    type: 'slot',
+    span: 12,
+    label: '起止时间',
+    required: true,
+  },
+  {
+    field: 'location',
+    type: 'slot',
+    span: 12,
+    label: '项目位置',
+    required: true,
+  },
+  {
+    field: 'state',
+    type: 'select',
+    span: 12,
+    label: '状态',
+    required: true,
+    attrs: { options: stateOptions },
+  },
+  {
+    field: 'company_id',
+    type: 'select',
+    span: 12,
+    label: '所属单位',
+    attrs: { options: [], placeholder: '选择公司（用于数据汇总）' },
+  },
 ]);
 
 // 仅顶级项目；列表附带单位工程/桩号计数
-const extraQuery = computed(() => ({ parent_id: 0, unit_project_count: 1, milepost_count: 1 }));
+const extraQuery = computed(() => ({
+  parent_id: 0,
+  unit_project_count: 1,
+  milepost_count: 1,
+}));
 
 const gridColumns = ref([
   { field: 'name', title: '名称', minWidth: 220 },
   { field: 'code', title: '编号', width: 120 },
-  { field: 'category.name', title: '分类', minWidth: 120 },
+  {
+    field: 'categories',
+    title: '分类',
+    minWidth: 120,
+    slots: { default: 'default_categories' },
+  },
   { field: 'owner_name', title: '业主', minWidth: 120 },
-  { field: 'state', title: '状态', width: 100, slots: { default: 'default_state' } },
+  {
+    field: 'state',
+    title: '状态',
+    width: 100,
+    slots: { default: 'default_state' },
+  },
   { field: 'unit_project_count', title: '单位工程', width: 90 },
   { field: 'milepost_count', title: '桩号', width: 80 },
   { field: 'created_at', title: '创建时间', width: 160 },
@@ -56,7 +166,8 @@ const stateColorMap = { 1: 'orange', 2: 'blue', 3: 'green' };
 function detailFormat(e) {
   const data = { ...e };
   if (data.start_time) data.start_end_time = [data.start_time, data.end_time];
-  if (Array.isArray(data.categories)) data.categories = data.categories.map((c) => c.id);
+  if (Array.isArray(data.categories))
+    data.categories = data.categories.map((c) => c.id);
   data.location = data.address || {};
   return data;
 }
@@ -69,7 +180,8 @@ function saveFormat(e) {
     payload.end_time = payload.start_end_time[1];
   }
   delete payload.start_end_time;
-  if (Array.isArray(payload.categories)) payload.categories = payload.categories.map((id) => ({ id }));
+  if (Array.isArray(payload.categories))
+    payload.categories = payload.categories.map((id) => ({ id }));
   const loc = payload.location || {};
   delete payload.location;
   payload.address = {
@@ -94,7 +206,7 @@ const editingItem = ref({});
 watch(
   () => editingItem.value?.categories,
   (ids) => {
-    if (!Array.isArray(ids) || !ids.length) return;
+    if (!Array.isArray(ids) || ids.length === 0) return;
     const current = editingItem.value?.category_id;
     if (!current || !ids.includes(current)) {
       editingItem.value.category_id = ids[0];
@@ -102,7 +214,10 @@ watch(
   },
 );
 
-onMounted(loadCategories);
+onMounted(() => {
+  loadCategories();
+  loadCompanies();
+});
 </script>
 
 <template>
@@ -111,10 +226,16 @@ onMounted(loadCategories);
     api-url="projects"
     permission-name="project"
     :extra-query="extraQuery"
+    :filter-fields="filterFields"
     :detail-format="detailFormat"
     :save-format="saveFormat"
     :fields="formFields"
-    :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
+    list-scope="3"
+    :grid-options="{
+      columns: gridColumns,
+      showOverflow: false,
+      columnConfig: { resizable: true },
+    }"
     :open-mode="{ create: 'drawer', detail: 'drawer' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
     title="项目管理"
@@ -142,8 +263,23 @@ onMounted(loadCategories);
       />
     </template>
 
+    <template #default_categories="{ row }">
+      <span>
+        {{
+          (row.categories || [])
+            .map((c) => c.name)
+            .filter(Boolean)
+            .join('、') ||
+          row.category?.name ||
+          '-'
+        }}
+      </span>
+    </template>
+
     <template #default_state="{ row }">
-      <Tag :color="stateColorMap[row.state] || 'default'">{{ row.state_label || '-' }}</Tag>
+      <Tag :color="stateColorMap[row.state] || 'default'">
+        {{ row.state_label || stateNameMap[row.state] || '-' }}
+      </Tag>
     </template>
   </AppCrudTable>
 </template>

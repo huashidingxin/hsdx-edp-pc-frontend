@@ -1,7 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
-
-import { Card, Col, DatePicker, Empty, Modal, Row, Select, Table, Tag } from 'antdv-next';
+import type { EchartsUIType } from '@vben/plugins/echarts';
 
 import type {
   BackfillStatsResult,
@@ -9,6 +7,13 @@ import type {
   RateCard,
   StatsOverviews,
 } from '#/api/core/stats';
+
+import { computed, onMounted, ref } from 'vue';
+
+import { EchartsUI, useEcharts } from '@vben/plugins/echarts';
+
+import { Card, Col, DatePicker, Empty, Modal, Row, Select, Table, Tag } from 'antdv-next';
+
 import {
   getStatsDrilldown,
   getStatsOverviews,
@@ -16,8 +21,7 @@ import {
   getStatsTrends,
   getTaskBackfillStats,
 } from '#/api/core/stats';
-import { EchartsUI, type EchartsUIType, useEcharts } from '@vben/plugins/echarts';
-
+import Resource from '#/api/resource';
 import { useAppStore } from '#/store';
 
 const appStore = useAppStore();
@@ -26,9 +30,9 @@ const chartRef = ref<EchartsUIType>();
 const { renderEcharts } = useEcharts(chartRef);
 
 const loading = ref(false);
-const overviews = ref<StatsOverviews | null>(null);
-const rates = ref<Record<string, RateCard> | null>(null);
-const trends = ref<{ times: string[]; values: Array<{ name: string; color: string; data: number[] }> } | null>(null);
+const overviews = ref<null | StatsOverviews>(null);
+const rates = ref<null | Record<string, RateCard>>(null);
+const trends = ref<null | { times: string[]; values: Array<{ color: string; data: number[]; name: string; }> }>(null);
 const trendType = ref('supervision_log');
 const backfill = ref<BackfillStatsResult | null>(null);
 
@@ -46,8 +50,24 @@ const dateRange = ref<[string, string] | null>(null);
 const projectId = computed(() => appStore.defaultProject?.id || undefined);
 const projectLabel = computed(() => appStore.defaultProject?.name || '所有项目');
 
+// P3-S02 公司（所属单位）筛选：总公司可汇总分公司
+const companyId = ref<number | undefined>(undefined);
+const companyOptions = ref<Array<{ label: string; value: number; }>>([]);
+
+async function loadCompanies() {
+  try {
+    const res = await new Resource('companies').list({ per_page: 'all' });
+    companyOptions.value = (res.data || []).map((c: { id: number; name: string }) => ({ value: c.id, label: c.name }));
+  } catch {
+    companyOptions.value = [];
+  }
+}
+
 function projectFilterParams() {
-  return projectId.value ? { project_id: projectId.value } : {};
+  return {
+    ...(projectId.value ? { project_id: projectId.value } : {}),
+    ...(companyId.value ? { company_id: companyId.value } : {}),
+  };
 }
 
 const typeMeta = {
@@ -55,7 +75,7 @@ const typeMeta = {
   task: { label: '任务', color: '#36cfc9' },
   nonconformance: { label: '不符合项', color: '#ffa940' },
   issue: { label: '问题', color: '#73d13d' },
-} satisfies Record<string, { label: string; color: string }>;
+} satisfies Record<string, { color: string; label: string; }>;
 
 function dateFilterParams() {
   if (!dateRange.value?.[0] || !dateRange.value?.[1]) return {};
@@ -99,8 +119,8 @@ async function loadDrilldown(page: number) {
       ...projectFilterParams(),
     });
     drill.value = res;
-  } catch (e) {
-    console.error(e);
+  } catch (error) {
+    console.error(error);
   } finally {
     drillLoading.value = false;
   }
@@ -125,8 +145,8 @@ async function loadAll() {
     ]);
     overviews.value = ov;
     rates.value = rt;
-  } catch (e) {
-    console.error(e);
+  } catch (error) {
+    console.error(error);
   } finally {
     loading.value = false;
   }
@@ -141,8 +161,8 @@ async function loadTrends() {
       ...projectFilterParams(),
     });
     renderChart();
-  } catch (e) {
-    console.error(e);
+  } catch (error) {
+    console.error(error);
   }
 }
 
@@ -155,8 +175,8 @@ async function loadBackfill() {
     if (res && 'total' in res && res.record_type) {
       backfill.value = res as BackfillStatsResult;
     }
-  } catch (e) {
-    console.error(e);
+  } catch (error) {
+    console.error(error);
   }
 }
 
@@ -180,8 +200,8 @@ function renderChart() {
 }
 
 const overviewCards = computed(() => {
-  const ov = overviews.value as StatsOverviews | null;
-  if (!ov) return [] as Array<{ key: string; label: string; color: string; today: number; yesterday: number; total: number }>;
+  const ov = overviews.value as null | StatsOverviews;
+  if (!ov) return [] as Array<{ color: string; key: string; label: string; today: number; total: number; yesterday: number; }>;
   const keys: Array<keyof StatsOverviews> = ['supervision_log', 'task', 'nonconformance', 'issue'];
   return keys.map((key) => ({
     key: key as string,
@@ -209,7 +229,10 @@ function ratePercent(card: RateCard, index: number) {
   return card.data?.[index]?.value ?? 0;
 }
 
-onMounted(loadAll);
+onMounted(() => {
+  loadCompanies();
+  loadAll();
+});
 </script>
 
 <template>
@@ -219,6 +242,16 @@ onMounted(loadAll);
         <span class="text-sm font-medium text-gray-600">统计范围</span>
         <Tag color="blue">{{ projectLabel }}</Tag>
         <span class="text-xs text-gray-400">跟随顶部全局项目选择</span>
+        <Select
+          v-model:value="companyId"
+          :options="companyOptions"
+          allow-clear
+          placeholder="所属单位"
+          show-search
+          option-filter-prop="label"
+          class="w-48"
+          @change="loadAll"
+        />
       </div>
       <DatePicker.RangePicker
         v-model:value="dateRange"

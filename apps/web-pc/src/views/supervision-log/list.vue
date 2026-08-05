@@ -4,7 +4,17 @@ import { computed, ref, watch } from 'vue';
 import { useAccess } from '@vben/access';
 import { useUserStore } from '@vben/stores';
 
-import { Button, DatePicker, Drawer, Input, message, Modal, Radio, Select, Tag } from 'antdv-next';
+import {
+  Button,
+  DatePicker,
+  Drawer,
+  Input,
+  message,
+  Modal,
+  Radio,
+  Select,
+  Tag,
+} from 'antdv-next';
 
 import Resource from '#/api/resource';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
@@ -26,11 +36,44 @@ function onShowDetail(editing) {
 
 // ---- 详情：解析 values/form_id 供 SubmissionEdit ----
 const defaultValues = ref([]);
+const associatedTaskOptions = ref([]);
+const associatedTaskIds = ref([]);
+
+async function loadTaskOptions(log) {
+  associatedTaskOptions.value = [];
+  try {
+    const { data } = await new Resource('task-submissions').list({
+      per_page: 'all',
+      project_id: log.project_id,
+      start_time: log.date,
+      end_time: log.date,
+      executor_id: log.user_id,
+      submission_status: 1,
+    });
+    associatedTaskOptions.value = (data || []).map((t) => ({
+      value: t.id,
+      label:
+        `${t.measure?.name || t.measure_name || ''} ${t.procedure?.name || t.procedure_name || ''}`.trim() ||
+        `任务#${t.id}`,
+    }));
+  } catch (error) {
+    console.error('加载关联任务失败:', error);
+  }
+}
+
 function detailFormat(data) {
-  defaultValues.value = JSON.parse(JSON.stringify(data.submission?.values || []));
+  defaultValues.value = JSON.parse(
+    JSON.stringify(data.submission?.values || []),
+  );
   editingItem.value._values = JSON.parse(JSON.stringify(defaultValues.value));
-  editingItem.value._formId = data.form_id || data.submission?.form_id || data.projects?.supervision_log_form_id;
+  editingItem.value._formId =
+    data.form_id ||
+    data.submission?.form_id ||
+    data.projects?.supervision_log_form_id;
   editingItem.value._projectId = data.project_id;
+  // P3-L04 关联任务（当日旁站/平检等任务记录）
+  associatedTaskIds.value = data.associated_tasks || [];
+  loadTaskOptions(data);
   return data;
 }
 
@@ -46,11 +89,16 @@ async function save() {
     await new Resource('supervision-logs').update(editingItem.value.id, {
       form_id: editingItem.value._formId,
       values: formData.values,
+      associated_task_ids: associatedTaskIds.value,
     });
     message.success('提交成功');
     tableRef.value?.reload?.();
-  } catch (e) {
-    console.error(e);
+  } catch (error) {
+    console.error(error);
+    const msg = error?.response?.data?.message;
+    if (msg) {
+      message.error(msg);
+    }
   }
 }
 
@@ -107,22 +155,26 @@ async function submitAudit() {
   }
   auditSubmitting.value = true;
   try {
-    await new Resource(`submissions/${auditRow.value?.submission_id}/audit`).store({
+    await new Resource(
+      `submissions/${auditRow.value?.submission_id}/audit`,
+    ).store({
       status: auditData.value.status,
       reason: auditData.value.reason,
     });
     message.success('审核成功');
     auditDialog.value = false;
     tableRef.value?.reload?.();
-  } catch (e) {
-    console.error(e);
+  } catch (error) {
+    console.error(error);
   } finally {
     auditSubmitting.value = false;
   }
 }
 
 // 全局选择的项目 ID（"所有项目"时为空）
-const currentProjectId = computed(() => appStore.defaultProject?.id || undefined);
+const currentProjectId = computed(
+  () => appStore.defaultProject?.id || undefined,
+);
 
 // 查询范围：2=项目范围（最大权限，默认） 1=仅本人
 const listScope = ref(2);
@@ -141,8 +193,8 @@ async function loadUsers() {
       project_id: currentProjectId.value,
     });
     userOptions.value = (data || []).map((e) => ({
-      id: e.user?.id,
-      name: e.user?.name,
+      value: e.user_id,
+      label: e.user?.name || `#${e.user_id}`,
     }));
   } catch (error) {
     console.error('加载项目成员失败:', error);
@@ -246,10 +298,29 @@ const filterFields = computed(() => [
 ]);
 
 const formFields = ref([
-  { field: 'date', type: 'text', label: '日志日期', span: 12, displayOnly: true },
-  { field: 'user_id', type: 'text', label: '填写人ID', span: 12, displayOnly: true },
-  { field: 'submission_state', type: 'text', label: '审核状态', span: 12, displayOnly: true },
+  {
+    field: 'date',
+    type: 'text',
+    label: '日志日期',
+    span: 12,
+    displayOnly: true,
+  },
+  {
+    field: 'user_id',
+    type: 'text',
+    label: '填写人ID',
+    span: 12,
+    displayOnly: true,
+  },
+  {
+    field: 'submission_state',
+    type: 'text',
+    label: '审核状态',
+    span: 12,
+    displayOnly: true,
+  },
   { field: 'content', type: 'slot', label: '记录内容', span: 24 },
+  { field: 'associated_tasks', type: 'slot', label: '关联任务记录', span: 24 },
   { field: 'timeline', type: 'slot', label: '提交/审核历史时间线', span: 24 },
 ]);
 
@@ -289,11 +360,16 @@ function rowState(row) {
         key: 'edit',
         visible: (row) =>
           row.user_id === userStore.userInfo?.id &&
-          (row.submission_id === 0 || (row.submission_id > 0 && row.submission?.state !== 2)),
+          (row.submission_id === 0 ||
+            (row.submission_id > 0 && row.submission?.state !== 2)),
       },
     ]"
     :detail-format="detailFormat"
-    :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
+    :grid-options="{
+      columns: gridColumns,
+      showOverflow: false,
+      columnConfig: { resizable: true },
+    }"
     :open-mode="{ create: false, detail: 'modal' }"
     title="监理日志"
     class="p-4"
@@ -319,7 +395,7 @@ function rowState(row) {
         placeholder="记录人"
         allow-clear
         show-search
-        option-filter-prop="name"
+        option-filter-prop="label"
         style="width: 100%"
         @change="update"
       />
@@ -378,11 +454,38 @@ function rowState(row) {
     </template>
 
     <template #form-action>
-      <Button v-if="editingItem.submission_id" @click="openPreview">预览</Button>
+      <Button v-if="editingItem.submission_id" @click="openPreview">
+        预览
+      </Button>
       <template v-if="isEditing">
         <Button @click="reset">重置</Button>
         <Button type="primary" @click="save">提交</Button>
       </template>
+    </template>
+
+    <template #field_associated_tasks>
+      <div v-if="editingItem.id" class="space-y-2">
+        <Select
+          v-if="isEditing"
+          v-model:value="associatedTaskIds"
+          :options="associatedTaskOptions"
+          mode="multiple"
+          placeholder="选择关联任务记录（旁站/平检等）"
+          option-filter-prop="label"
+          class="w-full"
+        />
+        <div v-else-if="associatedTaskIds.length" class="text-sm">
+          <Tag v-for="id in associatedTaskIds" :key="id" color="blue">
+            {{
+              associatedTaskOptions.find((o) => o.value === id)?.label ||
+              `任务#${id}`
+            }}
+          </Tag>
+        </div>
+        <div v-else class="text-xs text-gray-400">
+          未关联任务记录。日志内容命中敏感词（如混凝土、钢筋）时，需关联对应旁站/平检任务记录才能提交。
+        </div>
+      </div>
     </template>
 
     <!-- P3-L02 提交/审核历史时间线 -->
@@ -394,10 +497,14 @@ function rowState(row) {
           class="mb-3 flex gap-3 rounded-lg border border-gray-100 bg-gray-50 p-3"
         >
           <div class="w-14 shrink-0 text-center">
-            <span class="inline-flex h-8 w-8 items-center justify-center rounded-full bg-blue-500 text-xs font-bold text-white">
+            <span
+              class="inline-flex h-8 w-8 items-center justify-center rounded-full bg-blue-500 text-xs font-bold text-white"
+            >
               v{{ item.version_no }}
             </span>
-            <Tag v-if="item.is_current" color="blue" class="mt-1 !text-xs">当前</Tag>
+            <Tag v-if="item.is_current" color="blue" class="mt-1 !text-xs">
+              当前
+            </Tag>
           </div>
           <div class="min-w-0 flex-1 space-y-1">
             <div class="flex items-center gap-2">
@@ -409,7 +516,9 @@ function rowState(row) {
             <div v-if="item.audit" class="text-xs text-gray-500">
               审核于 {{ item.audit.audit_time || '-' }} ·
               {{ item.audit.auditor_name || '未知审核人' }}
-              <span :class="item.audit.status ? 'text-green-600' : 'text-red-500'">
+              <span
+                :class="item.audit.status ? 'text-green-600' : 'text-red-500'"
+              >
                 {{ item.audit.status ? '通过' : '退回' }}
               </span>
               <span v-if="item.audit.reason" class="text-gray-400">（{{ item.audit.reason }}）</span>
@@ -472,10 +581,7 @@ function rowState(row) {
     destroy-on-close
   >
     <div v-if="previewDocument" class="h-[calc(100vh-120px)]">
-      <AppOffice
-        :document="previewDocument"
-        mode="view"
-      />
+      <AppOffice :document="previewDocument" mode="view" />
     </div>
   </Drawer>
 </template>
