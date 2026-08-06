@@ -375,31 +375,21 @@ const filterFields = computed(() => [
 ]);
 
 const formFields = ref([
-  {
-    field: 'date',
-    type: 'text',
-    label: '日志日期',
-    span: 12,
-    displayOnly: true,
-  },
-  {
-    field: 'user_id',
-    type: 'text',
-    label: '填写人ID',
-    span: 12,
-    displayOnly: true,
-  },
-  {
-    field: 'submission_state',
-    type: 'text',
-    label: '审核状态',
-    span: 12,
-    displayOnly: true,
-  },
   { field: 'content', type: 'slot', label: '记录内容', span: 24 },
   { field: 'warnings', type: 'slot', label: '关键字任务核对', span: 24 },
   { field: 'timeline', type: 'slot', label: '提交/审核历史时间线', span: 24 },
 ]);
+
+// 表单 ID（行数据即时可用，不依赖详情异步加载）
+const effectiveFormId = computed(() => {
+  const item = editingItem.value;
+  return (
+    item._formId ||
+    item.submission?.form_id ||
+    item.form_id ||
+    item.project?.supervision_log_form_id
+  );
+});
 
 const stateMap = {
   0: { text: '待提交', color: 'default' },
@@ -460,7 +450,8 @@ function rowState(row) {
       columnConfig: { resizable: true },
       checkboxConfig: { checkStrictly: true, highlight: true },
     }"
-    :open-mode="{ create: false, detail: 'modal' }"
+    :open-mode="{ create: false, detail: 'drawer' }"
+    :detail-props="{ width: 720 }"
     title="监理日志"
     class="p-4"
     @show-detail="onShowDetail"
@@ -545,13 +536,34 @@ function rowState(row) {
       </Tag>
     </template>
 
+    <template #form-description>
+      <div
+        v-if="editingItem.id"
+        class="mb-3 flex flex-wrap items-center gap-3 rounded-lg bg-gray-50 px-3 py-2"
+      >
+        <span class="text-sm font-medium">{{ editingItem.date || '-' }}</span>
+        <span class="text-sm text-gray-500">
+          记录人：{{ editingItem.user?.name || '-' }}
+        </span>
+        <Tag :color="stateMap[rowState(editingItem)]?.color || 'default'">
+          {{ stateLabel(rowState(editingItem)) }}
+        </Tag>
+        <span
+          v-if="editingItem.submission?.code"
+          class="text-xs text-gray-400"
+        >
+          {{ editingItem.submission.code }}
+        </span>
+      </div>
+    </template>
+
     <template #field_content>
       <div v-if="editingItem.id" class="min-h-[200px]">
         <SubmissionEdit
-          v-if="editingItem._formId"
+          v-if="effectiveFormId"
           ref="submissionRef"
-          :form-id="editingItem._formId"
-          :project-id="editingItem._projectId"
+          :form-id="effectiveFormId"
+          :project-id="editingItem._projectId || editingItem.project_id"
           :values="editingItem._values || []"
           :rules="editingItem.submission?.rules || {}"
           :readonly="!isEditing"
