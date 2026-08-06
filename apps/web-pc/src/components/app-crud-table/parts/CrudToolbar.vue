@@ -3,7 +3,7 @@
  * CrudToolbar - 顶部工具栏
  *
  * Props: title, toolbarConfig, canCreate
- * Slots: prepend, append, sub-title
+ * Slots: prepend, append, sub-title（prepend/append 为追加内容，不覆盖默认工具）
  * Events: create, refresh, print, export
  */
 import { computed } from 'vue';
@@ -59,37 +59,36 @@ const showMore = computed(
         <slot name="sub-title"></slot>
       </div>
       <div class="flex items-center gap-1.5">
-        <slot name="append">
-          <Space :size="6">
-            <Button
-              v-if="config.create && canCreate"
-              type="primary"
-              class="toolbar-create-btn"
-              @click="emit('create')"
-            >
-              <i class="icon-[mdi--plus]"></i>
-              新增
+        <Space :size="6">
+          <Button
+            v-if="config.create && canCreate"
+            type="primary"
+            class="toolbar-create-btn"
+            @click="emit('create')"
+          >
+            <i class="icon-[mdi--plus]"></i>
+            新增
+          </Button>
+          <slot name="append"></slot>
+          <Dropdown v-if="showMore">
+            <Button type="text" size="middle" class="toolbar-btn">
+              <i class="icon-[mdi--dots-vertical] text-[18px]"></i>
             </Button>
-            <Dropdown v-if="showMore">
-              <Button type="text" size="middle" class="toolbar-btn">
-                <i class="icon-[mdi--dots-vertical] text-[18px]"></i>
-              </Button>
-              <template #popupRender>
-                <Menu>
-                  <Menu.Item v-if="config.refresh" @click="emit('refresh')">
-                    <i class="icon-[mdi--refresh]"></i> 刷新
-                  </Menu.Item>
-                  <Menu.Item v-if="config.print" @click="emit('print')">
-                    <i class="icon-[mdi--printer]"></i> 打印
-                  </Menu.Item>
-                  <Menu.Item v-if="config.export" @click="emit('export')">
-                    <i class="icon-[mdi--download]"></i> 导出
-                  </Menu.Item>
-                </Menu>
-              </template>
-            </Dropdown>
-          </Space>
-        </slot>
+            <template #popupRender>
+              <Menu>
+                <Menu.Item v-if="config.refresh" @click="emit('refresh')">
+                  <i class="icon-[mdi--refresh]"></i> 刷新
+                </Menu.Item>
+                <Menu.Item v-if="config.print" @click="emit('print')">
+                  <i class="icon-[mdi--printer]"></i> 打印
+                </Menu.Item>
+                <Menu.Item v-if="config.export" @click="emit('export')">
+                  <i class="icon-[mdi--download]"></i> 导出
+                </Menu.Item>
+              </Menu>
+            </template>
+          </Dropdown>
+        </Space>
       </div>
     </div>
   </div>
@@ -105,28 +104,28 @@ const showMore = computed(
 }
 
 .toolbar-btn {
-  width: 32px;
-  height: 32px;
-  padding: 0 !important;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px !important;
+  width: 32px;
+  height: 32px;
+  padding: 0 !important;
   color: #666;
+  border-radius: 6px !important;
   transition: all 0.2s ease;
 }
 
 .toolbar-btn:hover {
-  background-color: rgba(0, 0, 0, 0.04);
   color: #333;
+  background-color: rgb(0 0 0 / 4%);
 }
 
 :deep(.toolbar-create-btn) {
+  gap: 4px;
   height: 32px;
   padding: 0 14px;
-  border-radius: 6px;
   font-weight: 500;
-  gap: 4px;
+  border-radius: 6px;
 }
 
 :deep(.toolbar-create-btn .ant-btn-icon) {

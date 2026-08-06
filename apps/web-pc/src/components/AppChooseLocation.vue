@@ -369,6 +369,24 @@ defineExpose({ openDialog });
         <!-- 地图 -->
         <div ref="mapEl" class="h-full w-full"></div>
 
+        <!-- 卫星/矢量切换 -->
+        <div class="absolute bottom-3 right-3 z-10 flex overflow-hidden rounded border border-gray-200 bg-white shadow-md">
+          <button
+            class="px-3 py-1.5 text-xs font-medium transition-colors"
+            :class="activeLayer === 'vector' ? 'bg-blue-500 text-white' : 'text-gray-600 hover:bg-gray-100'"
+            @click="setLayerType('vector')"
+          >
+            矢量
+          </button>
+          <button
+            class="px-3 py-1.5 text-xs font-medium transition-colors"
+            :class="activeLayer === 'image' ? 'bg-blue-500 text-white' : 'text-gray-600 hover:bg-gray-100'"
+            @click="setLayerType('image')"
+          >
+            卫星
+          </button>
+        </div>
+
         <!-- 逆地理编码中 -->
         <div
           v-if="geocoding"

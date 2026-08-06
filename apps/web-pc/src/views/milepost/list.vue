@@ -37,7 +37,7 @@ const gridColumns = ref([
   { field: 'code', title: '编号', width: 120 },
   { field: 'longitude', title: '经度', width: 120 },
   { field: 'latitude', title: '纬度', width: 120 },
-  { field: 'created_at', title: '创建时间', width: 160 },
+  { field: 'created_at', title: '创建时间', width: 180 },
 ]);
 
 function detailFormat(data) {
@@ -156,6 +156,7 @@ watch(
         <AppChooseLocation
           :model-value="modelValue || {}"
           :return-address="false"
+          close-on-choose
           label="桩号位置"
           placeholder="点击地图选点"
           @update:model-value="update"
