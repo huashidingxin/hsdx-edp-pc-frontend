@@ -4,20 +4,19 @@ import { computed, onMounted, ref, shallowRef, useSlots, watch } from 'vue';
 import {
   AutoComplete,
   Button,
-  Cascader,
   Checkbox,
+  CheckboxGroup,
   DatePicker,
   FormItem,
   Input,
   InputNumber,
   RadioGroup,
   Select,
+  SpaceCompact,
   Switch,
   TextArea,
   TimePicker,
   TreeSelect,
-  CheckboxGroup,
-  SpaceCompact,
 } from 'antdv-next';
 import dayjs from 'dayjs';
 import { cloneDeep, debounce, isEqual } from 'lodash-es';
@@ -25,8 +24,9 @@ import { Solar } from 'lunar-javascript';
 
 import Resource from '#/api/resource';
 import AppUpload from '#/components/AppUpload.vue';
-import AppAddress from './AppAddress.vue';
+
 import AppEditor from './app-editor/index.vue'
+import AppAddress from './AppAddress.vue';
 
 const props = defineProps({
   field: {
@@ -93,15 +93,15 @@ let formatter = (e) => e;
 
 function normalizeFieldValue(field, val) {
   switch (field?.type) {
+    case 'checkbox':
+      attrs.value.checked = val;
+      return val ? 1 : 0;
     case 'checkbox-group': {
       if (val === undefined || val === null || val === '') {
         return [];
       }
       return Array.isArray(val) ? val : [val];
     }
-    case 'checkbox':
-      attrs.value.checked = val;
-      return val ? 1 : 0;
     default: {
       return val;
     }
@@ -149,8 +149,12 @@ const displayOnlyText = computed(() => {
     };
     const findLabel = (opts, val) => {
       for (const opt of opts) {
-        if (opt[fieldNames.value] === val || opt.id === val) {
-          return opt[fieldNames.label] || opt.name;
+        if (
+          opt[fieldNames.value] === val ||
+          opt.value === val ||
+          opt.id === val
+        ) {
+          return opt[fieldNames.label] ?? opt.label ?? opt.name;
         }
         if (opt.children) {
           const found = findLabel(opt.children, val);
@@ -237,6 +241,17 @@ function initComponent() {
   }
 
   switch (props.field.type) {
+    case 'audio':
+    case 'file':
+    case 'image':
+    case 'video': {
+      defaultAttrs.value = {
+        fileType: props.field.type === 'file' ? props.field.attrs?.fileType : props.field.type,
+        maxCount: props.field.attrs?.multiple ? 10 : 1,
+      };
+      component.value = AppUpload;
+      break;
+    }
     case 'autocomplete': {
       defaultAttrs.value = {
         fieldNames: { label: 'name', value: 'id' },
@@ -244,6 +259,24 @@ function initComponent() {
       };
       defaultEvents.value = {};
       component.value = AutoComplete;
+      break;
+    }
+    case 'checkbox': {
+      defaultAttrs.value = {
+        checkedValue: 1,
+        unCheckedValue: 0,
+      };
+      component.value = Checkbox;
+      defaultEvents.value = {
+        change: (e) => {
+          emit('update:modelValue', e ? 1 : 0);
+        },
+      };
+      break;
+    }
+    case 'checkbox-group': {
+      defaultAttrs.value = {};
+      component.value = CheckboxGroup;
       break;
     }
     case 'combobox': {
@@ -292,17 +325,6 @@ function initComponent() {
       component.value = AppEditor;
       break;
     }
-    case 'audio':
-    case 'file':
-    case 'image':
-    case 'video': {
-      defaultAttrs.value = {
-        fileType: props.field.type === 'file' ? props.field.attrs?.fileType : props.field.type,
-        maxCount: props.field.attrs?.multiple ? 10 : 1,
-      };
-      component.value = AppUpload;
-      break;
-    }
     case 'number': {
       defaultAttrs.value = {};
       component.value = InputNumber;
@@ -311,24 +333,6 @@ function initComponent() {
     case 'radio': {
       defaultAttrs.value = {};
       component.value = RadioGroup;
-      break;
-    }
-    case 'checkbox': {
-      defaultAttrs.value = {
-        checkedValue: 1,
-        unCheckedValue: 0,
-      };
-      component.value = Checkbox;
-      defaultEvents.value = {
-        change: (e) => {
-          emit('update:modelValue', e ? 1 : 0);
-        },
-      };
-      break;
-    }
-    case 'checkbox-group': {
-      defaultAttrs.value = {};
-      component.value = CheckboxGroup;
       break;
     }
     case 'region': {
@@ -340,7 +344,6 @@ function initComponent() {
     }
     case 'select': {
       defaultAttrs.value = {
-        fieldNames: { label: 'name', value: 'id' },
         allowClear: !props.field.attrs?.readonly && !props.readonly,
         showSearch: true,
         filterOption,
@@ -399,6 +402,39 @@ function initComponent() {
 
   if (isDisplayOnly.value) {
     delete attrs.value.allowClear;
+  }
+
+  // select 选项归一化：{ id, name }（接口数据）→ { value, label }，
+  // 兼容页面直接写 { value, label } 的静态选项；显式声明 fieldNames 时不处理
+  if (component.value === Select && !props.field.attrs?.fieldNames) {
+    const rawOptions = props.field.attrs?.options ?? props.field.options;
+    attrs.value.options = Array.isArray(rawOptions)
+      ? rawOptions.map((opt) => {
+          if (!opt || typeof opt !== 'object') return opt;
+          if (opt.value !== undefined || opt.label !== undefined) return opt;
+          if (opt.id !== undefined) {
+            return {
+              ...opt,
+              value: opt.id,
+              label: opt.name !== undefined ? opt.name : String(opt.id),
+            };
+          }
+          return opt;
+        })
+      : rawOptions;
+  }
+
+  // tree-select 选项归一化：antdv TreeSelect 使用 treeData 而非 options，
+  // 兼容 attrs.options 写法的树数据（{ id, name, children }，配合 fieldNames）
+  if (component.value === TreeSelect) {
+    const rawOptions = props.field.attrs?.options ?? props.field.options;
+    attrs.value.treeData = Array.isArray(rawOptions) ? rawOptions : [];
+  }
+
+  // antdv-next Select 多选由 mode='multiple' 控制（boolean multiple 不生效），
+  // 兼容页面统一写 attrs.multiple 的写法；显式声明 mode 时不处理
+  if (component.value === Select && attrs.value.multiple && !attrs.value.mode) {
+    attrs.value.mode = 'multiple';
   }
 }
 
@@ -541,33 +577,43 @@ function getMonthInGanZhi(date) {
   <div v-if="field.type === 'hidden'" ref="fieldRef"></div>
 
   <!-- 动态包裹组件 -->
-  <component :is="shouldUseFormItem ? FormItem : 'div'" v-bind="shouldUseFormItem ? formItemProps : {}"
-    :class="!shouldUseFormItem ? getClass(field) : {}">
+  <component
+:is="shouldUseFormItem ? FormItem : 'div'" v-bind="shouldUseFormItem ? formItemProps : {}"
+    :class="!shouldUseFormItem ? getClass(field) : {}"
+>
     <slot name="default">
       <!-- 纯显示模式：只显示文本 -->
-      <div v-if="isDisplayOnly" class="min-h-[22px] leading-[22px] text-gray-800" :class="[
+      <div
+v-if="isDisplayOnly" class="min-h-[22px] leading-[22px] text-gray-800" :class="[
         shouldUseFormItem ? '' : 'flex-1',
         field.attrs?.displayOnlyClass,
-      ]">
+      ]"
+>
         {{ displayOnlyText }}
       </div>
       <div v-else class="flex">
         <!-- 编辑模式：渲染输入组件 -->
         <SpaceCompact block>
-          <component v-if="field.slots?._prefix" :is="field.slots._prefix.component"
-            v-bind="field.slots._prefix.props || {}"></component>
-          <component ref="fieldRef" :is="component" :class="shouldUseFormItem ? '' : 'flex-1'" :value="componentValue"
+          <component
+v-if="field.slots?._prefix" :is="field.slots._prefix.component"
+            v-bind="field.slots._prefix.props || {}"
+/>
+          <component
+ref="fieldRef" :is="component" :class="shouldUseFormItem ? '' : 'flex-1'" :value="componentValue"
             @update:value="componentValue = $event" :placeholder="field.attrs?.placeholder"
             :label="field.label || field.attrs?.label" v-bind="attrs" :disabled="field.attrs?.readonly || readonly"
-            v-on="{ ...defaultEvents, ...field.events }" :key="field.field" :field-name="field.field">
+            v-on="{ ...defaultEvents, ...field.events }" :key="field.field" :field-name="field.field"
+>
             <!-- 农历日期单元格渲染 -->
-            <template v-if="
+            <template
+v-if="
               ['date', 'datetime'].includes(field.type) &&
               field.attrs?.showLunar
-            " #cellRender="{ current, info }">
+            " #cellRender="{ current, info }"
+>
               <component :is="info.originNode" v-if="!['date', 'year', 'month'].includes(info.type)" />
               <div v-else class="ant-picker-cell-inner ant-picker-cell-inner__lunar">
-                <template v-if="info.type == 'date'">
+                <template v-if="info.type === 'date'">
                   <div class="solar-date">{{ current.date() }}</div>
                   <div class="lunar-date">
                     {{
@@ -577,52 +623,66 @@ function getMonthInGanZhi(date) {
                     }}
                   </div>
                 </template>
-                <template v-if="info.type == 'year'">
+                <template v-if="info.type === 'year'">
                   <div class="solar-date">{{ current.year() }}</div>
                   <div class="lunar-date">{{ getYearInGanZhi(current) }}</div>
                 </template>
-                <template v-if="info.type == 'month'">
+                <template v-if="info.type === 'month'">
                   <div class="solar-date">{{ current.month() + 1 }}</div>
                   <div class="lunar-date">{{ getMonthInGanZhi(current) }}</div>
                 </template>
               </div>
             </template>
 
-            <template v-for="(slot, slotName) in field.slots" :key="index" #[slotName]="slotProps">
+            <template v-for="(slot, slotName) in field.slots" :key="slotName" #[slotName]="slotProps">
               <template v-if="!slot.hide?.(slotProps)">
-                <component v-if="slot.component" :is="slot.component"
-                  v-bind="{ ...slot.props, ...slot.bind?.(slotProps) }" />
+                <component
+v-if="slot.component" :is="slot.component"
+                  v-bind="{ ...slot.props, ...slot.bind?.(slotProps) }"
+/>
               </template>
             </template>
 
-            <template v-if="
+            <template
+v-if="
               ['select', 'autocomplete', 'tree-select'].includes(field.type)
-            " #suffixIcon>
-              <div v-if="
+            " #suffixIcon
+>
+              <div
+v-if="
                 field.attrs?.create?.url &&
                 (!field.attrs.create.permission ||
                   hasAccessByCodes([field.attrs.create.permission]))
-              " style="display: flex; gap: 4px; align-items: center">
-                <Button type="link" size="small" @click.stop="router.push(field.attrs.create.url)"
-                  style="height: auto; padding: 0 4px">
+              " style="display: flex; gap: 4px; align-items: center"
+>
+                <Button
+type="link" size="small" @click.stop="router.push(field.attrs.create.url)"
+                  style="height: auto; padding: 0 4px"
+>
                   <template #icon><span>+</span></template>
                   新建{{ field.label }}
                 </Button>
               </div>
-              <Button v-if="Boolean(field.attrs?.refresh)" type="link" size="small" @click.stop="field.attrs.refresh()"
-                style="height: auto; padding: 0 4px">
+              <Button
+v-if="Boolean(field.attrs?.refresh)" type="link" size="small" @click.stop="field.attrs.refresh()"
+                style="height: auto; padding: 0 4px"
+>
                 <template #icon><span>↻</span></template>
               </Button>
             </template>
-            <template v-if="
+            <template
+v-if="
               ['select', 'autocomplete', 'tree-select'].includes(field.type)
-            " #notFoundContent>
+            " #notFoundContent
+>
               <div style="padding: 8px">
-                <Button v-if="
+                <Button
+v-if="
                   field.attrs?.create?.url &&
                   (!field.attrs.create.permission ||
                     hasAccessByCodes([field.attrs.create.permission]))
-                " type="link" block @click="router.push(field.attrs.create.url)">
+                " type="link" block @click="router.push(field.attrs.create.url)"
+>
                   <template #icon><span>+</span></template>
                   新建{{ field.label }}
                 </Button>
@@ -636,14 +696,12 @@ function getMonthInGanZhi(date) {
               :key="slotName"
               #[slotName]="slotScope"
             >
-              <slot :name="slotName" v-bind="slotScope || {}" />
+              <slot :name="slotName" v-bind="slotScope || {}"></slot>
             </template>
           </component>
-
-        </SpaceCompact>
+</SpaceCompact>
       </div>
-
-    </slot>
+</slot>
   </component>
 </template>
 

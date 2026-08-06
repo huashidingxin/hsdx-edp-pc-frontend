@@ -1,14 +1,14 @@
-import { defineStore } from 'pinia';
-
 import { useAccessStore, useTabbarStore, useUserStore } from '@vben/stores';
 
+import { defineStore } from 'pinia';
+
 import Resource from '#/api/resource';
-import { generateAccess } from '#/router/access';
 import { resetRoutes, router } from '#/router';
+import { generateAccess } from '#/router/access';
 import { accessRoutes } from '#/router/routes';
 
 interface ProjectRole {
-  id?: string | number;
+  id?: number | string;
   display_name?: string;
   name?: string;
   [key: string]: any;
@@ -19,7 +19,7 @@ interface ProjectItem {
   name?: string;
   short_name?: string;
   code?: string;
-  roles?: string[] | ProjectRole[];
+  roles?: ProjectRole[] | string[];
   is_default?: boolean;
   [key: string]: any;
 }
@@ -139,6 +139,35 @@ export const useAppStore = defineStore('app', {
           reject(error);
         }
       });
+    },
+
+    /**
+     * 分页 + 关键词联网查询项目（供项目选择器使用）。
+     * 后端 user-projects 原生支持 keyword（名称/简称/编码 LIKE）与 page/per_page。
+     */
+    async getProjectsPaged(
+      params: { keyword?: string; page?: number; per_page?: number; } = {},
+    ): Promise<{
+      data: ProjectItem[];
+      meta?: { current_page?: number; last_page?: number; total?: number; };
+    }> {
+      const api = new Resource('user-projects');
+      const res: any = await api.list({
+        page: params.page ?? 1,
+        per_page: params.per_page ?? 6,
+        keyword: params.keyword || undefined,
+        with_stats: 1,
+        status: 1,
+        // id 作为决胜键，保证 is_default 相同（并列）时排序稳定，翻页不重叠
+        sort_by: JSON.stringify([
+          { key: 'is_default', order: 'desc' },
+          { key: 'projects.id', order: 'desc' },
+        ]),
+      });
+      return res as {
+        data: ProjectItem[];
+        meta?: { current_page?: number; last_page?: number; total?: number; };
+      };
     },
 
     setDefaultProject(project: ProjectItem) {

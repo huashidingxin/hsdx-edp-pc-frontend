@@ -9,7 +9,7 @@ import { BasicLayout, LockScreen, UserDropdown } from '@vben/layouts';
 import { preferences } from '@vben/preferences';
 import { useAccessStore, useUserStore } from '@vben/stores';
 
-import { Form, FormItem, InputPassword, Modal, message } from 'antdv-next';
+import { Form, FormItem, InputPassword, message, Modal } from 'antdv-next';
 
 import { changePasswordApi } from '#/api';
 import AppProject from '#/components/AppProject.vue';
@@ -129,7 +129,7 @@ watch(
 </script>
 
 <template>
-  <BasicLayout @clear-preferences-and-logout="handleLogout">
+  <BasicLayout @clear-preferences-and-logout="handleLogout" @logout="handleLogout">
     <template #header-left-1>
       <AppProject />
     </template>

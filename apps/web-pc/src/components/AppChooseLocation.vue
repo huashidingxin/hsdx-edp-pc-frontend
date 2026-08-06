@@ -45,7 +45,7 @@ const props = defineProps({
     type: Function,
     default: (e) =>
       e?.province
-        ? `${e.province}${e.city}${e.area}${e.town || ''}${e.address || ''}`
+        ? `${e.province}${e.city}${e.area}${e.town || ''}${e.detail || e.address || ''}`
         : e?.longitude
           ? `${e.longitude},${e.latitude}`
           : '',
@@ -211,14 +211,18 @@ async function searchAddress() {
       count: 10,
     });
     const url = `https://api.tianditu.gov.cn/v2/search?postStr=${encodeURIComponent(postStr)}&type=query&tk=${TIAN_DI_KEY}`;
-    const data = await (await fetch(url)).json();
-    if (data.status?.infocode === 1000 && data.pois) {
-      searchResults.value = data.pois.map((poi) => ({
-        name: poi.name,
-        address: poi.address,
-        lon: poi.lonlat.split(',')[0],
-        lat: poi.lonlat.split(',')[1],
-      }));
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`请求失败(${resp.status})`);
+    const data = await resp.json();
+    if (data.status?.infocode === 1000 && Array.isArray(data.pois)) {
+      searchResults.value = data.pois
+        .filter((poi) => poi?.lonlat?.includes(','))
+        .map((poi) => ({
+          name: poi.name,
+          address: poi.address,
+          lon: poi.lonlat.split(',')[0],
+          lat: poi.lonlat.split(',')[1],
+        }));
     } else {
       searchResults.value = [];
     }
@@ -310,7 +314,7 @@ defineExpose({ openDialog });
             placeholder="输入地址或关键词搜索"
             allow-clear
             @keyup.enter="searchAddress"
-            @change="clearSearch"
+            @clear="clearSearch"
           >
             <template #suffix>
               <Button
