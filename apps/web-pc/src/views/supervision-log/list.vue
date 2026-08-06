@@ -67,6 +67,19 @@ async function save() {
     message.error('请检查表单');
     return;
   }
+  // P3-L03 提交前关键字预检测：命中工序关键字且当天无该工序任务时提醒，但不阻断提交
+  try {
+    const res = await new Resource(
+      `supervision-logs/${editingItem.value.id}/keyword-precheck`,
+    ).store({ content: buildContentText(formData.values) });
+    const hits = res?.data || [];
+    const missing = hits.filter((h) => !h.has_task);
+    if (missing.length && !(await confirmMissingTaskWarnings(missing))) {
+      return;
+    }
+  } catch (error) {
+    console.error('关键字预检测失败:', error);
+  }
   try {
     const res = await new Resource('supervision-logs').update(
       editingItem.value.id,
@@ -85,6 +98,35 @@ async function save() {
       message.error(msg);
     }
   }
+}
+
+// ---- P3-L03 内容文本提取（与后端 buildContentText 同口径）----
+function buildContentText(values) {
+  const parts = [];
+  const walk = (v) => {
+    if (Array.isArray(v)) {
+      v.forEach(walk);
+    } else if (typeof v === 'string' || typeof v === 'number') {
+      if (String(v).trim() !== '') parts.push(String(v));
+    }
+  };
+  for (const key in values || {}) walk(values[key]);
+  return parts.join('\n');
+}
+
+function confirmMissingTaskWarnings(missing) {
+  return new Promise((resolve) => {
+    Modal.confirm({
+      title: '工序任务核对提醒',
+      content: `以下工序命中关键字，但当天未查询到该工序任务记录：\n\n${missing
+        .map((m, i) => `${i + 1}. ${m.procedure_name}（关键字"${m.keyword}"）`)
+        .join('\n')}\n\n可以继续提交。提交后补充该工序当天任务可自动解除，或由管理员/有权限成员手动解除。`,
+      okText: '继续提交',
+      cancelText: '取消',
+      onOk: () => resolve(true),
+      onCancel: () => resolve(false),
+    });
+  });
 }
 
 function reset() {
@@ -183,25 +225,46 @@ async function batchPrint() {
   }
 }
 
-// ---- P3-L03 关键字警告手动解除（总监/有权限成员，保留记录）----
+// ---- P3-L03 关键字警告手动解除（总监/有权限成员，必须填原因，保留记录）----
 const canResolveWarning = computed(
   () =>
     appStore.isAdmin ||
     hasAccessByCodes(['log_warning.resolve', 'submission.audit']),
 );
 
-async function resolveWarning(w) {
-  Modal.confirm({
-    title: '解除关键字任务核对警告',
-    content: `确认解除"${w.procedure_name}"（${w.keyword}）的警告？操作将保留记录。`,
-    okText: '确认解除',
-    cancelText: '取消',
-    onOk: async () => {
-      await new Resource(`log-warnings/${w.id}/resolve`).store({});
-      message.success('已解除');
-      warnings.value = warnings.value.filter((x) => x.id !== w.id);
-    },
-  });
+const resolveDialog = ref(false);
+const resolveTarget = ref(null);
+const resolveReason = ref('');
+const resolveSubmitting = ref(false);
+
+function openResolve(w) {
+  resolveTarget.value = w;
+  resolveReason.value = '';
+  resolveDialog.value = true;
+}
+
+async function submitResolve() {
+  if (!resolveReason.value.trim()) {
+    message.error('请输入解除原因');
+    return;
+  }
+  if (resolveSubmitting.value) return;
+  resolveSubmitting.value = true;
+  try {
+    await new Resource(
+      `log-warnings/${resolveTarget.value.id}/resolve`,
+    ).store({ remark: resolveReason.value.trim() });
+    message.success('已解除');
+    warnings.value = warnings.value.filter(
+      (x) => x.id !== resolveTarget.value.id,
+    );
+    resolveDialog.value = false;
+  } catch (error) {
+    console.error(error);
+    message.error(error?.response?.data?.message || '解除失败');
+  } finally {
+    resolveSubmitting.value = false;
+  }
 }
 
 // ---- 记录审核（submissions/{id}/audit）----
@@ -615,7 +678,7 @@ function rowState(row) {
               v-if="canResolveWarning"
               size="small"
               type="link"
-              @click="resolveWarning(w)"
+              @click="openResolve(w)"
             >
               解除警告
             </Button>
@@ -709,6 +772,32 @@ function rowState(row) {
           placeholder="请输入退回原因"
         />
       </div>
+    </div>
+  </Modal>
+
+  <!-- P3-L03 关键字警告手动解除（必须填原因） -->
+  <Modal
+    v-model:open="resolveDialog"
+    title="解除关键字任务核对警告"
+    ok-text="确认解除"
+    cancel-text="取消"
+    :confirm-loading="resolveSubmitting"
+    @ok="submitResolve"
+  >
+    <div class="space-y-3">
+      <p v-if="resolveTarget" class="text-sm">
+        确认解除
+        <span class="font-medium">{{ resolveTarget.procedure_name }}</span>
+        （关键字"{{ resolveTarget.keyword }}"）的警告？解除记录将保留。
+      </p>
+      <label class="mb-1 block text-sm text-gray-500">
+        解除原因<span class="text-red-500">*</span>
+      </label>
+      <Input.TextArea
+        v-model:value="resolveReason"
+        :rows="3"
+        placeholder="请输入解除原因"
+      />
     </div>
   </Modal>
 
