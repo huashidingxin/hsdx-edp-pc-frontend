@@ -43,47 +43,103 @@ const typeModels = {
     { key: 'template_code', name: '表编号' },
     { key: 'submission_code', name: '文档编号' },
     { key: 'signature_image', name: '手写签名' },
-    { key: 'datetime', name: '时间', children: [
-      { key: 'year', name: '年' }, { key: 'month', name: '月' }, { key: 'day', name: '日' },
-      { key: 'date', name: '日期' }, { key: 'time', name: '时间' },
-    ] },
-    { key: 'weather', name: '天气', children: [
-      { key: 'name', name: '名称' }, { key: 'degree', name: '温度' }, { key: 'humidity', name: '湿度' },
-      { key: 'pressure', name: '气压' }, { key: 'day_degree_min', name: '最低温度' },
-      { key: 'day_degree_max', name: '最高温度' }, { key: 'wind_power', name: '风级' },
-      { key: 'wind_speed', name: '风速' }, { key: 'wind_direction_name', name: '风向' },
-      { key: 'weather', name: '名称+温度范围+风速' },
-    ] },
-    { key: 'project', name: '项目', children: [
-      { key: 'name', name: '名称' }, { key: 'code', name: '编号' }, { key: 'owner_name', name: '业主' },
-      { key: 'supervisor_name', name: '监理单位' }, { key: 'supervisor_manager', name: '监理单位项目经理' },
-    ] },
-    { key: 'task', name: '任务', children: [
-      { key: 'staff_name', name: '执行人' }, { key: 'mileposts', name: '桩号' },
-    ] },
+    {
+      key: 'datetime',
+      name: '时间',
+      children: [
+        { key: 'year', name: '年' },
+        { key: 'month', name: '月' },
+        { key: 'day', name: '日' },
+        { key: 'date', name: '日期' },
+        { key: 'time', name: '时间' },
+      ],
+    },
+    {
+      key: 'weather',
+      name: '天气',
+      children: [
+        { key: 'name', name: '名称' },
+        { key: 'degree', name: '温度' },
+        { key: 'humidity', name: '湿度' },
+        { key: 'pressure', name: '气压' },
+        { key: 'day_degree_min', name: '最低温度' },
+        { key: 'day_degree_max', name: '最高温度' },
+        { key: 'wind_power', name: '风级' },
+        { key: 'wind_speed', name: '风速' },
+        { key: 'wind_direction_name', name: '风向' },
+        { key: 'weather', name: '名称+温度范围+风速' },
+      ],
+    },
+    {
+      key: 'project',
+      name: '项目',
+      children: [
+        { key: 'name', name: '名称' },
+        { key: 'code', name: '编号' },
+        { key: 'owner_name', name: '业主' },
+        { key: 'supervisor_name', name: '监理单位' },
+        { key: 'supervisor_manager', name: '监理单位项目经理' },
+      ],
+    },
+    {
+      key: 'task',
+      name: '任务',
+      children: [
+        { key: 'staff_name', name: '执行人' },
+        { key: 'mileposts', name: '桩号' },
+      ],
+    },
   ],
   2: [
     { key: 'template_code', name: '表编号' },
     { key: 'submission_code', name: '文档编号' },
     { key: 'signature_image', name: '手写签名' },
-    { key: 'datetime', name: '时间', children: [
-      { key: 'year', name: '年' }, { key: 'month', name: '月' }, { key: 'day', name: '日' },
-      { key: 'date', name: '日期' }, { key: 'time', name: '时间' },
-    ] },
-    { key: 'weather', name: '天气', children: [
-      { key: 'name', name: '名称' }, { key: 'degree', name: '温度' }, { key: 'humidity', name: '湿度' },
-      { key: 'pressure', name: '气压' }, { key: 'day_degree_min', name: '最低温度' },
-      { key: 'day_degree_max', name: '最高温度' }, { key: 'wind_power', name: '风级' },
-      { key: 'wind_speed', name: '风速' }, { key: 'wind_direction_name', name: '风向' },
-      { key: 'weather', name: '名称+温度范围+风速' },
-    ] },
-    { key: 'project', name: '项目', children: [
-      { key: 'name', name: '名称' }, { key: 'code', name: '编号' }, { key: 'owner_name', name: '业主' },
-      { key: 'supervisor_name', name: '监理单位' }, { key: 'supervisor_manager', name: '监理单位项目经理' },
-    ] },
-    { key: 'task', name: '任务', children: [
-      { key: 'staff_name', name: '执行人' }, { key: 'mileposts', name: '桩号' },
-    ] },
+    {
+      key: 'datetime',
+      name: '时间',
+      children: [
+        { key: 'year', name: '年' },
+        { key: 'month', name: '月' },
+        { key: 'day', name: '日' },
+        { key: 'date', name: '日期' },
+        { key: 'time', name: '时间' },
+      ],
+    },
+    {
+      key: 'weather',
+      name: '天气',
+      children: [
+        { key: 'name', name: '名称' },
+        { key: 'degree', name: '温度' },
+        { key: 'humidity', name: '湿度' },
+        { key: 'pressure', name: '气压' },
+        { key: 'day_degree_min', name: '最低温度' },
+        { key: 'day_degree_max', name: '最高温度' },
+        { key: 'wind_power', name: '风级' },
+        { key: 'wind_speed', name: '风速' },
+        { key: 'wind_direction_name', name: '风向' },
+        { key: 'weather', name: '名称+温度范围+风速' },
+      ],
+    },
+    {
+      key: 'project',
+      name: '项目',
+      children: [
+        { key: 'name', name: '名称' },
+        { key: 'code', name: '编号' },
+        { key: 'owner_name', name: '业主' },
+        { key: 'supervisor_name', name: '监理单位' },
+        { key: 'supervisor_manager', name: '监理单位项目经理' },
+      ],
+    },
+    {
+      key: 'task',
+      name: '任务',
+      children: [
+        { key: 'staff_name', name: '执行人' },
+        { key: 'mileposts', name: '桩号' },
+      ],
+    },
   ],
 };
 
@@ -108,9 +164,14 @@ function buildFieldTree(fields) {
 }
 
 function formatFormFields() {
-  const _fields = (formData.value.fields || []).map((item) => ({ key: `_${item.id}`, ...item }));
+  const _fields = (formData.value.fields || []).map((item) => ({
+    key: `_${item.id}`,
+    ...item,
+  }));
   const tree = buildFieldTree(_fields);
-  const common = JSON.parse(JSON.stringify(typeModels[props.type] || typeModels[2]));
+  const common = JSON.parse(
+    JSON.stringify(typeModels[props.type] || typeModels[2]),
+  );
   common.forEach((e) => {
     if (e.children?.length) {
       e.children = e.children.map((val) => ({
@@ -150,16 +211,33 @@ const filterFields = ref([
 const formFields = ref([
   { field: 'name', type: 'text', label: '名称', span: 12, required: true },
   { field: 'code', type: 'text', label: '编号', span: 12, required: true },
-  { field: 'file_path', type: 'file', label: '模板文件', span: 24, required: true, attrs: { fileType: 'file', accept: '.docx,.doc' } },
+  {
+    field: 'file_path',
+    type: 'file',
+    label: '模板文件',
+    span: 24,
+    required: true,
+    attrs: { fileType: 'file', accept: '.docx,.doc' },
+  },
   { field: 'is_default', type: 'switch', label: '默认', span: 12 },
 ]);
 
 const gridColumns = ref([
   { field: 'name', title: '名称', minWidth: 160 },
   { field: 'code', title: '编号', width: 120 },
-  { field: 'is_default', title: '默认', width: 80, slots: { default: 'default_is_default' } },
-  { field: 'project.name', title: '项目', minWidth: 120, slots: { default: 'default_project' } },
-  { field: 'created_at', title: '创建时间', width: 160 },
+  {
+    field: 'is_default',
+    title: '默认',
+    width: 80,
+    slots: { default: 'default_is_default' },
+  },
+  {
+    field: 'project.name',
+    title: '项目',
+    minWidth: 120,
+    slots: { default: 'default_project' },
+  },
+  { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 
 const extraQuery = computed(() => ({
@@ -191,7 +269,8 @@ const officeOpen = ref(false);
 const officeDocument = ref(null);
 const officeMode = ref('view');
 const officeCallbackUrl = computed(
-  () => `${import.meta.env.VITE_GLOB_API_URL}/print-templates/${editingItem.value?.id}/file`,
+  () =>
+    `${import.meta.env.VITE_GLOB_API_URL}/print-templates/${editingItem.value?.id}/file`,
 );
 
 function openOffice() {
@@ -229,7 +308,11 @@ watch(
       :fields="formFields"
       :save-format="saveFormat"
       :inline-actions="['view', 'edit', 'delete']"
-      :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
+      :grid-options="{
+        columns: gridColumns,
+        showOverflow: false,
+        columnConfig: { resizable: true },
+      }"
       :open-mode="{ create: 'modal', detail: 'modal' }"
       :form-attrs="{ layout: 'vertical', size: 'medium' }"
       class="p-2"
@@ -243,11 +326,7 @@ watch(
       </template>
 
       <template #form-action>
-        <Button
-          v-if="editingItem.file_path"
-          type="link"
-          @click="openOffice"
-        >
+        <Button v-if="editingItem.file_path" type="link" @click="openOffice">
           {{ rowCan(editingItem, 'edit') ? '编辑' : '查看' }}模板
         </Button>
       </template>

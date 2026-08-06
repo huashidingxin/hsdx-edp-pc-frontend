@@ -173,7 +173,7 @@ const gridColumns = ref([
   { field: 'date', title: '日期', width: 110 },
   { field: 'start_time', title: '开始时间', width: 100 },
   { field: 'end_time', title: '结束时间', width: 100 },
-  { field: 'created_at', title: '创建时间', width: 160 },
+  { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 
 const stateColorMap = { 1: 'blue', 2: 'blue', 3: 'green', 4: 'orange' };
@@ -568,8 +568,8 @@ watch(() => appStore.defaultProject?.id, refreshAll);
 
       <template #form-action>
         <Button v-if="editingItem.submission_id" @click="openPreview">
-预览
-</Button>
+          预览
+        </Button>
         <template v-if="isEditing">
           <Button @click="reset">重置</Button>
           <Button type="primary" @click="save">提交</Button>
@@ -578,10 +578,8 @@ watch(() => appStore.defaultProject?.id, refreshAll);
 
       <template #default_code="{ row }">
         <Tag v-if="row.submission_id" color="blue">
-{{
-          row.submission?.code || '-'
-        }}
-</Tag>
+          {{ row.submission?.code || '-' }}
+        </Tag>
         <span v-else>-</span>
       </template>
 

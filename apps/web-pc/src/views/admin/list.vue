@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue';
 
 import { Tag } from 'antdv-next';
+
 import Resource from '#/api/resource';
 
 const filterFields = ref([
@@ -14,7 +15,13 @@ const filterFields = ref([
 const formFields = ref([
   { field: 'id', type: 'text', label: 'ID', span: 12, displayOnly: true },
   { field: 'name', type: 'text', label: '姓名', span: 12 },
-  { field: 'username', type: 'text', label: '用户名', span: 12, required: true },
+  {
+    field: 'username',
+    type: 'text',
+    label: '用户名',
+    span: 12,
+    required: true,
+  },
   { field: 'mobile', type: 'text', label: '手机号', span: 12 },
   { field: 'email', type: 'text', label: '邮箱', span: 12 },
   {
@@ -36,8 +43,20 @@ const formFields = ref([
       placeholder: '请选择角色；清空角色将恢复为普通用户',
     },
   },
-  { field: 'created_at', type: 'datetime', label: '创建时间', span: 12, displayOnly: true },
-  { field: 'updated_at', type: 'datetime', label: '更新时间', span: 12, displayOnly: true },
+  {
+    field: 'created_at',
+    type: 'datetime',
+    label: '创建时间',
+    span: 12,
+    displayOnly: true,
+  },
+  {
+    field: 'updated_at',
+    type: 'datetime',
+    label: '更新时间',
+    span: 12,
+    displayOnly: true,
+  },
 ]);
 
 const gridColumns = ref([
@@ -46,14 +65,21 @@ const gridColumns = ref([
   { field: 'username', title: '用户名', minWidth: 130 },
   { field: 'mobile', title: '手机号', width: 130, formatter: emptyText },
   { field: 'email', title: '邮箱', minWidth: 170, formatter: emptyText },
-  { field: 'roles', title: '角色', minWidth: 180, slots: { default: 'default_roles' } },
-  { field: 'created_at', title: '创建时间', width: 160 },
+  {
+    field: 'roles',
+    title: '角色',
+    minWidth: 180,
+    slots: { default: 'default_roles' },
+  },
+  { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 
 const formData = ref(null);
 
 function emptyText({ cellValue }) {
-  return cellValue === null || cellValue === undefined || cellValue === '' ? '-' : cellValue;
+  return cellValue === null || cellValue === undefined || cellValue === ''
+    ? '-'
+    : cellValue;
 }
 
 function roleTitle(role) {
@@ -61,16 +87,15 @@ function roleTitle(role) {
 }
 
 async function loadRoles() {
-    try{
-        const api = new Resource('roles');
-        const { data } = await api.list({
-            per_page: 'all',
-        });
-        formFields.value[6].attrs.options = data;
-    }catch(e) {
-        console.log(e)
-    }
-
+  try {
+    const api = new Resource('roles');
+    const { data } = await api.list({
+      per_page: 'all',
+    });
+    formFields.value[6].attrs.options = data;
+  } catch (error) {
+    console.log(error);
+  }
 }
 
 onMounted(() => {
@@ -84,7 +109,11 @@ onMounted(() => {
     v-model="formData"
     :filter-fields="filterFields"
     :fields="formFields"
-    :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
+    :grid-options="{
+      columns: gridColumns,
+      showOverflow: false,
+      columnConfig: { resizable: true },
+    }"
     :open-mode="{ create: 'modal', detail: 'modal' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
     title="管理员管理"
@@ -92,7 +121,11 @@ onMounted(() => {
   >
     <template #default_roles="{ row }">
       <div class="flex flex-wrap gap-1">
-        <Tag v-for="role in row.roles || []" :key="role.id || role.name" color="blue">
+        <Tag
+          v-for="role in row.roles || []"
+          :key="role.id || role.name"
+          color="blue"
+        >
           {{ roleTitle(role) }}
         </Tag>
         <span v-if="!row.roles?.length">-</span>

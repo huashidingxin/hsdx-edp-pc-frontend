@@ -41,16 +41,42 @@ async function loadForms() {
 
 const filterFields = ref([
   { field: 'name', label: '名称', type: 'text', span: 8 },
-  { field: 'form_id', label: '所属表单', type: 'select', span: 8, attrs: { options: [] } },
+  {
+    field: 'form_id',
+    label: '所属表单',
+    type: 'select',
+    span: 8,
+    attrs: { options: [] },
+  },
 ]);
 
 const formFields = ref([
   { field: 'name', type: 'textarea', label: '名称', span: 12, required: true },
-  { field: 'form_id', type: 'select', label: '所属表单', span: 12, required: true, attrs: { options: [] } },
-  { field: 'type', type: 'select', label: '字段类型', span: 12, required: true, attrs: { options: typeOptions } },
+  {
+    field: 'form_id',
+    type: 'select',
+    label: '所属表单',
+    span: 12,
+    required: true,
+    attrs: { options: [] },
+  },
+  {
+    field: 'type',
+    type: 'select',
+    label: '字段类型',
+    span: 12,
+    required: true,
+    attrs: { options: typeOptions },
+  },
   { field: 'hint', type: 'text', label: '填写提示', span: 12 },
   { field: 'placeholder', type: 'text', label: '占位提示', span: 12 },
-  { field: 'options', type: 'combobox', label: '选项列表', span: 12, attrs: { multiple: true, placeholder: '输入选项后按回车新增' } },
+  {
+    field: 'options',
+    type: 'combobox',
+    label: '选项列表',
+    span: 12,
+    attrs: { multiple: true, placeholder: '输入选项后按回车新增' },
+  },
   { field: 'sort', type: 'number', label: '排序', span: 6 },
   { field: 'required', type: 'switch', label: '必填', span: 6 },
   { field: 'failed_proof', type: 'switch', label: '不通过时上传证明', span: 6 },
@@ -63,7 +89,7 @@ const gridColumns = ref([
   { field: 'type', title: '类型', width: 100 },
   { field: 'required', title: '必填', width: 70 },
   { field: 'sort', title: '排序', width: 70 },
-  { field: 'created_at', title: '创建时间', width: 160 },
+  { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 
 onMounted(loadForms);
@@ -76,7 +102,11 @@ onMounted(loadForms);
     :filter-fields="filterFields"
     :fields="formFields"
     :inline-actions="['view', 'edit', 'delete']"
-    :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
+    :grid-options="{
+      columns: gridColumns,
+      showOverflow: false,
+      columnConfig: { resizable: true },
+    }"
     :open-mode="{ create: 'drawer', detail: 'drawer' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
     title="字段配置"

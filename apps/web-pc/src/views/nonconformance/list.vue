@@ -1,18 +1,29 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 
-import { Alert, Button, DatePicker, Input, InputNumber, message, Modal, Select, Tag } from 'antdv-next';
+import {
+  Alert,
+  Button,
+  DatePicker,
+  Input,
+  InputNumber,
+  message,
+  Modal,
+  Select,
+  Tag,
+} from 'antdv-next';
 
+import { requestClient } from '#/api/request';
 import Resource from '#/api/resource';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
-
 import { useAppStore } from '#/store';
-import { requestClient } from '#/api/request';
 
 const appStore = useAppStore();
 
 // 全局选择的项目 ID（"所有项目"时为空），列表请求自动携带
-const currentProjectId = computed(() => appStore.defaultProject?.id || undefined);
+const currentProjectId = computed(
+  () => appStore.defaultProject?.id || undefined,
+);
 const extraQuery = computed(() => ({ project_id: currentProjectId.value }));
 
 const stateOptions = [
@@ -35,25 +46,76 @@ async function loadStakeholders() {
     per_page: 'all',
     project_id: currentProjectId.value,
   });
-  stakeholderOptions.value = (data || []).map((s) => ({ value: s.id, label: s.name }));
+  stakeholderOptions.value = (data || []).map((s) => ({
+    value: s.id,
+    label: s.name,
+  }));
 }
 
 const filterFields = ref([
   { field: 'code', label: '编号', type: 'text', span: 8 },
   { field: 'stakeholder_id', label: '相关方', type: 'slot', span: 8 },
-  { field: 'state', label: '审核状态', type: 'select', span: 8, attrs: { options: stateOptions } },
-  { field: 'rectify_state', label: '整改状态', type: 'select', span: 8, attrs: { options: rectifyOptions } },
+  {
+    field: 'state',
+    label: '审核状态',
+    type: 'select',
+    span: 8,
+    attrs: { options: stateOptions },
+  },
+  {
+    field: 'rectify_state',
+    label: '整改状态',
+    type: 'select',
+    span: 8,
+    attrs: { options: rectifyOptions },
+  },
   { field: 'keyword', label: '关键词', type: 'text', span: 8 },
 ]);
 
 const formFields = ref([
   { field: 'code', type: 'text', label: '编号', span: 12 },
-  { field: 'stakeholder_id', type: 'slot', label: '相关方', span: 12, required: true },
-  { field: 'state_label', type: 'text', label: '审核状态', span: 12, displayOnly: true },
-  { field: 'rectify_state', type: 'select', label: '整改状态', span: 12, attrs: { options: rectifyOptions } },
-  { field: 'content', type: 'textarea', label: '内容', span: 24, required: true },
-  { field: 'proof', type: 'image', label: '现场证据', span: 24, attrs: { multiple: true } },
-  { field: 'correction', type: 'image', label: '整改证据', span: 24, attrs: { multiple: true } },
+  {
+    field: 'stakeholder_id',
+    type: 'slot',
+    label: '相关方',
+    span: 12,
+    required: true,
+  },
+  {
+    field: 'state_label',
+    type: 'text',
+    label: '审核状态',
+    span: 12,
+    displayOnly: true,
+  },
+  {
+    field: 'rectify_state',
+    type: 'select',
+    label: '整改状态',
+    span: 12,
+    attrs: { options: rectifyOptions },
+  },
+  {
+    field: 'content',
+    type: 'textarea',
+    label: '内容',
+    span: 24,
+    required: true,
+  },
+  {
+    field: 'proof',
+    type: 'image',
+    label: '现场证据',
+    span: 24,
+    attrs: { multiple: true },
+  },
+  {
+    field: 'correction',
+    type: 'image',
+    label: '整改证据',
+    span: 24,
+    attrs: { multiple: true },
+  },
   { field: 'notice', type: 'image', label: '通知单', span: 12 },
   { field: 'notice_reply', type: 'image', label: '通知回复单', span: 12 },
   { field: 'audits', type: 'slot', label: '审核历史', span: 24 },
@@ -89,7 +151,7 @@ const gridColumns = ref([
   },
   { field: 'content', title: '内容', minWidth: 200 },
   { field: 'creator.name', title: '创建人', width: 100 },
-  { field: 'created_at', title: '创建时间', width: 160 },
+  { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 
 function saveFormat(payload) {
@@ -102,8 +164,10 @@ function saveFormat(payload) {
 
 // 最近一次审核不通过时表单顶部警告
 function lastAuditRejected(audits) {
-  if (!audits || !audits.length) return null;
-  return audits[audits.length - 1]?.status === 0 ? audits[audits.length - 1] : null;
+  if (!audits || audits.length === 0) return null;
+  return audits[audits.length - 1]?.status === 0
+    ? audits[audits.length - 1]
+    : null;
 }
 
 // 当前筛选值（来自 AppCrudTable 筛选栏）
@@ -132,8 +196,12 @@ function openExport() {
 async function submitExport() {
   const params = {};
   if (exportForm.project_id) params.project_id = exportForm.project_id;
-  if (exportForm.state !== undefined && exportForm.state !== null) params.state = exportForm.state;
-  if (exportForm.rectify_state !== undefined && exportForm.rectify_state !== null) {
+  if (exportForm.state !== undefined && exportForm.state !== null)
+    params.state = exportForm.state;
+  if (
+    exportForm.rectify_state !== undefined &&
+    exportForm.rectify_state !== null
+  ) {
     params.rectify_state = exportForm.rectify_state;
   }
   if (exportForm.keyword) params.keyword = exportForm.keyword;
@@ -182,7 +250,7 @@ function pollExport(id) {
         } else if (d.status === 3) {
           clearInterval(timer);
           message.destroy();
-          message.error('导出失败：' + (d.error_message || ''));
+          message.error(`导出失败：${d.error_message || ''}`);
         }
       })
       .catch(() => {});
@@ -202,7 +270,11 @@ watch(() => appStore.defaultProject?.id, loadStakeholders);
     :list-scope="2"
     permission-name="nonconformance"
     :inline-actions="['view', 'edit', 'audit']"
-    :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
+    :grid-options="{
+      columns: gridColumns,
+      showOverflow: false,
+      columnConfig: { resizable: true },
+    }"
     :open-mode="{ create: 'drawer', detail: 'drawer' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
     :save-format="saveFormat"
@@ -215,10 +287,18 @@ watch(() => appStore.defaultProject?.id, loadStakeholders);
     </template>
 
     <template #default_state="{ row }">
-      <Tag :color="stateColors[row.state] || 'default'">{{ row.state_label || '-' }}</Tag>
+      <Tag :color="stateColors[row.state] || 'default'">
+{{
+        row.state_label || '-'
+      }}
+</Tag>
     </template>
     <template #default_rectify="{ row }">
-      <Tag :color="rectifyColors[row.rectify_state] || 'default'">{{ row.rectify_state_label || '-' }}</Tag>
+      <Tag :color="rectifyColors[row.rectify_state] || 'default'">
+{{
+        row.rectify_state_label || '-'
+      }}
+</Tag>
     </template>
 
     <template #filter_stakeholder_id="{ modelValue, update }">
@@ -258,10 +338,18 @@ watch(() => appStore.defaultProject?.id, loadStakeholders);
         />
         <div v-for="(a, i) in modelValue" :key="i" class="rounded border p-2">
           <div>
-            <Tag :color="a.status ? 'green' : 'red'">{{ a.status ? '通过' : '不通过' }}</Tag>
-            <span class="ml-2 text-sm text-gray-500">{{ a.audit_time || a.created_at }}</span>
+            <Tag :color="a.status ? 'green' : 'red'">
+{{
+              a.status ? '通过' : '不通过'
+            }}
+</Tag>
+            <span class="ml-2 text-sm text-gray-500">{{
+              a.audit_time || a.created_at
+            }}</span>
           </div>
-          <div class="text-sm">审核人：{{ a.auditor_name || a.user?.name || '-' }}</div>
+          <div class="text-sm">
+            审核人：{{ a.auditor_name || a.user?.name || '-' }}
+          </div>
           <div v-if="a.reason" class="text-sm text-red-500">{{ a.reason }}</div>
         </div>
       </div>
@@ -302,7 +390,11 @@ watch(() => appStore.defaultProject?.id, loadStakeholders);
       </div>
       <div>
         <label class="mb-1 block text-sm text-gray-500">项目ID</label>
-        <InputNumber v-model:value="exportForm.project_id" style="width: 100%" placeholder="全部" />
+        <InputNumber
+          v-model:value="exportForm.project_id"
+          style="width: 100%"
+          placeholder="全部"
+        />
       </div>
       <div>
         <label class="mb-1 block text-sm text-gray-500">关键词</label>

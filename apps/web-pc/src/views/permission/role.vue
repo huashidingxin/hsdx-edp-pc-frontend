@@ -14,9 +14,21 @@ const filterFields = ref([
 ]);
 
 const formFields = ref([
-  { field: 'name', type: 'text', label: '编码', span: 12, required: true,
-    attrs: { placeholder: '如 admin / manager' } },
-  { field: 'display_name', type: 'text', label: '名称', span: 12, required: true },
+  {
+    field: 'name',
+    type: 'text',
+    label: '编码',
+    span: 12,
+    required: true,
+    attrs: { placeholder: '如 admin / manager' },
+  },
+  {
+    field: 'display_name',
+    type: 'text',
+    label: '名称',
+    span: 12,
+    required: true,
+  },
   {
     field: 'type',
     type: 'select',
@@ -35,9 +47,19 @@ const gridColumns = ref([
   { field: 'id', title: 'ID', width: 70 },
   { field: 'name', title: '编码', minWidth: 160 },
   { field: 'display_name', title: '名称', minWidth: 160 },
-  { field: 'type', title: '类型', width: 90, slots: { default: 'default_type' } },
-  { field: 'scope', title: '作用域', width: 90, slots: { default: 'default_scope' } },
-  { field: 'created_at', title: '创建时间', width: 160 },
+  {
+    field: 'type',
+    title: '类型',
+    width: 90,
+    slots: { default: 'default_type' },
+  },
+  {
+    field: 'scope',
+    title: '作用域',
+    width: 90,
+    slots: { default: 'default_scope' },
+  },
+  { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 
 const typeMap = { system: '平台角色', project: '项目角色' };
@@ -125,7 +147,9 @@ function descendantsOf(groupKey, id) {
 
 async function loadPermissions() {
   try {
-    const { data } = await new Resource('permissions').list({ per_page: 'all' });
+    const { data } = await new Resource('permissions').list({
+      per_page: 'all',
+    });
     allPermissions.value = data || [];
   } catch (error) {
     console.error(error);
@@ -170,7 +194,9 @@ async function openAssign(row) {
 
 /** 严格模式下勾父级联子孙：勾选补齐子孙、取消同步清掉子孙 */
 function onGroupCheck(groupKey, checkedInfo, e) {
-  const base = Array.isArray(checkedInfo) ? checkedInfo : checkedInfo?.checked || [];
+  const base = Array.isArray(checkedInfo)
+    ? checkedInfo
+    : checkedInfo?.checked || [];
   const set = new Set(base);
   const nodeKey = e?.node?.key;
   if (nodeKey !== undefined) {
@@ -235,14 +261,22 @@ onMounted(loadPermissions);
       :actions-config="actionsConfig"
       :inline-actions="['view', 'edit', 'assign_permissions', 'delete']"
       permission-name="role"
-      :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
+      :grid-options="{
+        columns: gridColumns,
+        showOverflow: false,
+        columnConfig: { resizable: true },
+      }"
       :open-mode="{ create: 'modal', detail: 'modal' }"
       :form-attrs="{ layout: 'vertical', size: 'medium' }"
       title="角色管理"
       class="p-4"
     >
       <template #default_type="{ row }">
-        <Tag :color="row.type === 'project' ? 'blue' : 'green'">{{ typeText(row.type) }}</Tag>
+        <Tag :color="row.type === 'project' ? 'blue' : 'green'">
+{{
+          typeText(row.type)
+        }}
+</Tag>
       </template>
       <template #default_scope="{ row }">
         <Tag color="purple">{{ scopeText(row.scope) }}</Tag>
@@ -255,40 +289,49 @@ onMounted(loadPermissions);
       width="560"
       @close="assignOpen = false"
     >
-    <div class="mb-2 text-xs text-gray-500">
-      权限范围：{{ assignRoleScope === 'platform' ? '平台权限（平台角色专用）' : '项目权限（项目角色专用）' }}。
-      勾选父节点将自动勾选其全部子权限；
-      取消勾选仅影响该节点及其子孙，父节点可独立保留。
-    </div>
-    <Tabs v-model:active-key="activeTab">
-      <TabPane v-for="g in PERMISSION_GROUPS" :key="g.key" :tab="g.label">
-        <div class="mb-2 flex gap-2">
-          <Button size="small" @click="checkAll(g.key)">全选</Button>
-          <Button size="small" @click="uncheckAll(g.key)">清空</Button>
-          <span class="text-xs leading-6 text-gray-400">
-            已选 {{ checkedByGroup[g.key].length }} / {{ groupData[g.key]?.list.length || 0 }}
-          </span>
-        </div>
-        <div style="height: calc(100vh - 260px); overflow-y: auto" class="rounded border border-gray-200 dark:border-gray-600">
-          <Tree
-            :checked-keys="checkedByGroup[g.key]"
-            :tree-data="groupData[g.key]?.tree || []"
-            :expanded-keys="expandedByGroup[g.key]"
-            checkable
-            check-strictly
-            block-node
-            @check="(keys, e) => onGroupCheck(g.key, keys, e)"
-            @expand="(keys) => (expandedByGroup[g.key] = keys)"
-          />
-        </div>
-      </TabPane>
-    </Tabs>
-    <template #footer>
-      <div class="flex justify-end gap-2">
-        <Button @click="assignOpen = false">取消</Button>
-        <Button type="primary" :loading="assignLoading" @click="saveAssign">保存</Button>
+      <div class="mb-2 text-xs text-gray-500">
+        权限范围：{{
+          assignRoleScope === 'platform'
+            ? '平台权限（平台角色专用）'
+            : '项目权限（项目角色专用）'
+        }}。 勾选父节点将自动勾选其全部子权限；
+        取消勾选仅影响该节点及其子孙，父节点可独立保留。
       </div>
-    </template>
-  </Drawer>
-</Page>
+      <Tabs v-model:active-key="activeTab">
+        <TabPane v-for="g in PERMISSION_GROUPS" :key="g.key" :tab="g.label">
+          <div class="mb-2 flex gap-2">
+            <Button size="small" @click="checkAll(g.key)">全选</Button>
+            <Button size="small" @click="uncheckAll(g.key)">清空</Button>
+            <span class="text-xs leading-6 text-gray-400">
+              已选 {{ checkedByGroup[g.key].length }} /
+              {{ groupData[g.key]?.list.length || 0 }}
+            </span>
+          </div>
+          <div
+            style="height: calc(100vh - 260px); overflow-y: auto"
+            class="rounded border border-gray-200 dark:border-gray-600"
+          >
+            <Tree
+              :checked-keys="checkedByGroup[g.key]"
+              :tree-data="groupData[g.key]?.tree || []"
+              :expanded-keys="expandedByGroup[g.key]"
+              checkable
+              check-strictly
+              block-node
+              @check="(keys, e) => onGroupCheck(g.key, keys, e)"
+              @expand="(keys) => (expandedByGroup[g.key] = keys)"
+            />
+          </div>
+        </TabPane>
+      </Tabs>
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <Button @click="assignOpen = false">取消</Button>
+          <Button type="primary" :loading="assignLoading" @click="saveAssign">
+保存
+</Button>
+        </div>
+      </template>
+    </Drawer>
+  </Page>
 </template>

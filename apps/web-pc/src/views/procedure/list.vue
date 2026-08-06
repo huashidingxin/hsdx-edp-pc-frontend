@@ -231,7 +231,7 @@ const gridColumns = ref([
     minWidth: 140,
     slots: { default: 'default_category' },
   },
-  { field: 'created_at', title: '创建时间', width: 160 },
+  { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 
 onMounted(() => {

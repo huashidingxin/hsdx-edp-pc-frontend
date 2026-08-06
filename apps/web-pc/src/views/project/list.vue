@@ -157,7 +157,7 @@ const gridColumns = ref([
   },
   { field: 'unit_project_count', title: '单位工程', width: 90 },
   { field: 'milepost_count', title: '桩号', width: 80 },
-  { field: 'created_at', title: '创建时间', width: 160 },
+  { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 
 const stateColorMap = { 1: 'orange', 2: 'blue', 3: 'green' };

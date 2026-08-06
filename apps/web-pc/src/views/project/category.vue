@@ -24,7 +24,7 @@ const gridColumns = ref([
     slots: { default: 'default_parent' },
   },
   { field: 'children_count', title: '子分类数', width: 100 },
-  { field: 'created_at', title: '创建时间', width: 160 },
+  { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 
 function saveFormat(payload) {
@@ -45,7 +45,11 @@ onMounted(() => {});
     :fields="formFields"
     :save-format="saveFormat"
     :inline-actions="['view', 'edit', 'delete']"
-    :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
+    :grid-options="{
+      columns: gridColumns,
+      showOverflow: false,
+      columnConfig: { resizable: true },
+    }"
     :open-mode="{ create: 'drawer', detail: 'drawer' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
     title="项目分类"

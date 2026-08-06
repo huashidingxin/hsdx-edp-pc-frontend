@@ -90,7 +90,7 @@ const gridColumns = ref([
     width: 100,
     slots: { default: 'default_status' },
   },
-  { field: 'created_at', title: '创建时间', width: 160 },
+  { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 
 const leaveTypeName = { 1: '请假', 2: '借调', 3: '撤离' };
@@ -513,14 +513,14 @@ onMounted(() => {
       <template #toolbar-append>
         <div class="flex items-center gap-2">
           <Button size="small" type="primary" @click="openBatchAdd">
-批量添加成员
-</Button>
+            批量添加成员
+          </Button>
           <Button size="small" type="primary" ghost @click="openBatchLeave">
-批量离岗
-</Button>
+            批量离岗
+          </Button>
           <Button size="small" danger @click="submitBatchCancel">
-批量撤销离岗
-</Button>
+            批量撤销离岗
+          </Button>
         </div>
       </template>
 

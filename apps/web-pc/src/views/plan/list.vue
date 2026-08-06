@@ -4,8 +4,8 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { DatePicker, message, Tag } from 'antdv-next';
 
 import Resource from '#/api/resource';
-import AppCancelDialog from '#/components/AppCancelDialog.vue';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
+import AppCancelDialog from '#/components/AppCancelDialog.vue';
 import { useTaskFormLoader } from '#/composables/use-task-form';
 import { useAppStore } from '#/store';
 
@@ -26,16 +26,36 @@ const {
 const extraQuery = computed(() => ({ project_id: currentProjectId.value }));
 
 const gridColumns = ref([
-  { field: 'start_date', title: '日期', width: 190, slots: { default: 'default_date' } },
-  { field: 'start_time', title: '时间', width: 160, slots: { default: 'default_time' } },
-  { field: 'executors', title: '执行人', minWidth: 160, slots: { default: 'default_executors' } },
+  {
+    field: 'start_date',
+    title: '日期',
+    width: 190,
+    slots: { default: 'default_date' },
+  },
+  {
+    field: 'start_time',
+    title: '时间',
+    width: 160,
+    slots: { default: 'default_time' },
+  },
+  {
+    field: 'executors',
+    title: '执行人',
+    minWidth: 160,
+    slots: { default: 'default_executors' },
+  },
   { field: 'creator.name', title: '指派人', minWidth: 100 },
-  { field: 'state', title: '状态', width: 100, slots: { default: 'default_state' } },
+  {
+    field: 'state',
+    title: '状态',
+    width: 100,
+    slots: { default: 'default_state' },
+  },
   { field: 'project.name', title: '项目', minWidth: 150 },
   { field: 'unitProject.name', title: '单位工程', minWidth: 150 },
   { field: 'content', title: '内容', minWidth: 180 },
   { field: 'measure.name', title: '监理方式', width: 100 },
-  { field: 'created_at', title: '创建时间', width: 160 },
+  { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 
 const stateColorMap = { 1: 'blue', 2: 'blue', 3: 'green', 4: 'orange' };
@@ -75,7 +95,11 @@ onMounted(loadAll);
     :detail-format="detailFormat"
     :save-format="saveFormat"
     :fields="formFields"
-    :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
+    :grid-options="{
+      columns: gridColumns,
+      showOverflow: false,
+      columnConfig: { resizable: true },
+    }"
     :open-mode="{ create: 'drawer', detail: 'drawer' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
     title="计划任务"
@@ -94,7 +118,10 @@ onMounted(loadAll);
 
     <template #field_form>
       <div v-if="editingItem?.measure_id" class="text-sm text-gray-600">
-        任务表单：{{ procedureForms[editingItem.measure_id]?.form?.name || '未配置该监理方式的表单' }}
+        任务表单：{{
+          procedureForms[editingItem.measure_id]?.form?.name ||
+          '未配置该监理方式的表单'
+        }}
       </div>
     </template>
 
@@ -116,7 +143,9 @@ onMounted(loadAll);
 
     <template #default_executors="{ row }">
       <span class="text-sm">
-        {{ row.executors?.map((e) => e.user?.name || e.name).join('、') || '-' }}
+        {{
+          row.executors?.map((e) => e.user?.name || e.name).join('、') || '-'
+        }}
       </span>
     </template>
 

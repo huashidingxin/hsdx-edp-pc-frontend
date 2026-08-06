@@ -26,9 +26,21 @@ const filterFields = ref([
 ]);
 
 const formFields = ref([
-  { field: 'name', type: 'text', label: '编码', span: 12, required: true,
-    attrs: { placeholder: '如 menu.user / user.create' } },
-  { field: 'display_name', type: 'text', label: '名称', span: 12, required: true },
+  {
+    field: 'name',
+    type: 'text',
+    label: '编码',
+    span: 12,
+    required: true,
+    attrs: { placeholder: '如 menu.user / user.create' },
+  },
+  {
+    field: 'display_name',
+    type: 'text',
+    label: '名称',
+    span: 12,
+    required: true,
+  },
   {
     field: 'type',
     type: 'select',
@@ -59,9 +71,19 @@ const gridColumns = ref([
   { field: 'id', title: 'ID', width: 70 },
   { field: 'display_name', title: '名称', minWidth: 160 },
   { field: 'name', title: '编码', minWidth: 200 },
-  { field: 'type', title: '类型', width: 90, slots: { default: 'default_type' } },
-  { field: 'parent', title: '父级', minWidth: 140, slots: { default: 'default_parent' } },
-  { field: 'created_at', title: '创建时间', width: 160 },
+  {
+    field: 'type',
+    title: '类型',
+    width: 90,
+    slots: { default: 'default_type' },
+  },
+  {
+    field: 'parent',
+    title: '父级',
+    minWidth: 140,
+    slots: { default: 'default_parent' },
+  },
+  { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 
 const typeMap = { 1: 'PC 菜单', 2: '功能', 4: 'APP 菜单' };
@@ -72,8 +94,13 @@ function typeText(t) {
 
 async function loadPermissions() {
   try {
-    const { data } = await new Resource('permissions').list({ per_page: 'all' });
-    const items = (data || []).map((p) => ({ id: p.id, display_name: p.display_name }));
+    const { data } = await new Resource('permissions').list({
+      per_page: 'all',
+    });
+    const items = (data || []).map((p) => ({
+      id: p.id,
+      display_name: p.display_name,
+    }));
     const field = formFields.value.find((f) => f.field === 'parent_id');
     if (field) field.attrs.items = items;
   } catch (error) {
@@ -90,14 +117,22 @@ onMounted(loadPermissions);
     :filter-fields="filterFields"
     :fields="formFields"
     permission-name="permission"
-    :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true }}"
+    :grid-options="{
+      columns: gridColumns,
+      showOverflow: false,
+      columnConfig: { resizable: true },
+    }"
     :open-mode="{ create: 'modal', detail: 'modal' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
     title="权限管理"
     class="p-4"
   >
     <template #default_type="{ row }">
-      <Tag :color="typeColorMap[row.type] || 'default'">{{ typeText(row.type) }}</Tag>
+      <Tag :color="typeColorMap[row.type] || 'default'">
+{{
+        typeText(row.type)
+      }}
+</Tag>
     </template>
     <template #default_parent="{ row }">
       {{ row.parent?.display_name || '-' }}

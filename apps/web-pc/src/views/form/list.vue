@@ -13,7 +13,10 @@ const editingItem = ref({});
 
 const categories = ref([]);
 async function loadCategories() {
-  const { data } = await new Resource('categories').list({ per_page: 'all', type: 'project' });
+  const { data } = await new Resource('categories').list({
+    per_page: 'all',
+    type: 'project',
+  });
   categories.value = (data || []).map((c) => ({ value: c.id, label: c.name }));
   const f = formFields.value.find((x) => x.field === 'project_category_id');
   if (f) f.attrs.options = categories.value;
@@ -30,8 +33,20 @@ const typeOptions = [
 
 const filterFields = ref([
   { field: 'name', label: '名称', type: 'text', span: 8 },
-  { field: 'project_category_id', label: '项目分类', type: 'select', span: 8, attrs: { options: [] } },
-  { field: 'type', label: '类型', type: 'select', span: 8, attrs: { options: typeOptions } },
+  {
+    field: 'project_category_id',
+    label: '项目分类',
+    type: 'select',
+    span: 8,
+    attrs: { options: [] },
+  },
+  {
+    field: 'type',
+    label: '类型',
+    type: 'select',
+    span: 8,
+    attrs: { options: typeOptions },
+  },
 ]);
 
 const formFields = ref([
@@ -43,16 +58,28 @@ const formFields = ref([
     span: 12,
     attrs: { options: [] },
   },
-  { field: 'type', type: 'select', label: '类型', span: 12, required: true, attrs: { options: typeOptions } },
+  {
+    field: 'type',
+    type: 'select',
+    label: '类型',
+    span: 12,
+    required: true,
+    attrs: { options: typeOptions },
+  },
   { field: 'setting', type: 'slot', label: '表单设置', span: 24 },
 ]);
 
 const gridColumns = ref([
   { field: 'name', title: '名称', minWidth: 200 },
-  { field: 'type_desc', title: '类型', width: 100, slots: { default: 'default_type' } },
+  {
+    field: 'type_desc',
+    title: '类型',
+    width: 100,
+    slots: { default: 'default_type' },
+  },
   { field: 'category.name', title: '项目分类', minWidth: 140 },
   { field: 'template_count', title: '模板数', width: 100 },
-  { field: 'created_at', title: '创建时间', width: 160 },
+  { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 
 // 文档表单（type=4）填写频率设置
@@ -73,7 +100,10 @@ const weekDayOptions = [
   { value: 6, label: '周六' },
   { value: 0, label: '周日' },
 ];
-const dayIndexOptions = Array.from({ length: 31 }, (_, i) => ({ value: i + 1, label: `${i + 1}日` }));
+const dayIndexOptions = Array.from({ length: 31 }, (_, i) => ({
+  value: i + 1,
+  label: `${i + 1}日`,
+}));
 
 const formSetting = ref({
   frequency: 'monthly',
@@ -90,7 +120,12 @@ function loadSettingFromEdit(item) {
         day_index: item.setting.day_index || 25,
         deadline_time: item.setting.deadline_time || '20:00:00',
       }
-    : { frequency: 'monthly', interval: 1, day_index: 25, deadline_time: '20:00:00' };
+    : {
+        frequency: 'monthly',
+        interval: 1,
+        day_index: 25,
+        deadline_time: '20:00:00',
+      };
 }
 
 function saveFormat(payload) {
@@ -108,7 +143,7 @@ watch(
     if (!id) return;
     loadSettingFromEdit(editingItem.value);
     formFieldListKey.value += 1;
-  }
+  },
 );
 
 loadCategories();
@@ -122,7 +157,11 @@ loadCategories();
     :fields="formFields"
     permission-name="form"
     :inline-actions="['view', 'edit']"
-    :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
+    :grid-options="{
+      columns: gridColumns,
+      showOverflow: false,
+      columnConfig: { resizable: true },
+    }"
     :open-mode="{ create: 'drawer', detail: 'drawer' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
     :save-format="saveFormat"
@@ -137,20 +176,40 @@ loadCategories();
       <div v-if="editingItem.type === 4" class="grid grid-cols-12 gap-4">
         <div class="col-span-3">
           <label class="mb-1 block text-sm text-gray-500">填写频率</label>
-          <Select v-model:value="formSetting.frequency" :options="frequencyOptions" style="width: 100%" />
+          <Select
+            v-model:value="formSetting.frequency"
+            :options="frequencyOptions"
+            style="width: 100%"
+          />
         </div>
         <div v-if="formSetting.frequency === 'weekly'" class="col-span-2">
           <label class="mb-1 block text-sm text-gray-500">星期</label>
-          <Select v-model:value="formSetting.day_index" :options="weekDayOptions" style="width: 100%" />
+          <Select
+            v-model:value="formSetting.day_index"
+            :options="weekDayOptions"
+            style="width: 100%"
+          />
         </div>
         <div
-          v-if="formSetting.frequency === 'monthly' || formSetting.frequency === 'yearly'"
+          v-if="
+            formSetting.frequency === 'monthly' ||
+            formSetting.frequency === 'yearly'
+          "
           class="col-span-2"
         >
           <label class="mb-1 block text-sm text-gray-500">截止日期</label>
-          <Select v-model:value="formSetting.day_index" :options="dayIndexOptions" style="width: 100%" />
+          <Select
+            v-model:value="formSetting.day_index"
+            :options="dayIndexOptions"
+            style="width: 100%"
+          />
         </div>
-        <div v-if="formSetting.frequency !== 'start' && formSetting.frequency !== 'end'" class="col-span-2">
+        <div
+          v-if="
+            formSetting.frequency !== 'start' && formSetting.frequency !== 'end'
+          "
+          class="col-span-2"
+        >
           <label class="mb-1 block text-sm text-gray-500">截止时间</label>
           <input
             v-model="formSetting.deadline_time"
@@ -164,7 +223,11 @@ loadCategories();
     <template #form-default>
       <div v-if="editingItem.id" class="mt-2 space-y-4">
         <FormFieldList :key="formFieldListKey" :form-id="editingItem.id" />
-        <FormTemplateList :key="`tpl-${formFieldListKey}`" :form-id="editingItem.id" :type="editingItem.type" />
+        <FormTemplateList
+          :key="`tpl-${formFieldListKey}`"
+          :form-id="editingItem.id"
+          :type="editingItem.type"
+        />
       </div>
     </template>
   </AppCrudTable>

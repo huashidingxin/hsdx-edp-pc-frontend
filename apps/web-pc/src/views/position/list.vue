@@ -7,7 +7,9 @@ import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
 const departments = ref([]);
 async function loadDepartments() {
   try {
-    const { data } = await new Resource('departments').list({ per_page: 'all' });
+    const { data } = await new Resource('departments').list({
+      per_page: 'all',
+    });
     departments.value = data || [];
     const field = formFields.value.find((f) => f.field === 'department_id');
     if (field) field.attrs.options = departments.value;
@@ -49,7 +51,7 @@ const gridColumns = ref([
     slots: { default: 'default_department' },
   },
   { field: 'remarks', title: '备注', minWidth: 200 },
-  { field: 'created_at', title: '创建时间', width: 160 },
+  { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 
 onMounted(loadDepartments);
@@ -61,7 +63,11 @@ onMounted(loadDepartments);
     :filter-fields="filterFields"
     :fields="formFields"
     permission-name="position"
-    :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
+    :grid-options="{
+      columns: gridColumns,
+      showOverflow: false,
+      columnConfig: { resizable: true },
+    }"
     :open-mode="{ create: 'modal', detail: 'modal' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
     title="职位管理"

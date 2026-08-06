@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, ref } from 'vue';
 
-import { Button, message, Modal, Select, Tag } from 'antdv-next';
+import { Button, message, Modal, Tag } from 'antdv-next';
 
 import Resource from '#/api/resource';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
@@ -28,9 +28,24 @@ const filterFields = ref([
 ]);
 
 const formFields = ref([
-  { field: 'username', type: 'text', label: '用户名', span: 12, required: true },
-  { field: 'password', type: 'text', label: '密码', span: 12,
-    attrs: { type: 'password', autocomplete: 'new-password', placeholder: '留空则不修改' } },
+  {
+    field: 'username',
+    type: 'text',
+    label: '用户名',
+    span: 12,
+    required: true,
+  },
+  {
+    field: 'password',
+    type: 'text',
+    label: '密码',
+    span: 12,
+    attrs: {
+      type: 'password',
+      autocomplete: 'new-password',
+      placeholder: '留空则不修改',
+    },
+  },
   { field: 'name', type: 'text', label: '姓名', span: 12, required: true },
   { field: 'mobile', type: 'text', label: '手机号', span: 12 },
   { field: 'email', type: 'text', label: '邮箱', span: 12 },
@@ -42,7 +57,11 @@ const formFields = ref([
     type: 'select',
     label: '职位',
     span: 12,
-    attrs: { allowClear: true, fieldNames: { label: 'name', value: 'id' }, placeholder: '请选择职位' },
+    attrs: {
+      allowClear: true,
+      fieldNames: { label: 'name', value: 'id' },
+      placeholder: '请选择职位',
+    },
   },
   { field: 'joining_date', type: 'datetime', label: '入职日期', span: 12 },
   {
@@ -62,15 +81,35 @@ const formFields = ref([
 ]);
 
 const gridColumns = ref([
-  { field: 'avatar', title: '头像', width: 70, slots: { default: 'default_avatar' } },
+  {
+    field: 'avatar',
+    title: '头像',
+    width: 70,
+    slots: { default: 'default_avatar' },
+  },
   { field: 'name', title: '姓名', minWidth: 100 },
   { field: 'username', title: '用户名', minWidth: 120 },
   { field: 'mobile', title: '手机号', width: 130, formatter: emptyText },
   { field: 'email', title: '邮箱', minWidth: 160, formatter: emptyText },
-  { field: 'department', title: '部门', minWidth: 120, slots: { default: 'default_department' } },
-  { field: 'position', title: '职位', minWidth: 120, slots: { default: 'default_position' } },
-  { field: 'state', title: '状态', width: 90, slots: { default: 'default_state' } },
-  { field: 'created_at', title: '创建时间', width: 160 },
+  {
+    field: 'department',
+    title: '部门',
+    minWidth: 120,
+    slots: { default: 'default_department' },
+  },
+  {
+    field: 'position',
+    title: '职位',
+    minWidth: 120,
+    slots: { default: 'default_position' },
+  },
+  {
+    field: 'state',
+    title: '状态',
+    width: 90,
+    slots: { default: 'default_state' },
+  },
+  { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 
 function emptyText({ cellValue }) {
@@ -136,8 +175,8 @@ const batchSearchText = ref('');
 const filteredBatchOptions = computed(() => {
   const text = batchSearchText.value.toLowerCase();
   if (!text) return batchOptions.value;
-  return batchOptions.value.filter(opt => 
-    opt.label?.toLowerCase().includes(text)
+  return batchOptions.value.filter((opt) =>
+    opt.label?.toLowerCase().includes(text),
   );
 });
 
@@ -159,10 +198,10 @@ function closeBatchDropdown(e) {
 
 function toggleBatchOption(id) {
   const index = batchSelected.value.indexOf(id);
-  if (index !== -1) {
-    batchSelected.value.splice(index, 1);
-  } else {
+  if (index === -1) {
     batchSelected.value.push(id);
+  } else {
+    batchSelected.value.splice(index, 1);
   }
 }
 
@@ -225,7 +264,11 @@ onMounted(loadPositions);
     :fields="formFields"
     :actions-config="actionsConfig"
     permission-name="staff"
-    :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
+    :grid-options="{
+      columns: gridColumns,
+      showOverflow: false,
+      columnConfig: { resizable: true },
+    }"
     :open-mode="{ create: 'modal', detail: 'modal' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
     title="员工管理"
@@ -235,7 +278,11 @@ onMounted(loadPositions);
       <Button type="primary" @click="openBatch">批量离职</Button>
     </template>
     <template #default_avatar="{ row }">
-      <img v-if="row.avatar" :src="row.avatar" class="h-8 w-8 rounded-full object-cover" />
+      <img
+        v-if="row.avatar"
+        :src="row.avatar"
+        class="h-8 w-8 rounded-full object-cover"
+      />
       <span v-else>-</span>
     </template>
     <template #default_department="{ row }">
@@ -269,7 +316,7 @@ onMounted(loadPositions);
             :key="id"
             class="inline-flex items-center rounded bg-blue-100 pl-2 pr-1 text-sm text-blue-800"
           >
-            {{ batchOptions.find(opt => opt.value === id)?.label || id }}
+            {{ batchOptions.find((opt) => opt.value === id)?.label || id }}
             <button
               class="ml-1 rounded-full p-0.5 hover:bg-blue-200"
               @click.stop="removeBatchSelection(id)"
@@ -316,19 +363,34 @@ onMounted(loadPositions);
               {{ option.label?.charAt(0) || '?' }}
             </div>
             <div>
-              <div class="text-sm font-medium text-gray-800">{{ option.label }}</div>
+              <div class="text-sm font-medium text-gray-800">
+                {{ option.label }}
+              </div>
             </div>
           </div>
           <div
             v-if="batchSelected.includes(option.value)"
             class="flex h-5 w-5 items-center justify-center rounded-full bg-blue-500"
           >
-            <svg class="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+            <svg
+              class="h-3 w-3 text-white"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M5 13l4 4L19 7"
+              />
             </svg>
           </div>
         </div>
-        <div v-if="filteredBatchOptions.length === 0" class="p-4 text-center text-gray-500">
+        <div
+          v-if="filteredBatchOptions.length === 0"
+          class="p-4 text-center text-gray-500"
+        >
           暂无数据
         </div>
       </div>

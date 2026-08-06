@@ -90,7 +90,7 @@ const gridColumns = ref([
     width: 90,
     slots: { default: 'default_status' },
   },
-  { field: 'created_at', title: '创建时间', width: 160 },
+  { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 
 onMounted(() => {

@@ -37,24 +37,59 @@ async function loadForms() {
 
 const filterFields = ref([
   { field: 'name', label: '名称', type: 'text', span: 8 },
-  { field: 'printable_id', label: '所属表单', type: 'select', span: 8, attrs: { options: [] } },
+  {
+    field: 'printable_id',
+    label: '所属表单',
+    type: 'select',
+    span: 8,
+    attrs: { options: [] },
+  },
 ]);
 
 const formFields = ref([
   { field: 'name', type: 'text', label: '名称', span: 12, required: true },
   { field: 'code', type: 'text', label: '编号', span: 12, required: true },
-  { field: 'printable_id', type: 'select', label: '所属表单', span: 12, required: true, attrs: { options: [] } },
-  { field: 'file_path', type: 'file', label: '模板文件', span: 24, required: true, attrs: { fileType: 'file', accept: '.docx,.doc' } },
+  {
+    field: 'printable_id',
+    type: 'select',
+    label: '所属表单',
+    span: 12,
+    required: true,
+    attrs: { options: [] },
+  },
+  {
+    field: 'file_path',
+    type: 'file',
+    label: '模板文件',
+    span: 24,
+    required: true,
+    attrs: { fileType: 'file', accept: '.docx,.doc' },
+  },
   { field: 'is_default', type: 'switch', label: '默认', span: 12 },
 ]);
 
 const gridColumns = ref([
   { field: 'name', title: '名称', minWidth: 160 },
   { field: 'code', title: '编号', width: 120 },
-  { field: 'printable_id', title: '所属表单', minWidth: 140, slots: { default: 'default_form' } },
-  { field: 'is_default', title: '默认', width: 80, slots: { default: 'default_is_default' } },
-  { field: 'project.name', title: '项目', minWidth: 120, slots: { default: 'default_project' } },
-  { field: 'created_at', title: '创建时间', width: 160 },
+  {
+    field: 'printable_id',
+    title: '所属表单',
+    minWidth: 140,
+    slots: { default: 'default_form' },
+  },
+  {
+    field: 'is_default',
+    title: '默认',
+    width: 80,
+    slots: { default: 'default_is_default' },
+  },
+  {
+    field: 'project.name',
+    title: '项目',
+    minWidth: 120,
+    slots: { default: 'default_project' },
+  },
+  { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 
 const extraQuery = computed(() => ({
@@ -85,7 +120,8 @@ const officeOpen = ref(false);
 const officeDocument = ref(null);
 const officeMode = ref('view');
 const officeCallbackUrl = computed(
-  () => `${import.meta.env.VITE_GLOB_API_URL}/print-templates/${editingItem.value?.id}/file`,
+  () =>
+    `${import.meta.env.VITE_GLOB_API_URL}/print-templates/${editingItem.value?.id}/file`,
 );
 
 function openOffice() {
@@ -122,7 +158,11 @@ loadForms();
       :fields="formFields"
       :save-format="saveFormat"
       :inline-actions="['view', 'edit', 'delete']"
-      :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
+      :grid-options="{
+        columns: gridColumns,
+        showOverflow: false,
+        columnConfig: { resizable: true },
+      }"
       :open-mode="{ create: 'drawer', detail: 'drawer' }"
       :form-attrs="{ layout: 'vertical', size: 'medium' }"
       title="打印模板"
@@ -140,11 +180,7 @@ loadForms();
       </template>
 
       <template #form-action>
-        <Button
-          v-if="editingItem.file_path"
-          type="link"
-          @click="openOffice"
-        >
+        <Button v-if="editingItem.file_path" type="link" @click="openOffice">
           {{ rowCan(editingItem, 'edit') ? '编辑' : '查看' }}模板
         </Button>
       </template>

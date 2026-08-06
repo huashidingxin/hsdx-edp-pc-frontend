@@ -4,8 +4,8 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { DatePicker, message, Radio, Select, Tag } from 'antdv-next';
 
 import Resource from '#/api/resource';
-import AppCancelDialog from '#/components/AppCancelDialog.vue';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
+import AppCancelDialog from '#/components/AppCancelDialog.vue';
 import { useTaskFormLoader } from '#/composables/use-task-form';
 import { useAppStore } from '#/store';
 
@@ -54,23 +54,50 @@ const stateOptions = [
 ];
 
 const filterFields = ref([
-  { field: 'executor_id', label: '执行人', type: 'select', span: 8, attrs: { options: [] } },
-  { field: 'states', label: '状态', type: 'select', span: 8, attrs: { options: stateOptions, multiple: true } },
+  {
+    field: 'executor_id',
+    label: '执行人',
+    type: 'select',
+    span: 8,
+    attrs: { options: [] },
+  },
+  {
+    field: 'states',
+    label: '状态',
+    type: 'select',
+    span: 8,
+    attrs: { options: stateOptions, multiple: true },
+  },
   { field: 'date_range', label: '日期', type: 'slot', span: 8 },
 ]);
 
 const gridColumns = ref([
   { field: 'date', title: '日期', width: 110 },
-  { field: 'executor', title: '执行人', minWidth: 110, slots: { default: 'default_executor' } },
+  {
+    field: 'executor',
+    title: '执行人',
+    minWidth: 110,
+    slots: { default: 'default_executor' },
+  },
   { field: 'creator.name', title: '指派人', minWidth: 100 },
-  { field: 'state', title: '状态', width: 100, slots: { default: 'default_state' } },
+  {
+    field: 'state',
+    title: '状态',
+    width: 100,
+    slots: { default: 'default_state' },
+  },
   { field: 'project.name', title: '项目', minWidth: 140 },
   { field: 'content', title: '内容', minWidth: 180 },
   { field: 'measure.name', title: '监理方式', width: 100 },
   { field: 'attendance_in.check_time', title: '签到', width: 150 },
   { field: 'attendance_out.check_time', title: '签退', width: 150 },
-  { field: 'submission', title: '日志', width: 150, slots: { default: 'default_submission' } },
-  { field: 'created_at', title: '创建时间', width: 160 },
+  {
+    field: 'submission',
+    title: '日志',
+    width: 150,
+    slots: { default: 'default_submission' },
+  },
+  { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 
 const stateColorMap = { 1: 'blue', 2: 'blue', 3: 'green', 4: 'orange' };
@@ -83,7 +110,9 @@ const actionsConfig = [
 ];
 
 // 编辑时不可修改执行人（后端 update 不保存 executor_id，去除无效字段）
-const excludeFields = computed(() => (editingItem.value?.id ? ['executors'] : []));
+const excludeFields = computed(() =>
+  editingItem.value?.id ? ['executors'] : [],
+);
 
 // 取消任务（需选择取消原因）
 async function cancelTask({ reason_id, other_reason }) {
@@ -121,7 +150,11 @@ onMounted(refreshAll);
     :detail-format="detailFormat"
     :save-format="saveFormat"
     :fields="formFields"
-    :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
+    :grid-options="{
+      columns: gridColumns,
+      showOverflow: false,
+      columnConfig: { resizable: true },
+    }"
     :open-mode="{ create: 'drawer', detail: 'drawer' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
     title="任务执行"
@@ -175,7 +208,10 @@ onMounted(refreshAll);
 
     <template #field_form>
       <div v-if="editingItem?.measure_id" class="text-sm text-gray-600">
-        任务表单：{{ procedureForms[editingItem.measure_id]?.form?.name || '未配置该监理方式的表单' }}
+        任务表单：{{
+          procedureForms[editingItem.measure_id]?.form?.name ||
+          '未配置该监理方式的表单'
+        }}
       </div>
     </template>
 
@@ -199,7 +235,9 @@ onMounted(refreshAll);
 
     <template #default_submission="{ row }">
       <template v-if="row.submission?.code">
-        <Tag :color="submissionStateColorMap[row.submission.state] || 'default'">
+        <Tag
+          :color="submissionStateColorMap[row.submission.state] || 'default'"
+        >
           {{ row.submission.code }}
         </Tag>
       </template>

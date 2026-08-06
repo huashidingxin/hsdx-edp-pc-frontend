@@ -12,7 +12,9 @@ const appStore = useAppStore();
 const tableRef = ref(null);
 const editingItem = ref({});
 
-const currentProjectId = computed(() => appStore.defaultProject?.id || undefined);
+const currentProjectId = computed(
+  () => appStore.defaultProject?.id || undefined,
+);
 const extraQuery = computed(() => ({ project_id: currentProjectId.value }));
 
 const stateOptions = [
@@ -47,9 +49,28 @@ const filterFields = ref([
 const formFields = ref([
   { field: 'name', type: 'text', span: 12, label: '名称', required: true },
   { field: 'code', type: 'text', span: 12, label: '编号', required: true },
-  { field: 'category_id', type: 'select', span: 12, label: '分类', required: true, attrs: { options: [] } },
-  { field: 'calibration_days', type: 'number', span: 12, label: '检定周期（天）', required: true },
-  { field: 'state', type: 'select', span: 12, label: '状态', attrs: { options: stateOptions } },
+  {
+    field: 'category_id',
+    type: 'select',
+    span: 12,
+    label: '分类',
+    required: true,
+    attrs: { options: [] },
+  },
+  {
+    field: 'calibration_days',
+    type: 'number',
+    span: 12,
+    label: '检定周期（天）',
+    required: true,
+  },
+  {
+    field: 'state',
+    type: 'select',
+    span: 12,
+    label: '状态',
+    attrs: { options: stateOptions },
+  },
   { field: 'maintenances', type: 'slot', span: 24, label: '维护记录' },
 ]);
 
@@ -58,10 +79,15 @@ const gridColumns = ref([
   { field: 'code', title: '编号', width: 110 },
   { field: 'project.name', title: '项目', minWidth: 140 },
   { field: 'category.name', title: '分类', minWidth: 100 },
-  { field: 'state', title: '状态', width: 90, slots: { default: 'default_state' } },
+  {
+    field: 'state',
+    title: '状态',
+    width: 90,
+    slots: { default: 'default_state' },
+  },
   { field: 'calibration_days', title: '检定周期', width: 90 },
   { field: 'last_calibration_time', title: '最后检定时间', width: 160 },
-  { field: 'created_at', title: '创建时间', width: 160 },
+  { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 
 const stateColorMap = { 1: 'green', 2: 'orange', 3: 'red', 4: 'default' };
@@ -121,7 +147,7 @@ const maintenanceListOptions = ref({
     { field: 'type_label', title: '类型', width: 90 },
     { field: 'start_time', title: '开始时间', minWidth: 160 },
     { field: 'end_time', title: '结束时间', minWidth: 160 },
-    { field: 'created_at', title: '创建时间', width: 160 },
+    { field: 'created_at', title: '创建时间', minWidth: 180 },
   ],
   showFooter: false,
 });
@@ -138,7 +164,11 @@ onMounted(loadCategories);
     :extra-query="extraQuery"
     :filter-fields="filterFields"
     :fields="formFields"
-    :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
+    :grid-options="{
+      columns: gridColumns,
+      showOverflow: false,
+      columnConfig: { resizable: true },
+    }"
     :open-mode="{ create: 'drawer', detail: 'drawer' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
     title="工具管理"
@@ -147,7 +177,9 @@ onMounted(loadCategories);
     <template #field_maintenances>
       <div v-if="editingItem?.id" class="flex flex-col gap-2">
         <div class="flex justify-end">
-          <Button type="primary" size="small" @click="maintenanceDialog = true">登记维护</Button>
+          <Button type="primary" size="small" @click="maintenanceDialog = true">
+登记维护
+</Button>
         </div>
         <AppList
           v-model="maintenances"
@@ -160,7 +192,11 @@ onMounted(loadCategories);
     </template>
 
     <template #default_state="{ row }">
-      <Tag :color="stateColorMap[row.state] || 'default'">{{ row.state_label || '-' }}</Tag>
+      <Tag :color="stateColorMap[row.state] || 'default'">
+{{
+        row.state_label || '-'
+      }}
+</Tag>
     </template>
 
     <Modal

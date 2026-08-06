@@ -28,7 +28,10 @@ const filterFields = ref([
     label: '范围',
     type: 'select',
     span: 6,
-    attrs: { options: scopeOptions, fieldNames: { label: 'label', value: 'value' } },
+    attrs: {
+      options: scopeOptions,
+      fieldNames: { label: 'label', value: 'value' },
+    },
   },
 ]);
 
@@ -40,7 +43,10 @@ const formFields = ref([
     label: '范围',
     span: 12,
     required: true,
-    attrs: { options: scopeOptions, fieldNames: { label: 'label', value: 'value' } },
+    attrs: {
+      options: scopeOptions,
+      fieldNames: { label: 'label', value: 'value' },
+    },
   },
   { field: 'title', type: 'text', label: '标题', span: 12, required: true },
   { field: 'parent_id', type: 'number', label: '父级ID', span: 12 },
@@ -49,13 +55,28 @@ const formFields = ref([
     type: 'select',
     label: '链接类型',
     span: 12,
-    attrs: { options: linkTypeOptions, fieldNames: { label: 'label', value: 'value' } },
+    attrs: {
+      options: linkTypeOptions,
+      fieldNames: { label: 'label', value: 'value' },
+    },
   },
   { field: 'link_value', type: 'text', label: '链接值', span: 12 },
   { field: 'sort_order', type: 'number', label: '排序', span: 12, default: 0 },
   { field: 'status', type: 'switch', label: '状态', span: 12, default: 1 },
-  { field: 'created_at', type: 'datetime', label: '创建时间', span: 12, displayOnly: true },
-  { field: 'updated_at', type: 'datetime', label: '更新时间', span: 12, displayOnly: true },
+  {
+    field: 'created_at',
+    type: 'datetime',
+    label: '创建时间',
+    span: 12,
+    displayOnly: true,
+  },
+  {
+    field: 'updated_at',
+    type: 'datetime',
+    label: '更新时间',
+    span: 12,
+    displayOnly: true,
+  },
 ]);
 
 const gridColumns = ref([
@@ -65,15 +86,22 @@ const gridColumns = ref([
   { field: 'link_type', title: '链接类型', width: 100 },
   { field: 'parent_id', title: '父级ID', width: 90, formatter: emptyText },
   { field: 'sort_order', title: '排序', width: 90 },
-  { field: 'status', title: '状态', width: 90, slots: { default: 'default_status' } },
-  { field: 'created_at', title: '创建时间', width: 160 },
+  {
+    field: 'status',
+    title: '状态',
+    width: 90,
+    slots: { default: 'default_status' },
+  },
+  { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 
 const formData = ref(null);
 const crudRef = ref(null);
 
 function emptyText({ cellValue }) {
-  return cellValue === null || cellValue === undefined || cellValue === '' ? '-' : cellValue;
+  return cellValue === null || cellValue === undefined || cellValue === ''
+    ? '-'
+    : cellValue;
 }
 </script>
 <template>
@@ -83,14 +111,22 @@ function emptyText({ cellValue }) {
     v-model="formData"
     :filter-fields="filterFields"
     :fields="formFields"
-    :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
+    :grid-options="{
+      columns: gridColumns,
+      showOverflow: false,
+      columnConfig: { resizable: true },
+    }"
     :open-mode="{ create: 'modal', detail: 'modal' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
     title="导航管理"
     class="p-4"
   >
     <template #default_status="{ row }">
-      <Tag :color="row.status ? 'green' : 'red'">{{ row.status ? '启用' : '禁用' }}</Tag>
+      <Tag :color="row.status ? 'green' : 'red'">
+{{
+        row.status ? '启用' : '禁用'
+      }}
+</Tag>
     </template>
   </AppCrudTable>
 </template>

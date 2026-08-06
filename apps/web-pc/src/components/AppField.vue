@@ -25,7 +25,7 @@ import { Solar } from 'lunar-javascript';
 import Resource from '#/api/resource';
 import AppUpload from '#/components/AppUpload.vue';
 
-import AppEditor from './app-editor/index.vue'
+import AppEditor from './app-editor/index.vue';
 import AppAddress from './AppAddress.vue';
 
 const props = defineProps({
@@ -77,7 +77,7 @@ try {
 }
 
 const router = useRouter() || {
-  push: (_path) => { },
+  push: (_path) => {},
 };
 
 const value = ref('');
@@ -93,9 +93,10 @@ let formatter = (e) => e;
 
 function normalizeFieldValue(field, val) {
   switch (field?.type) {
-    case 'checkbox':
+    case 'checkbox': {
       attrs.value.checked = val;
       return val ? 1 : 0;
+    }
     case 'checkbox-group': {
       if (val === undefined || val === null || val === '') {
         return [];
@@ -197,7 +198,7 @@ const shouldUseFormItem = computed(() => {
 // FormItem 的 props
 const formItemProps = computed(() => {
   if (!shouldUseFormItem.value) return {};
-  let _props = {
+  const _props = {
     ...props.field.formItemProps,
     label: props.showLabel ? props.field.label : '',
     name: props.field.field,
@@ -246,7 +247,10 @@ function initComponent() {
     case 'image':
     case 'video': {
       defaultAttrs.value = {
-        fileType: props.field.type === 'file' ? props.field.attrs?.fileType : props.field.type,
+        fileType:
+          props.field.type === 'file'
+            ? props.field.attrs?.fileType
+            : props.field.type,
         maxCount: props.field.attrs?.multiple ? 10 : 1,
       };
       component.value = AppUpload;
@@ -293,7 +297,7 @@ function initComponent() {
     }
     case 'date': {
       component.value = DatePicker;
-      let pickerType = props.field?.attrs?.picker || 'date';
+      const pickerType = props.field?.attrs?.picker || 'date';
       const pickerTypes = {
         date: 'YYYY-MM-DD',
         year: 'YYYY',
@@ -344,7 +348,16 @@ function initComponent() {
     }
     case 'select': {
       defaultAttrs.value = {
-        allowClear: !props.field.attrs?.readonly && !props.readonly,
+        allowClear: (val) => {
+          // 仅在有值时显示清除按钮，避免空值时出现空标签
+          if (props.field.attrs?.readonly || props.readonly) return false;
+          return (
+            val !== null &&
+            val !== undefined &&
+            val !== '' &&
+            !(Array.isArray(val) && val.length === 0)
+          );
+        },
         showSearch: true,
         filterOption,
         style: { width: '100%' },
@@ -392,7 +405,13 @@ function initComponent() {
     }
   }
 
-  defaultAttrs.value.allowClear = true;
+  // allowClear 默认值：仅对非 select 类型设置为 true
+  if (
+    defaultAttrs.value.allowClear === undefined &&
+    component.value !== Select
+  ) {
+    defaultAttrs.value.allowClear = true;
+  }
   // defaultAttrs.value.style = {width: '100%'}
   if (!props.field.attrs?.placeholder) {
     defaultAttrs.value.placeholder = props.field.label;
@@ -416,7 +435,7 @@ function initComponent() {
             return {
               ...opt,
               value: opt.id,
-              label: opt.name !== undefined ? opt.name : String(opt.id),
+              label: opt.name === undefined ? String(opt.id) : opt.name,
             };
           }
           return opt;
@@ -523,7 +542,7 @@ function getClass(_field) {
   return classes;
 }
 
-onMounted(() => { });
+onMounted(() => {});
 
 watch(
   () => props.field,
@@ -549,7 +568,7 @@ function getLunarDate(date) {
     return dayInChinese == '初一'
       ? `${lunar.getMonthInChinese()}月`
       : dayInChinese;
-  } catch (e) {
+  } catch {
     return '';
   }
 }
@@ -578,41 +597,60 @@ function getMonthInGanZhi(date) {
 
   <!-- 动态包裹组件 -->
   <component
-:is="shouldUseFormItem ? FormItem : 'div'" v-bind="shouldUseFormItem ? formItemProps : {}"
+    :is="shouldUseFormItem ? FormItem : 'div'"
+    v-bind="shouldUseFormItem ? formItemProps : {}"
     :class="!shouldUseFormItem ? getClass(field) : {}"
->
+  >
     <slot name="default">
       <!-- 纯显示模式：只显示文本 -->
       <div
-v-if="isDisplayOnly" class="min-h-[22px] leading-[22px] text-gray-800" :class="[
-        shouldUseFormItem ? '' : 'flex-1',
-        field.attrs?.displayOnlyClass,
-      ]"
->
+        v-if="isDisplayOnly"
+        class="min-h-[22px] leading-[22px] text-gray-800"
+        :class="[
+          shouldUseFormItem ? '' : 'flex-1',
+          field.attrs?.displayOnlyClass,
+        ]"
+      >
         {{ displayOnlyText }}
       </div>
       <div v-else class="flex">
         <!-- 编辑模式：渲染输入组件 -->
         <SpaceCompact block>
           <component
-v-if="field.slots?._prefix" :is="field.slots._prefix.component"
+            v-if="field.slots?._prefix"
+            :is="field.slots._prefix.component"
             v-bind="field.slots._prefix.props || {}"
-/>
+          />
           <component
-ref="fieldRef" :is="component" :class="shouldUseFormItem ? '' : 'flex-1'" :value="componentValue"
-            @update:value="componentValue = $event" :placeholder="field.attrs?.placeholder"
-            :label="field.label || field.attrs?.label" v-bind="attrs" :disabled="field.attrs?.readonly || readonly"
-            v-on="{ ...defaultEvents, ...field.events }" :key="field.field" :field-name="field.field"
->
+            ref="fieldRef"
+            :is="component"
+            :class="shouldUseFormItem ? '' : 'flex-1'"
+            :value="componentValue"
+            @update:value="componentValue = $event"
+            :placeholder="field.attrs?.placeholder"
+            :label="field.label || field.attrs?.label"
+            v-bind="attrs"
+            :disabled="field.attrs?.readonly || readonly"
+            v-on="{ ...defaultEvents, ...field.events }"
+            :key="field.field"
+            :field-name="field.field"
+          >
             <!-- 农历日期单元格渲染 -->
             <template
-v-if="
-              ['date', 'datetime'].includes(field.type) &&
-              field.attrs?.showLunar
-            " #cellRender="{ current, info }"
->
-              <component :is="info.originNode" v-if="!['date', 'year', 'month'].includes(info.type)" />
-              <div v-else class="ant-picker-cell-inner ant-picker-cell-inner__lunar">
+              v-if="
+                ['date', 'datetime'].includes(field.type) &&
+                field.attrs?.showLunar
+              "
+              #cellRender="{ current, info }"
+            >
+              <component
+                :is="info.originNode"
+                v-if="!['date', 'year', 'month'].includes(info.type)"
+              />
+              <div
+                v-else
+                class="ant-picker-cell-inner ant-picker-cell-inner__lunar"
+              >
                 <template v-if="info.type === 'date'">
                   <div class="solar-date">{{ current.date() }}</div>
                   <div class="lunar-date">
@@ -634,55 +672,71 @@ v-if="
               </div>
             </template>
 
-            <template v-for="(slot, slotName) in field.slots" :key="slotName" #[slotName]="slotProps">
+            <template
+              v-for="(slot, slotName) in field.slots"
+              :key="slotName"
+              #[slotName]="slotProps"
+            >
               <template v-if="!slot.hide?.(slotProps)">
                 <component
-v-if="slot.component" :is="slot.component"
+                  v-if="slot.component"
+                  :is="slot.component"
                   v-bind="{ ...slot.props, ...slot.bind?.(slotProps) }"
-/>
+                />
               </template>
             </template>
 
             <template
-v-if="
-              ['select', 'autocomplete', 'tree-select'].includes(field.type)
-            " #suffixIcon
->
+              v-if="
+                ['select', 'autocomplete', 'tree-select'].includes(field.type)
+              "
+              #suffixIcon
+            >
               <div
-v-if="
-                field.attrs?.create?.url &&
-                (!field.attrs.create.permission ||
-                  hasAccessByCodes([field.attrs.create.permission]))
-              " style="display: flex; gap: 4px; align-items: center"
->
+                v-if="
+                  field.attrs?.create?.url &&
+                  (!field.attrs.create.permission ||
+                    hasAccessByCodes([field.attrs.create.permission]))
+                "
+                style="display: flex; gap: 4px; align-items: center"
+              >
                 <Button
-type="link" size="small" @click.stop="router.push(field.attrs.create.url)"
+                  type="link"
+                  size="small"
+                  @click.stop="router.push(field.attrs.create.url)"
                   style="height: auto; padding: 0 4px"
->
+                >
                   <template #icon><span>+</span></template>
                   新建{{ field.label }}
                 </Button>
               </div>
               <Button
-v-if="Boolean(field.attrs?.refresh)" type="link" size="small" @click.stop="field.attrs.refresh()"
+                v-if="Boolean(field.attrs?.refresh)"
+                type="link"
+                size="small"
+                @click.stop="field.attrs.refresh()"
                 style="height: auto; padding: 0 4px"
->
+              >
                 <template #icon><span>↻</span></template>
               </Button>
             </template>
             <template
-v-if="
-              ['select', 'autocomplete', 'tree-select'].includes(field.type)
-            " #notFoundContent
->
+              v-if="
+                ['select', 'autocomplete', 'tree-select'].includes(field.type)
+              "
+              #notFoundContent
+            >
               <div style="padding: 8px">
                 <Button
-v-if="
-                  field.attrs?.create?.url &&
-                  (!field.attrs.create.permission ||
-                    hasAccessByCodes([field.attrs.create.permission]))
-                " type="link" block @click="router.push(field.attrs.create.url)"
->
+                  v-if="
+                    field.attrs?.create?.url &&
+                    (!field.attrs.create.permission ||
+                      hasAccessByCodes([field.attrs.create.permission]))
+                  "
+                  type="link"
+                  block
+                  @click="router.push(field.attrs.create.url)"
+                >
                   <template #icon><span>+</span></template>
                   新建{{ field.label }}
                 </Button>
@@ -699,9 +753,9 @@ v-if="
               <slot :name="slotName" v-bind="slotScope || {}"></slot>
             </template>
           </component>
-</SpaceCompact>
+        </SpaceCompact>
       </div>
-</slot>
+    </slot>
   </component>
 </template>
 

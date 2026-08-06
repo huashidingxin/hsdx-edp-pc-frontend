@@ -16,7 +16,7 @@ const gridColumns = ref([
   { field: 'name', title: '名称', minWidth: 160 },
   { field: 'staff_count', title: '员工数', width: 100 },
   { field: 'remarks', title: '备注', minWidth: 200 },
-  { field: 'created_at', title: '创建时间', width: 160 },
+  { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 </script>
 
@@ -26,7 +26,11 @@ const gridColumns = ref([
     :filter-fields="filterFields"
     :fields="formFields"
     permission-name="department"
-    :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
+    :grid-options="{
+      columns: gridColumns,
+      showOverflow: false,
+      columnConfig: { resizable: true },
+    }"
     :open-mode="{ create: 'modal', detail: 'modal' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
     title="组织部门"

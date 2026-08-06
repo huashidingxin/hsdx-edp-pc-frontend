@@ -1,8 +1,8 @@
 <script setup>
 import { computed, ref } from 'vue';
 
-import { useAppStore } from '#/store';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
+import { useAppStore } from '#/store';
 
 const appStore = useAppStore();
 
@@ -15,7 +15,8 @@ const typeOptions = [
 
 const extraQuery = computed(() => {
   const query = {};
-  if (appStore.defaultProject?.id) query.project_id = appStore.defaultProject.id;
+  if (appStore.defaultProject?.id)
+    query.project_id = appStore.defaultProject.id;
   return query;
 });
 
@@ -39,7 +40,14 @@ const filterFields = ref([
 
 const formFields = ref([
   { field: 'name', type: 'text', label: '名称', span: 12, required: true },
-  { field: 'type', type: 'select', label: '类型', span: 12, required: true, attrs: { options: typeOptions } },
+  {
+    field: 'type',
+    type: 'select',
+    label: '类型',
+    span: 12,
+    required: true,
+    attrs: { options: typeOptions },
+  },
   { field: 'short_name', type: 'text', label: '简称', span: 12 },
   { field: 'manager_name', type: 'text', label: '负责人', span: 12 },
 ]);
@@ -49,7 +57,7 @@ const gridColumns = ref([
   { field: 'project.name', title: '项目', minWidth: 200 },
   { field: 'type_label', title: '类型', width: 120 },
   { field: 'manager_name', title: '负责人', width: 120 },
-  { field: 'created_at', title: '创建时间', width: 160 },
+  { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 </script>
 
@@ -60,7 +68,11 @@ const gridColumns = ref([
     :filter-fields="filterFields"
     :fields="formFields"
     permission-name="stakeholder"
-    :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
+    :grid-options="{
+      columns: gridColumns,
+      showOverflow: false,
+      columnConfig: { resizable: true },
+    }"
     :open-mode="{ create: 'modal', detail: 'modal' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
     title="相关方管理"

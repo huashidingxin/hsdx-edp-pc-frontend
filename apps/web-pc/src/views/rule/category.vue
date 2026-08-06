@@ -1,10 +1,9 @@
 <script setup>
 import { onMounted, ref, watch } from 'vue';
 
-import { Select } from 'antdv-next';
-
 import Resource from '#/api/resource';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
+
 import RuleFieldList from './field-list.vue';
 
 const editingItem = ref({});
@@ -15,8 +14,14 @@ const extraQuery = ref({ type: 'rule', children_count: 1 });
 // 规则分类（categories?type=rule），用于选择父级
 const categoryOptions = ref([]);
 async function loadCategories() {
-  const { data } = await new Resource('categories').list({ per_page: 'all', type: 'rule' });
-  categoryOptions.value = (data || []).map((c) => ({ value: c.id, label: c.name }));
+  const { data } = await new Resource('categories').list({
+    per_page: 'all',
+    type: 'rule',
+  });
+  categoryOptions.value = (data || []).map((c) => ({
+    value: c.id,
+    label: c.name,
+  }));
   const f = formFields.value.find((x) => x.field === 'parent_id');
   if (f) f.attrs.options = categoryOptions.value;
   const f2 = filterFields.value.find((x) => x.field === 'parent_id');
@@ -54,7 +59,7 @@ const gridColumns = ref([
     slots: { default: 'default_parent' },
   },
   { field: 'children_count', title: '子分类数', width: 100 },
-  { field: 'created_at', title: '创建时间', width: 160 },
+  { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 
 // 保存时注入 type=rule（对齐后端分类类型）
@@ -67,7 +72,7 @@ watch(
   () => editingItem.value?.id,
   (id) => {
     if (id) fieldListKey.value += 1;
-  }
+  },
 );
 
 onMounted(loadCategories);
@@ -82,7 +87,11 @@ onMounted(loadCategories);
     :extra-query="extraQuery"
     permission-name="rule"
     :inline-actions="['view', 'edit']"
-    :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
+    :grid-options="{
+      columns: gridColumns,
+      showOverflow: false,
+      columnConfig: { resizable: true },
+    }"
     :open-mode="{ create: 'drawer', detail: 'drawer' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
     :save-format="saveFormat"
