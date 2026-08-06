@@ -1,6 +1,8 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue';
 
+import { useAccess } from '@vben/access';
+
 import {
   Button,
   DatePicker,
@@ -15,6 +17,7 @@ import Resource from '#/api/resource';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
 import { useAppStore } from '#/store';
 
+const { hasAccessByCodes } = useAccess();
 const appStore = useAppStore();
 const tableRef = ref(null);
 // 详情打开模式：view=false（查看该成员在项目中的信息）/ edit=true（编辑该成员在项目中的信息）
@@ -505,20 +508,26 @@ onMounted(() => {
       :form-attrs="{ layout: 'vertical', size: 'medium' }"
       title="项目成员"
       class="w-full"
-      :toolbar-config="{ create: false }"
+      :toolbar="{ create: false }"
       :save-format="saveFormat"
       :detail-format="detailFormat"
       @show-detail="onShowDetail"
     >
       <template #toolbar-append>
         <div class="flex items-center gap-2">
-          <Button size="small" type="primary" @click="openBatchAdd">
-            批量添加成员
+          <Button
+            v-if="hasAccessByCodes(['project_user.create'])"
+            size="middle"
+            type="primary"
+            @click="openBatchAdd"
+          >
+            <i class="icon-[mdi--plus]"></i>
+            新增
           </Button>
-          <Button size="small" type="primary" ghost @click="openBatchLeave">
+          <Button size="middle" type="primary" ghost @click="openBatchLeave">
             批量离岗
           </Button>
-          <Button size="small" danger @click="submitBatchCancel">
+          <Button size="middle" danger @click="submitBatchCancel">
             批量撤销离岗
           </Button>
         </div>
