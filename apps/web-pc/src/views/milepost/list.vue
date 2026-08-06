@@ -68,6 +68,7 @@ async function loadProjects() {
   const { data } = await new Resource('projects').list({
     per_page: 'all',
     parent_id: 0,
+    scope: 3,
   });
   projectOptions.value = (data || []).map((p) => ({
     value: p.id,

@@ -40,7 +40,7 @@ onMounted(loadCategories);
     :filter-fields="filterFields"
     :fields="formFields"
     :grid-options="{ columns: gridColumns, showOverflow: false, columnConfig: { resizable: true } }"
-    :open-mode="{ create: 'page', detail: 'page' }"
+    :open-mode="{ create: 'drawer', detail: 'drawer' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
     title="新闻公告"
     class="p-4"

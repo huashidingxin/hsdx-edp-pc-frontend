@@ -1,7 +1,7 @@
 <script setup>
 import { nextTick, onMounted, ref } from 'vue';
 
-import { Button, Card, Col, Empty, Form, Row, Spin, message } from 'antdv-next';
+import { Button, Card, Col, Empty, Form, message, Row, Spin } from 'antdv-next';
 
 import Resource from '#/api/resource';
 import AppField from '#/components/AppField.vue';
@@ -16,11 +16,27 @@ const uploadTypes = new Set(['audio', 'file', 'image', 'video']);
 async function loadSettings() {
   loading.value = true;
   try {
-    const api = new Resource('settings/form');
-    const { data } = await api.list({});
+    // 与 web-admin 参考页一致：使用现有 settings 列表接口（manage=1 返回全部配置项）
+    const api = new Resource('settings');
+    const { data } = await api.list({ per_page: 'all', manage: 1 });
 
-    groups.value = data?.groups || [];
-    formData.value = { ...(data?.values || {}) };
+    const rows = Array.isArray(data) ? data : [];
+    const fields = rows.map((item) => {
+      const field = { ...item, field: item.name, attrs: {} };
+      if (item.type === 'image') {
+        field.type = 'file';
+        field.attrs.fileType = 'image';
+      }
+      // 后端 cols 为 12 栅格，页面 Col 用 24 栅格
+      field.span = (item.cols || 12) * 2;
+      return field;
+    });
+
+    groups.value = fields.length ? [{ id: 0, name: '系统配置', fields }] : [];
+    formData.value = {};
+    rows.forEach((item) => {
+      formData.value[item.name] = item.value;
+    });
   } catch (error) {
     console.error(error);
     message.error('加载系统配置失败');
@@ -62,11 +78,10 @@ async function submit() {
   try {
     await uploadPendingFiles();
 
+    // 与 web-admin 参考页一致：扁平 { name: value } 提交
     const api = new Resource('settings');
-    const { data } = await api.store({ settings: formData.value });
+    await api.store(formData.value);
 
-    groups.value = data?.groups || groups.value;
-    formData.value = { ...(data?.values || formData.value) };
     message.success('保存成功');
   } catch (error) {
     console.error(error);
