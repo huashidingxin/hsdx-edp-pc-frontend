@@ -590,7 +590,7 @@ defineExpose({
           <template v-if="slots['form-actions']" #form-actions="scope">
             <slot name="form-actions" v-bind="scope"></slot>
           </template>
-          <template #form-action="scope">
+          <template v-if="slots['form-action']" #form-action="scope">
             <slot name="form-action" v-bind="scope"></slot>
           </template>
         </CrudFormActions>
@@ -660,7 +660,7 @@ defineExpose({
           <template v-if="slots['form-actions']" #form-actions="scope">
             <slot name="form-actions" v-bind="scope"></slot>
           </template>
-          <template #form-action="scope">
+          <template v-if="slots['form-action']" #form-action="scope">
             <slot name="form-action" v-bind="scope"></slot>
           </template>
         </CrudFormActions>

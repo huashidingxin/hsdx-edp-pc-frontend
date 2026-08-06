@@ -1539,6 +1539,7 @@ defineExpose({
           <slot name="form-action" :item="modelValue"></slot>
           <template
             v-if="
+              !$slots['form-action'] &&
               (checkItemAction(
                 showEdit,
                 modelValue,
