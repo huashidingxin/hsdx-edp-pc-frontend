@@ -48,7 +48,7 @@ function detailFormat(data) {
   editingItem.value._formId =
     data.form_id ||
     data.submission?.form_id ||
-    data.projects?.supervision_log_form_id;
+    data.project?.supervision_log_form_id;
   editingItem.value._projectId = data.project_id;
   warnings.value = data.warnings || [];
   return data;
@@ -92,17 +92,28 @@ const tableRef = ref(null);
 const previewOpen = ref(false);
 const previewDocument = ref(null);
 
-function openPreview(row = editingItem.value) {
-  const filePath = row?.submission?.file_path;
+async function openPreview(row = editingItem.value) {
+  let submission = row?.submission;
+  if (!submission?.file_path) {
+    try {
+      const { data } = await new Resource('supervision-logs').get(
+        String(row.id),
+      );
+      submission = data?.submission || {};
+    } catch (error) {
+      console.error(error);
+    }
+  }
+  const filePath = submission?.file_path;
   if (!filePath) {
     message.warning('该记录未配置打印模板或渲染失败');
     return;
   }
   previewDocument.value = {
     fileType: 'docx',
-    key: `submission-${row?.submission?.id || row.id}`,
+    key: `submission-${submission?.id || row.id}`,
     url: filePath,
-    title: `${row?.submission?.code || '记录'}.docx`,
+    title: `${submission?.code || '记录'}.docx`,
   };
   previewOpen.value = true;
 }
@@ -196,8 +207,8 @@ const auditSubmitting = ref(false);
 
 function canAudit(row) {
   return (
-    row.submission_id > 0 &&
-    !row.submission?.audit_id &&
+    Number(row.submission_id) > 0 &&
+    Number(row.submission?.audit_id) === 0 &&
     hasAccessByCodes(['submission.audit'])
   );
 }
@@ -427,9 +438,10 @@ function rowState(row) {
         key: 'edit',
         permission: '',
         visible: (row) =>
-          row.user_id === userStore.userInfo?.id &&
-          (row.submission_id === 0 ||
-            (row.submission_id > 0 && row.submission?.state !== 2)),
+          String(row.user_id) === String(userStore.userInfo?.id) &&
+          (Number(row.submission_id) === 0 ||
+            (Number(row.submission_id) > 0 &&
+              Number(row.submission?.state) !== 2)),
       },
       {
         key: 'preview',
@@ -551,7 +563,10 @@ function rowState(row) {
     </template>
 
     <template #form-action>
-      <Button v-if="editingItem.submission_id" @click="openPreview(editingItem)">
+      <Button
+        v-if="Number(editingItem.submission_id) > 0"
+        @click="openPreview(editingItem)"
+      >
         预览
       </Button>
       <template v-if="isEditing">
