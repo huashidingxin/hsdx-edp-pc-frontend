@@ -228,7 +228,7 @@ async function batchPrint() {
 // ---- P3-L03 关键字警告手动解除（总监/有权限成员，必须填原因，保留记录）----
 const canResolveWarning = computed(
   () =>
-    appStore.isAdmin ||
+    !!userStore.userInfo?.is_admin ||
     hasAccessByCodes(['log_warning.resolve', 'submission.audit']),
 );
 
@@ -678,6 +678,7 @@ function rowState(row) {
               v-if="canResolveWarning"
               size="small"
               type="link"
+              :disabled="false"
               @click="openResolve(w)"
             >
               解除警告
