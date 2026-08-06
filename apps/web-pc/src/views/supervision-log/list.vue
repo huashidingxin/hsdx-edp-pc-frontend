@@ -305,7 +305,7 @@ const gridColumns = computed(() => {
     {
       field: 'submission.created_at',
       title: '记录时间',
-      width: 160,
+      minWidth: 180,
       slots: { default: 'default_submitted' },
     },
     {

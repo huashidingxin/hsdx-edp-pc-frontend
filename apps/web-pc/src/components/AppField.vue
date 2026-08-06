@@ -91,6 +91,18 @@ const fieldRef = ref(null);
 const attrItems = ref([]);
 let formatter = (e) => e;
 
+// 选择类组件列表
+const selectComponents = [Select, AutoComplete, TreeSelect];
+
+// 动态计算 allowClear：仅在有值时显示清除按钮
+const computedAllowClear = computed(() => {
+  if (props.field.attrs?.readonly || props.readonly) return false;
+  const val = componentValue.value;
+  if (val === null || val === undefined || val === '') return false;
+  if (Array.isArray(val) && val.length === 0) return false;
+  return true;
+});
+
 function normalizeFieldValue(field, val) {
   switch (field?.type) {
     case 'checkbox': {
@@ -332,6 +344,7 @@ function initComponent() {
     case 'multiselect': {
       defaultAttrs.value = {
         mode: 'multiple',
+        allowClear: !props.field.attrs?.readonly && !props.readonly,
         showSearch: true,
         filterOption,
         style: { width: '100%' },
@@ -358,16 +371,7 @@ function initComponent() {
     }
     case 'select': {
       defaultAttrs.value = {
-        allowClear: (val) => {
-          // 仅在有值时显示清除按钮，避免空值时出现空标签
-          if (props.field.attrs?.readonly || props.readonly) return false;
-          return (
-            val !== null &&
-            val !== undefined &&
-            val !== '' &&
-            !(Array.isArray(val) && val.length === 0)
-          );
-        },
+        allowClear: !props.field.attrs?.readonly && !props.readonly,
         showSearch: true,
         filterOption,
         style: { width: '100%' },
@@ -428,6 +432,11 @@ function initComponent() {
   }
 
   attrs.value = { ...defaultAttrs.value, ...props.field.attrs };
+
+  // Select/AutoComplete/TreeSelect 组件：动态覆盖 allowClear
+  if (selectComponents.includes(component.value)) {
+    attrs.value.allowClear = computedAllowClear.value;
+  }
 
   if (isDisplayOnly.value) {
     delete attrs.value.allowClear;
@@ -560,6 +569,16 @@ watch(
     initComponent();
   },
   { immediate: true, deep: true },
+);
+
+// 监听值变化，更新 Select/AutoComplete/TreeSelect 的 allowClear
+watch(
+  componentValue,
+  () => {
+    if (selectComponents.includes(component.value) && attrs.value) {
+      attrs.value.allowClear = computedAllowClear.value;
+    }
+  },
 );
 
 defineExpose({
