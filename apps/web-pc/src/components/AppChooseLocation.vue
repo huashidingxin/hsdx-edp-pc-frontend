@@ -81,6 +81,8 @@ const searchLoading = ref(false);
 const searchAttempted = ref(false);
 const tempLocation = ref(null);
 const geocoding = ref(false);
+const activeLayer = ref('image');
+const baseLayerGroups = { image: [], vector: [], terrain: [] };
 
 const pointLayer = ref(
   new VectorLayer({ source: new VectorSource() }),
@@ -100,20 +102,22 @@ function tiandiLayer(type, matrixSet) {
   });
 }
 
+function setLayerType(type) {
+  activeLayer.value = type;
+  Object.keys(baseLayerGroups).forEach((key) => {
+    baseLayerGroups[key].forEach((layer) => layer.setVisible(key === type));
+  });
+}
+
 function initMap() {
   const projection = get('EPSG:4326');
   const layerTypeMap = { vector: ['vec', 'cva'], image: ['img', 'cia'], terrain: ['ter', 'cta'] };
-  const type = layerTypeMap[props.layerType] || layerTypeMap.image;
   const center = editingItem.value?.longitude
     ? [Number(editingItem.value.longitude), Number(editingItem.value.latitude)]
     : [116.763598, 39.587285];
 
   map.value = new Map({
     target: mapEl.value,
-    layers: [
-      tiandiLayer(type[0], 'c'),
-      tiandiLayer(type[1], 'c'),
-    ],
     view: new View({
       center,
       projection,
@@ -122,6 +126,16 @@ function initMap() {
       minZoom: 1,
     }),
   });
+
+  Object.keys(layerTypeMap).forEach((type) => {
+    const [base, label] = layerTypeMap[type];
+    baseLayerGroups[type] = [
+      tiandiLayer(base, 'c'),
+      tiandiLayer(label, 'c'),
+    ];
+    baseLayerGroups[type].forEach((layer) => map.value.addLayer(layer));
+  });
+  setLayerType(props.layerType || 'image');
 
   map.value.addLayer(pointLayer.value);
   map.value.on('singleclick', (evt) => {
@@ -307,8 +321,8 @@ defineExpose({ openDialog });
       @cancel="dialog = false"
     >
       <div class="relative" style="height: 500px">
-        <!-- 搜索栏 -->
-        <div class="absolute left-2 right-2 top-2 z-10 max-w-[400px]">
+        <!-- 搜索栏（右上角，避开左上角缩放控件） -->
+        <div class="absolute right-2 top-2 z-10 w-[400px] max-w-[calc(100%-16px)]">
           <Input
             v-model:value="searchKeyword"
             placeholder="输入地址或关键词搜索"

@@ -159,7 +159,7 @@ function closeBatchDropdown(e) {
 
 function toggleBatchOption(id) {
   const index = batchSelected.value.indexOf(id);
-  if (index > -1) {
+  if (index !== -1) {
     batchSelected.value.splice(index, 1);
   } else {
     batchSelected.value.push(id);
@@ -168,7 +168,7 @@ function toggleBatchOption(id) {
 
 function removeBatchSelection(id) {
   const index = batchSelected.value.indexOf(id);
-  if (index > -1) {
+  if (index !== -1) {
     batchSelected.value.splice(index, 1);
   }
 }

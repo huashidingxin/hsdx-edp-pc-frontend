@@ -156,7 +156,7 @@ const batchLeaveForm = ref({ type: 1, start_time: '', end_time: '', reason: '' }
 
 function openBatchLeave() {
   const rows = selectedRows.value || [];
-  if (!rows.length) {
+  if (rows.length === 0) {
     message.warning('请先勾选成员');
     return;
   }
@@ -180,7 +180,7 @@ async function submitBatchLeave() {
   }
   const rows = selectedRows.value || [];
   const userIds = rows.map((r) => r.id).filter(Boolean);
-  if (!userIds.length) {
+  if (userIds.length === 0) {
     message.warning('未选中有效成员');
     return;
   }
@@ -201,7 +201,7 @@ async function submitBatchLeave() {
 async function submitBatchCancel() {
   const rows = selectedRows.value || [];
   const ids = rows.map((r) => r.id).filter(Boolean);
-  if (!ids.length) {
+  if (ids.length === 0) {
     message.warning('请先勾选成员');
     return;
   }
@@ -263,7 +263,7 @@ function toggleStaffOption(id) {
     batchAddForm.value.staff = [];
   }
   const index = batchAddForm.value.staff.indexOf(id);
-  if (index > -1) {
+  if (index !== -1) {
     batchAddForm.value.staff.splice(index, 1);
   } else {
     batchAddForm.value.staff.push(id);
@@ -273,7 +273,7 @@ function toggleStaffOption(id) {
 
 function removeStaffFromSelection(id) {
   const index = batchAddForm.value.staff.indexOf(id);
-  if (index > -1) {
+  if (index !== -1) {
     batchAddForm.value.staff.splice(index, 1);
     onStaffSelectChange([...batchAddForm.value.staff]);
   }

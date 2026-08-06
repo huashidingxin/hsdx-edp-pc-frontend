@@ -136,7 +136,6 @@ async function loadPermissions() {
 const assignOpen = ref(false);
 const assignRoleId = ref(null);
 const assignRoleName = ref('');
-const assignRoleScope = ref(null);
 const assignLoading = ref(false);
 const activeTab = ref('func');
 
