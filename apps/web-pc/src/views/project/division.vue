@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 
 import { useAccess } from '@vben/access';
@@ -19,9 +19,10 @@ const projectId = computed(() => appStore.defaultProject?.id);
 
 const treeData = ref([]);
 const expandedKeys = ref([]);
-const allExpanded = ref(false);
+const allExpanded = ref(true);
+const selectedKeys = ref([]);
 
-const levelNames = {
+const levelNames: Record<number, string> = {
   1: '单位工程',
   2: '子单位工程',
   3: '分部工程',
@@ -30,17 +31,17 @@ const levelNames = {
   6: '子分项工程',
   7: '检验批',
 };
-const levelColors = {
-  1: 'blue',
-  2: 'green',
-  3: 'orange',
-  4: 'red',
-  5: 'default',
-  6: 'cyan',
-  7: 'purple',
+const levelColors: Record<number, string> = {
+  1: '#3F51B5',
+  2: '#3F51B5',
+  3: '#2196F3',
+  4: '#2196F3',
+  5: '#009688',
+  6: '#009688',
+  7: '#FF9800',
 };
 
-const parentLevelOptions = {
+const parentLevelOptions: Record<number | string, { label: string; value: number }[]> = {
   null: [{ label: '单位工程', value: 1 }],
   1: [
     { label: '子单位工程', value: 2 },
@@ -60,7 +61,7 @@ const parentLevelOptions = {
   7: [],
 };
 
-function toTreeNode(node) {
+function toTreeNode(node: any) {
   return {
     key: node.id,
     id: node.id,
@@ -68,15 +69,16 @@ function toTreeNode(node) {
     code: node.code,
     level: node.level,
     parent_id: node.parent_id,
+    project_id: node.project_id,
     title: node.name,
     children: (node.children || []).map((item) => toTreeNode(item)),
   };
 }
 
-function buildTree(flat) {
+function buildTree(flat: any[]) {
   const map = new Map();
   (flat || []).forEach((d) => map.set(d.id, { ...d, children: [] }));
-  const roots = [];
+  const roots: any[] = [];
   map.forEach((node) => {
     if (node.parent_id && map.has(node.parent_id)) {
       map.get(node.parent_id).children.push(node);
@@ -87,7 +89,7 @@ function buildTree(flat) {
   return roots.map((item) => toTreeNode(item));
 }
 
-function collectKeys(nodes) {
+function collectKeys(nodes: any[]): number[] {
   return nodes.flatMap((n) => [n.key, ...collectKeys(n.children || [])]);
 }
 
@@ -119,7 +121,7 @@ function toggleAll() {
   expandedKeys.value = allExpanded.value ? collectKeys(treeData.value) : [];
 }
 
-async function copyCode(code) {
+async function copyCode(code: string) {
   try {
     await navigator.clipboard.writeText(String(code || ''));
     message.success('编号已复制');
@@ -135,31 +137,49 @@ const editingId = ref(null);
 const form = ref({
   name: '',
   code: '',
-  parent_id: null,
-  parent_level: null,
+  parent_id: null as null | number,
+  parent_level: null as null | number,
   level: 1,
-  project_id: null,
+  project_id: null as null | number,
 });
 
 const availableLevels = computed(
-  () => parentLevelOptions[form.value.parent_level] || [],
+  () => parentLevelOptions[form.value.parent_level ?? 'null'] || [],
 );
 
-function openAdd(parent) {
+const parentInfo = computed(() => {
+  if (!form.value.parent_id) return null;
+  return findNode(treeData.value, form.value.parent_id);
+});
+
+function findNode(nodes: any[], id: number): any {
+  for (const n of nodes) {
+    if (n.id === id) return n;
+    if (n.children?.length) {
+      const found = findNode(n.children, id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function openAdd(parent: any) {
   isEdit.value = false;
   editingId.value = null;
+  const parentLevel = parent?.level ?? null;
+  const opts = parentLevelOptions[parentLevel ?? 'null'] || [];
   form.value = {
     name: '',
     code: parent ? `${parent.code}-` : '',
     parent_id: parent?.id || null,
-    parent_level: parent?.level ?? null,
-    level: (parent?.level || 0) + 1,
+    parent_level: parentLevel,
+    level: opts.length === 1 ? opts[0].value : (parent?.level || 0) + 1,
     project_id: projectId.value,
   };
   open.value = true;
 }
 
-function openEdit(node) {
+function openEdit(node: any) {
   isEdit.value = true;
   editingId.value = node.id;
   form.value = {
@@ -199,7 +219,7 @@ async function submit() {
   }
 }
 
-function handleDelete(node) {
+function handleDelete(node: any) {
   Modal.confirm({
     title: '确认删除',
     content: `确定要删除"${node.name}"吗？其子节点将一并删除。`,
@@ -221,13 +241,13 @@ function handleDelete(node) {
 
 <template>
   <div class="p-4">
-    <div class="mb-3 flex items-center justify-between">
+    <div class="mb-4 flex items-center justify-between">
       <div class="flex items-center gap-2">
         <Button v-if="canCreate" type="primary" @click="openAdd(null)">
           <template #icon>
             <i class="icon-[mdi--plus]"></i>
           </template>
-          单位工程
+          新建单位工程
         </Button>
         <span v-if="!projectId" class="ml-2 text-xs text-gray-400">
           请先在右上角选择项目
@@ -238,73 +258,75 @@ function handleDelete(node) {
       </Button>
     </div>
 
-    <div
-      class="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-600"
-    >
+    <div class="rounded-lg border border-gray-200 bg-white dark:border-gray-600">
       <Tree
         v-if="treeData.length"
         :expanded-keys="expandedKeys"
+        :selected-keys="selectedKeys"
         :tree-data="treeData"
         block-node
-        @expand="(keys) => (expandedKeys = keys)"
+        :show-line="true"
+        :default-expand-all="true"
+        @expand="(keys: number[]) => (expandedKeys = keys)"
+        @select="(keys: number[]) => (selectedKeys = keys)"
       >
         <template #title="node">
-          <div class="flex items-center gap-2 py-1">
+          <div class="flex items-center gap-2 py-0.5">
+            <span class="text-sm">{{ node.name }}</span>
+            <span class="text-xs text-gray-400">{{ node.code }}</span>
             <Tag
-              :color="levelColors[node.level] || 'default'"
-              class="!mr-0 !text-xs"
+              v-if="selectedKeys.includes(node.key)"
+              :style="{
+                color: levelColors[node.level] || '#8c8c8c',
+                backgroundColor: `${levelColors[node.level]}15`,
+                borderColor: `${levelColors[node.level]}40`,
+              }"
+              class="!ml-1 !mr-0 !text-xs"
             >
               {{ levelNames[node.level] }}
             </Tag>
-            <span class="text-sm font-medium">{{ node.name }}</span>
             <span
-              class="cursor-pointer rounded bg-gray-50 px-1.5 py-0.5 text-xs text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-              @click.stop="copyCode(node.code)"
+              v-if="selectedKeys.includes(node.key)"
+              class="ml-1 flex items-center gap-1"
             >
-              {{ node.code }}
-            </span>
-            <span class="ml-auto flex items-center gap-0.5">
               <Button
                 v-if="canCreate && node.level < 7"
                 type="link"
                 size="small"
-                title="添加下级"
                 @click.stop="openAdd(node)"
               >
                 <template #icon>
-                  <i class="icon-[mdi--plus-circle-outline] text-blue-500"></i>
+                  <i class="icon-[mdi--plus-circle-outline]"></i>
                 </template>
+                增加下级
               </Button>
               <Button
                 v-if="canEdit"
                 type="link"
                 size="small"
-                title="编辑"
                 @click.stop="openEdit(node)"
               >
                 <template #icon>
-                  <i class="icon-[mdi--pencil-outline] text-amber-500"></i>
+                  <i class="icon-[mdi--pencil-outline]"></i>
                 </template>
               </Button>
               <Button
                 v-if="canDelete"
                 type="link"
                 size="small"
-                title="删除"
+                danger
                 @click.stop="handleDelete(node)"
               >
                 <template #icon>
-                  <i class="icon-[mdi--trash-can-outline] text-red-500"></i>
+                  <i class="icon-[mdi--trash-can-outline]"></i>
                 </template>
               </Button>
             </span>
           </div>
         </template>
       </Tree>
-      <div v-else class="py-10 text-center text-gray-400">
-        {{
-          projectId ? '暂无项目划分，点击"单位工程"开始创建' : '请先选择项目'
-        }}
+      <div v-else class="py-16 text-center text-gray-400">
+        {{ projectId ? '暂无项目划分，点击上方按钮开始创建' : '请先选择项目' }}
       </div>
     </div>
 
@@ -315,6 +337,20 @@ function handleDelete(node) {
       @ok="submit"
       @cancel="closeDialog"
     >
+      <div v-if="parentInfo" class="mb-3 rounded bg-gray-50 p-3 text-sm">
+        上级：{{ parentInfo.name }}
+        <Tag
+          :style="{
+            color: levelColors[parentInfo.level] || '#8c8c8c',
+            backgroundColor: `${levelColors[parentInfo.level]}15`,
+            borderColor: `${levelColors[parentInfo.level]}40`,
+          }"
+          class="!ml-1 !text-xs"
+        >
+          {{ levelNames[parentInfo.level] }}
+        </Tag>
+        <span class="ml-1 text-gray-400">{{ parentInfo.code }}</span>
+      </div>
       <div class="mb-3">
         <div
           v-if="!isEdit && availableLevels.length > 1"
@@ -327,11 +363,7 @@ function handleDelete(node) {
           v-model:value="form.level"
           class="mb-3"
         >
-          <Radio
-            v-for="opt in availableLevels"
-            :key="opt.value"
-            :value="opt.value"
-          >
+          <Radio v-for="opt in availableLevels" :key="opt.value" :value="opt.value">
             {{ opt.label }}
           </Radio>
         </Radio.Group>
