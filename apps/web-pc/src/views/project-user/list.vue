@@ -1,7 +1,15 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue';
 
-import { Button, DatePicker, Input, message, Modal, Select, Tag } from 'antdv-next';
+import {
+  Button,
+  DatePicker,
+  Input,
+  message,
+  Modal,
+  Select,
+  Tag,
+} from 'antdv-next';
 
 import Resource from '#/api/resource';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
@@ -16,7 +24,9 @@ function onShowDetail(editing) {
   isEditing.value = editing;
 }
 
-const currentProjectId = computed(() => appStore.defaultProject?.id || undefined);
+const currentProjectId = computed(
+  () => appStore.defaultProject?.id || undefined,
+);
 const extraQuery = computed(() => ({ project_id: currentProjectId.value }));
 
 // ========================= 远程选项 =========================
@@ -24,7 +34,10 @@ const roleOptions = ref([]);
 const staffOptions = ref([]);
 
 async function loadRoles() {
-  const { data } = await new Resource('roles').list({ per_page: 'all', type: 'project' });
+  const { data } = await new Resource('roles').list({
+    per_page: 'all',
+    type: 'project',
+  });
   roleOptions.value = (data || []).map((r) => ({ value: r.id, label: r.name }));
 }
 
@@ -65,8 +78,18 @@ const gridColumns = ref([
   { field: 'user.mobile', title: '手机号', width: 130 },
   { field: 'project.name', title: '项目', minWidth: 140 },
   { field: 'joining_date', title: '加入时间', width: 110 },
-  { field: 'roles', title: '角色', minWidth: 160, slots: { default: 'default_roles' } },
-  { field: 'leave', title: '状态', width: 100, slots: { default: 'default_status' } },
+  {
+    field: 'roles',
+    title: '角色',
+    minWidth: 160,
+    slots: { default: 'default_roles' },
+  },
+  {
+    field: 'leave',
+    title: '状态',
+    width: 100,
+    slots: { default: 'default_status' },
+  },
   { field: 'created_at', title: '创建时间', width: 160 },
 ]);
 
@@ -118,7 +141,9 @@ async function submitLeave() {
     return;
   }
   try {
-    await new Resource(`project-users/${leaveTarget.value.id}/leave`).store(leaveForm.value);
+    await new Resource(`project-users/${leaveTarget.value.id}/leave`).store(
+      leaveForm.value,
+    );
     message.success('操作成功');
     leaveDialog.value = false;
     tableRef.value?.reload?.();
@@ -129,30 +154,14 @@ async function submitLeave() {
 
 // ========================= 批量操作 =========================
 const selectedRows = ref([]);
-const allSelected = ref(false);
-
-// 全选/取消全选（经 AppCrudTable 的 getGrid 拿到 VxeGrid 实例）
-function toggleSelectAll() {
-  const grid = tableRef.value?.getGrid?.();
-  if (!grid) return;
-  const target = !allSelected.value;
-  grid.setAllCheckboxRow(target);
-  allSelected.value = target;
-}
-
-// 勾选变化时同步全选状态
-function onSelectedChange(rows) {
-  selectedRows.value = rows;
-  const grid = tableRef.value?.getGrid?.();
-  if (grid && typeof grid.getCheckboxRecords === 'function') {
-    const total = grid.getFullData?.()?.length ?? 0;
-    const checked = grid.getCheckboxRecords().length;
-    allSelected.value = total > 0 && checked >= total;
-  }
-}
 
 const batchLeaveDialog = ref(false);
-const batchLeaveForm = ref({ type: 1, start_time: '', end_time: '', reason: '' });
+const batchLeaveForm = ref({
+  type: 1,
+  start_time: '',
+  end_time: '',
+  reason: '',
+});
 
 function openBatchLeave() {
   const rows = selectedRows.value || [];
@@ -206,10 +215,11 @@ async function submitBatchCancel() {
     return;
   }
   try {
-    const res = await new Resource('project-leaves/batch-cancel').store({ ids });
+    const res = await new Resource('project-leaves/batch-cancel').store({
+      ids,
+    });
     const count = res?.data?.count;
     message.success(count ? `已撤销 ${count} 名成员离岗` : '操作完成');
-    allSelected.value = false;
     tableRef.value?.reload?.();
   } catch (error) {
     message.error(error?.message || '批量撤销失败');
@@ -235,9 +245,10 @@ const staffSearchText = ref('');
 const filteredStaffOptions = computed(() => {
   const text = staffSearchText.value.toLowerCase();
   if (!text) return staffOptions.value;
-  return staffOptions.value.filter(opt => 
-    opt.name?.toLowerCase().includes(text) || 
-    opt.label?.toLowerCase().includes(text)
+  return staffOptions.value.filter(
+    (opt) =>
+      opt.name?.toLowerCase().includes(text) ||
+      opt.label?.toLowerCase().includes(text),
   );
 });
 
@@ -263,10 +274,10 @@ function toggleStaffOption(id) {
     batchAddForm.value.staff = [];
   }
   const index = batchAddForm.value.staff.indexOf(id);
-  if (index !== -1) {
-    batchAddForm.value.staff.splice(index, 1);
-  } else {
+  if (index === -1) {
     batchAddForm.value.staff.push(id);
+  } else {
+    batchAddForm.value.staff.splice(index, 1);
   }
   onStaffSelectChange([...batchAddForm.value.staff]);
 }
@@ -296,9 +307,11 @@ function openBatchAdd() {
 // 当选择员工时更新表格
 function onStaffSelectChange(selectedIds) {
   // 保留已有配置
-  const existingRows = new Map(batchAddTableRows.value.map((row) => [row.id, row]));
+  const existingRows = new Map(
+    batchAddTableRows.value.map((row) => [row.id, row]),
+  );
   const newRows = [];
-  
+
   for (const id of selectedIds) {
     if (existingRows.has(id)) {
       newRows.push(existingRows.get(id));
@@ -315,7 +328,7 @@ function onStaffSelectChange(selectedIds) {
       }
     }
   }
-  
+
   batchAddTableRows.value = newRows;
 }
 
@@ -333,8 +346,12 @@ function applyBatchFill() {
 
 // 从表格中移除行
 function removeBatchAddRow(staffId) {
-  batchAddTableRows.value = batchAddTableRows.value.filter((row) => row.id !== staffId);
-  batchAddForm.value.staff = batchAddForm.value.staff.filter((id) => id !== staffId);
+  batchAddTableRows.value = batchAddTableRows.value.filter(
+    (row) => row.id !== staffId,
+  );
+  batchAddForm.value.staff = batchAddForm.value.staff.filter(
+    (id) => id !== staffId,
+  );
 }
 
 async function submitBatchAdd() {
@@ -342,14 +359,16 @@ async function submitBatchAdd() {
     message.warning('请选择要添加的员工');
     return;
   }
-  
+
   // 检查每个员工是否都选择了角色
-  const missingRoles = batchAddTableRows.value.filter((row) => !row.roles || row.roles.length === 0);
+  const missingRoles = batchAddTableRows.value.filter(
+    (row) => !row.roles || row.roles.length === 0,
+  );
   if (missingRoles.length > 0) {
     message.warning('请为每个员工至少选择一个角色');
     return;
   }
-  
+
   try {
     const res = await new Resource('project-users/batch-store').store({
       project_id: currentProjectId.value,
@@ -360,7 +379,9 @@ async function submitBatchAdd() {
       })),
     });
     const { added = 0, updated = 0 } = res?.data || {};
-    message.success(`已添加 ${added} 名成员${updated ? `，更新 ${updated} 名` : ''}`);
+    message.success(
+      `已添加 ${added} 名成员${updated ? `，更新 ${updated} 名` : ''}`,
+    );
     batchAddDialog.value = false;
     tableRef.value?.reload?.();
   } catch (error) {
@@ -373,9 +394,27 @@ async function submitBatchAdd() {
 const formFields = computed(() => {
   if (isEditing.value) {
     return [
-      { field: 'user.name', type: 'text', span: 12, label: '姓名', displayOnly: true },
-      { field: 'user.mobile', type: 'text', span: 12, label: '手机号', displayOnly: true },
-      { field: 'project.name', type: 'text', span: 12, label: '项目', displayOnly: true },
+      {
+        field: 'user.name',
+        type: 'text',
+        span: 12,
+        label: '姓名',
+        displayOnly: true,
+      },
+      {
+        field: 'user.mobile',
+        type: 'text',
+        span: 12,
+        label: '手机号',
+        displayOnly: true,
+      },
+      {
+        field: 'project.name',
+        type: 'text',
+        span: 12,
+        label: '项目',
+        displayOnly: true,
+      },
       { field: 'joining_date', type: 'date', span: 12, label: '加入时间' },
       {
         field: 'roles',
@@ -388,10 +427,34 @@ const formFields = computed(() => {
     ];
   }
   return [
-    { field: 'user.name', type: 'text', span: 12, label: '姓名', displayOnly: true },
-    { field: 'user.mobile', type: 'text', span: 12, label: '手机号', displayOnly: true },
-    { field: 'project.name', type: 'text', span: 12, label: '项目', displayOnly: true },
-    { field: 'joining_date', type: 'text', span: 12, label: '加入时间', displayOnly: true },
+    {
+      field: 'user.name',
+      type: 'text',
+      span: 12,
+      label: '姓名',
+      displayOnly: true,
+    },
+    {
+      field: 'user.mobile',
+      type: 'text',
+      span: 12,
+      label: '手机号',
+      displayOnly: true,
+    },
+    {
+      field: 'project.name',
+      type: 'text',
+      span: 12,
+      label: '项目',
+      displayOnly: true,
+    },
+    {
+      field: 'joining_date',
+      type: 'text',
+      span: 12,
+      label: '加入时间',
+      displayOnly: true,
+    },
     { field: 'roles', type: 'slot', span: 12, label: '角色' },
     { field: 'leave', type: 'slot', span: 12, label: '状态' },
   ];
@@ -426,14 +489,18 @@ onMounted(() => {
     <AppCrudTable
       ref="tableRef"
       v-model:selected="selectedRows"
-      @update:selected="onSelectedChange"
       api-url="project-users"
       permission-name="project_user"
       :extra-query="extraQuery"
       :filter-fields="filterFields"
       :fields="formFields"
       :inline-actions="['view', 'edit']"
-      :grid-options="{ columns: gridColumns, checkboxConfig: { highlight: true, checkStrictly: true }, showOverflow: false, columnConfig: { resizable: true } }"
+      :grid-options="{
+        columns: gridColumns,
+        checkboxConfig: { highlight: true, showHeader: true },
+        showOverflow: false,
+        columnConfig: { resizable: true },
+      }"
       :open-mode="{ create: 'drawer', detail: 'drawer' }"
       :form-attrs="{ layout: 'vertical', size: 'medium' }"
       title="项目成员"
@@ -445,12 +512,15 @@ onMounted(() => {
     >
       <template #toolbar-append>
         <div class="flex items-center gap-2">
-          <Button size="small" @click="toggleSelectAll">
-            {{ allSelected ? '取消全选' : '全选' }}
-          </Button>
-          <Button size="small" type="primary" @click="openBatchAdd">批量添加成员</Button>
-          <Button size="small" type="primary" ghost @click="openBatchLeave">批量离岗</Button>
-          <Button size="small" danger @click="submitBatchCancel">批量撤销离岗</Button>
+          <Button size="small" type="primary" @click="openBatchAdd">
+批量添加成员
+</Button>
+          <Button size="small" type="primary" ghost @click="openBatchLeave">
+批量离岗
+</Button>
+          <Button size="small" danger @click="submitBatchCancel">
+批量撤销离岗
+</Button>
         </div>
       </template>
 
@@ -464,29 +534,42 @@ onMounted(() => {
       <template #field_roles="{ modelValue }">
         <span class="text-sm">
           {{
-            (modelValue || []).map((r) => {
-              const label = typeof r === 'object' ? r.name || r.display_name : r;
-              return roleOptions.find((o) => o.value === label)?.label || label;
-            }).join('、') || '-'
+            (modelValue || [])
+              .map((r) => {
+                const label =
+                  typeof r === 'object' ? r.name || r.display_name : r;
+                return (
+                  roleOptions.find((o) => o.value === label)?.label || label
+                );
+              })
+              .join('、') || '-'
           }}
         </span>
       </template>
       <template #field_leave="{ modelValue }">
         <Tag v-if="modelValue?.status === 'active'" color="red">
-          {{ modelValue.type_label || leaveTypeName[modelValue.type] || '离岗中' }}
+          {{
+            modelValue.type_label || leaveTypeName[modelValue.type] || '离岗中'
+          }}
         </Tag>
         <Tag v-else color="green">在岗</Tag>
       </template>
 
       <template #default_roles="{ row }">
         <span class="text-sm">
-          {{ row.roles?.map((r) => r.name || r.display_name).join('、') || '-' }}
+          {{
+            row.roles?.map((r) => r.name || r.display_name).join('、') || '-'
+          }}
         </span>
       </template>
 
       <template #default_status="{ row }">
         <Tag :color="row.leave?.status === 'active' ? 'red' : 'green'">
-          {{ row.leave?.status === 'active' ? row.leave.type_label || leaveTypeName[row.leave.type] : '在岗' }}
+          {{
+            row.leave?.status === 'active'
+              ? row.leave.type_label || leaveTypeName[row.leave.type]
+              : '在岗'
+          }}
         </Tag>
       </template>
     </AppCrudTable>
@@ -603,7 +686,7 @@ onMounted(() => {
                   :key="id"
                   class="inline-flex items-center rounded bg-blue-100 pl-2 pr-1 text-sm text-blue-800"
                 >
-                  {{ staffOptions.find(opt => opt.value === id)?.name || id }}
+                  {{ staffOptions.find((opt) => opt.value === id)?.name || id }}
                   <button
                     class="ml-1 rounded-full p-0.5 hover:bg-blue-200"
                     @click.stop="removeStaffFromSelection(id)"
@@ -611,7 +694,10 @@ onMounted(() => {
                     ×
                   </button>
                 </span>
-                <span v-if="batchAddForm.staff.length > 5" class="text-sm text-gray-500">
+                <span
+                  v-if="batchAddForm.staff.length > 5"
+                  class="text-sm text-gray-500"
+                >
                   +{{ batchAddForm.staff.length - 5 }} 项
                 </span>
               </template>
@@ -634,7 +720,9 @@ onMounted(() => {
                 v-for="option in filteredStaffOptions"
                 :key="option.value"
                 class="flex cursor-pointer items-center px-3 py-2 hover:bg-blue-50"
-                :class="{ 'bg-blue-50': batchAddForm.staff?.includes(option.value) }"
+                :class="{
+                  'bg-blue-50': batchAddForm.staff?.includes(option.value),
+                }"
                 @click="toggleStaffOption(option.value)"
               >
                 <div class="flex items-center flex-1">
@@ -650,25 +738,40 @@ onMounted(() => {
                     {{ option.name?.charAt(0) || '?' }}
                   </div>
                   <div>
-                    <div class="text-sm font-medium text-gray-800">{{ option.name }}</div>
+                    <div class="text-sm font-medium text-gray-800">
+                      {{ option.name }}
+                    </div>
                   </div>
                 </div>
                 <div
                   v-if="batchAddForm.staff?.includes(option.value)"
                   class="flex h-5 w-5 items-center justify-center rounded-full bg-blue-500"
                 >
-                  <svg class="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                  <svg
+                    class="h-3 w-3 text-white"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M5 13l4 4L19 7"
+                    />
                   </svg>
                 </div>
               </div>
-              <div v-if="filteredStaffOptions.length === 0" class="p-4 text-center text-gray-500">
+              <div
+                v-if="filteredStaffOptions.length === 0"
+                class="p-4 text-center text-gray-500"
+              >
                 暂无数据
               </div>
             </div>
           </div>
         </div>
-        
+
         <!-- 成员配置表格 -->
         <div v-if="batchAddTableRows.length > 0">
           <div class="mb-2 text-sm text-gray-600">成员配置</div>
@@ -676,10 +779,14 @@ onMounted(() => {
             <table class="w-full border-collapse">
               <thead>
                 <tr class="bg-gray-50">
-                  <th class="border border-gray-200 px-4 py-2 text-left text-sm font-medium text-gray-700">
+                  <th
+                    class="border border-gray-200 px-4 py-2 text-left text-sm font-medium text-gray-700"
+                  >
                     员工
                   </th>
-                  <th class="border border-gray-200 px-4 py-2 text-left text-sm font-medium text-gray-700">
+                  <th
+                    class="border border-gray-200 px-4 py-2 text-left text-sm font-medium text-gray-700"
+                  >
                     <div class="flex items-center">
                       <span>角色</span>
                       <Select
@@ -693,7 +800,9 @@ onMounted(() => {
                       />
                     </div>
                   </th>
-                  <th class="border border-gray-200 px-4 py-2 text-left text-sm font-medium text-gray-700">
+                  <th
+                    class="border border-gray-200 px-4 py-2 text-left text-sm font-medium text-gray-700"
+                  >
                     <div class="flex items-center">
                       <span>加入时间</span>
                       <DatePicker
@@ -707,13 +816,19 @@ onMounted(() => {
                       />
                     </div>
                   </th>
-                  <th class="border border-gray-200 px-4 py-2 text-center text-sm font-medium text-gray-700">
+                  <th
+                    class="border border-gray-200 px-4 py-2 text-center text-sm font-medium text-gray-700"
+                  >
                     操作
                   </th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="row in batchAddTableRows" :key="row.id" class="hover:bg-gray-50">
+                <tr
+                  v-for="row in batchAddTableRows"
+                  :key="row.id"
+                  class="hover:bg-gray-50"
+                >
                   <td class="border border-gray-200 px-4 py-2">
                     <div class="flex items-center">
                       <img

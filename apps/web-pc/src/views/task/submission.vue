@@ -12,7 +12,17 @@ import { computed, ref, watch } from 'vue';
 import { useAccess } from '@vben/access';
 import { useUserStore } from '@vben/stores';
 
-import { Button, DatePicker, Drawer, Input, message, Modal, Radio, Select, Tag } from 'antdv-next';
+import {
+  Button,
+  DatePicker,
+  Drawer,
+  Input,
+  message,
+  Modal,
+  Radio,
+  Select,
+  Tag,
+} from 'antdv-next';
 
 import Resource from '#/api/resource';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
@@ -24,7 +34,9 @@ import { useAppStore } from '#/store';
 const appStore = useAppStore();
 const userStore = useUserStore();
 const { hasAccessByCodes } = useAccess();
-const currentProjectId = computed(() => appStore.defaultProject?.id || undefined);
+const currentProjectId = computed(
+  () => appStore.defaultProject?.id || undefined,
+);
 const extraQuery = computed(() => ({ project_id: currentProjectId.value }));
 
 // 查询范围：2=全部（默认，审核者看全部） 1=仅本人（后端 scope=1 按 executor_id 过滤）
@@ -62,13 +74,19 @@ async function loadProcedures() {
     per_page: 'all',
     project_id: currentProjectId.value,
   });
-  procedureOptions.value = (data || []).map((p) => ({ value: p.id, label: p.name }));
+  procedureOptions.value = (data || []).map((p) => ({
+    value: p.id,
+    label: p.name,
+  }));
 }
 
 const measureOptions = ref([]);
 async function loadMeasures() {
   const { data } = await new Resource('measures').list({ per_page: 'all' });
-  measureOptions.value = (data || []).map((m) => ({ value: m.id, label: m.name }));
+  measureOptions.value = (data || []).map((m) => ({
+    value: m.id,
+    label: m.name,
+  }));
 }
 
 const submissionStateOptions = [
@@ -82,27 +100,76 @@ const filterFields = ref([
   { field: 'procedure_id', label: '工序', type: 'slot', span: 8 },
   { field: 'measure_id', label: '监理方式', type: 'slot', span: 8 },
   { field: 'date_range', label: '日期', type: 'slot', span: 8 },
-  { field: 'submission_status', label: '提交状态', type: 'select', span: 8, default: 1, attrs: { options: [
-    { value: 0, label: '待提交' },
-    { value: 1, label: '已提交' },
-  ] } },
-  { field: 'submission_timeouts', label: '超时状态', type: 'select', span: 8, attrs: { multiple: true, options: [
-    { value: 0, label: '正常' },
-    { value: 1, label: '超时' },
-  ] } },
-  { field: 'submission_states', label: '审核状态', type: 'select', span: 8, attrs: { multiple: true, options: submissionStateOptions } },
+  {
+    field: 'submission_status',
+    label: '提交状态',
+    type: 'select',
+    span: 8,
+    default: 1,
+    attrs: {
+      options: [
+        { value: 0, label: '待提交' },
+        { value: 1, label: '已提交' },
+      ],
+    },
+  },
+  {
+    field: 'submission_timeouts',
+    label: '超时状态',
+    type: 'select',
+    span: 8,
+    attrs: {
+      multiple: true,
+      options: [
+        { value: 0, label: '正常' },
+        { value: 1, label: '超时' },
+      ],
+    },
+  },
+  {
+    field: 'submission_states',
+    label: '审核状态',
+    type: 'select',
+    span: 8,
+    attrs: { multiple: true, options: submissionStateOptions },
+  },
 ]);
 
 const gridColumns = ref([
   { type: 'checkbox', width: 45, align: 'center' },
-  { field: 'submission.code', title: '编号', width: 140, slots: { default: 'default_code' } },
+  {
+    field: 'submission.code',
+    title: '编号',
+    width: 140,
+    slots: { default: 'default_code' },
+  },
   { field: 'measure.name', title: '监理方式', minWidth: 100 },
   { field: 'procedure.name', title: '工序', minWidth: 100 },
   { field: 'form.name', title: '名称', minWidth: 120 },
-  { field: 'executor', title: '执行人', minWidth: 100, slots: { default: 'default_executor' } },
-  { field: 'state', title: '任务状态', width: 100, slots: { default: 'default_state' } },
-  { field: 'submission.state', title: '记录状态', width: 100, slots: { default: 'default_submission_state' } },
-  { field: 'submission_timeout', title: '超时', width: 80, slots: { default: 'default_timeout' } },
+  {
+    field: 'executor',
+    title: '执行人',
+    minWidth: 100,
+    slots: { default: 'default_executor' },
+  },
+  {
+    field: 'state',
+    title: '任务状态',
+    width: 100,
+    slots: { default: 'default_state' },
+  },
+  {
+    field: 'submission.state',
+    title: '记录状态',
+    width: 100,
+    slots: { default: 'default_submission_state' },
+  },
+  {
+    field: 'submission_timeout',
+    title: '超时',
+    width: 80,
+    slots: { default: 'default_timeout' },
+  },
   { field: 'date', title: '日期', width: 110 },
   { field: 'start_time', title: '开始时间', width: 100 },
   { field: 'end_time', title: '结束时间', width: 100 },
@@ -119,7 +186,8 @@ const actionsConfig = [
     visible: (row) =>
       row.executor?.id === userStore.userInfo?.id &&
       row.state > 1 &&
-      (row.submission_id === 0 || (row.submission_id > 0 && row.submission?.state !== 2)),
+      (row.submission_id === 0 ||
+        (row.submission_id > 0 && row.submission?.state !== 2)),
   },
   { key: 'view', visible: (row) => row.submission_id > 0 },
 ];
@@ -129,7 +197,9 @@ const defaultValues = ref({});
 
 function detailFormat(data) {
   // 备份原始值（重置用）
-  defaultValues.value = JSON.parse(JSON.stringify(data.submission?.values || []));
+  defaultValues.value = JSON.parse(
+    JSON.stringify(data.submission?.values || []),
+  );
   return data;
 }
 
@@ -166,8 +236,8 @@ async function save() {
       prereqWarnDialog.value = true;
     }
     tableRef.value?.reload?.();
-  } catch (e) {
-    console.error(e);
+  } catch (error) {
+    console.error(error);
   }
 }
 
@@ -180,8 +250,10 @@ function openPrereqWarnings(row) {
     .list({ task_id: row.id, per_page: 100 })
     .then((res) => {
       const data = res?.data?.data || res?.data || [];
-      prereqWarnings.value = Array.isArray(data) ? data.filter((w) => w.status === 1) : [];
-      if (!prereqWarnings.value.length) {
+      prereqWarnings.value = Array.isArray(data)
+        ? data.filter((w) => w.status === 1)
+        : [];
+      if (prereqWarnings.value.length === 0) {
         message.info('该任务无前置工序警告');
         return;
       }
@@ -206,7 +278,9 @@ async function resolvePrereqWarning(w) {
 
 function reset() {
   if (editingItem.value.submission) {
-    editingItem.value.submission.values = JSON.parse(JSON.stringify(defaultValues.value));
+    editingItem.value.submission.values = JSON.parse(
+      JSON.stringify(defaultValues.value),
+    );
   }
 }
 
@@ -238,15 +312,17 @@ async function submitAudit() {
   }
   auditSubmitting.value = true;
   try {
-    await new Resource(`submissions/${auditRow.value.submission_id}/audit`).store({
+    await new Resource(
+      `submissions/${auditRow.value.submission_id}/audit`,
+    ).store({
       status: auditData.value.status,
       reason: auditData.value.reason,
     });
     message.success('审核成功');
     auditDialog.value = false;
     tableRef.value?.reload?.();
-  } catch (e) {
-    console.error(e);
+  } catch (error) {
+    console.error(error);
   } finally {
     auditSubmitting.value = false;
   }
@@ -262,13 +338,17 @@ function setNonconformanceFields(warnings) {
   nonconformanceEditing.value = {};
   nonconformanceFields.value = [];
   for (const fieldKey in warnings) {
-    const field = submissionRef.value?.formFields?.find((f) => `_${f.id}` === fieldKey);
+    const field = submissionRef.value?.formFields?.find(
+      (f) => `_${f.id}` === fieldKey,
+    );
     if (!field) continue;
     const warns = warnings[fieldKey] || [];
     const tips =
       field.type === 'switch'
         ? `检查结果：${(field.options || ['是', '否'])[warns[0]?.value == 1 ? 0 : 1] || '否'}（要求：${warns[0]?.message || ''}）`
-        : warns.map((w) => `检查结果：${w.value || '未填写'}，${w.message}`).join('；');
+        : warns
+            .map((w) => `检查结果：${w.value || '未填写'}，${w.message}`)
+            .join('；');
     nonconformanceFields.value.push({
       field: `_${field.id}`,
       label: field.name,
@@ -307,12 +387,14 @@ const batching = ref(false);
 
 // 勾选行中已提交的记录（未提交无法渲染）
 const selectableSubmissionIds = computed(() =>
-  selectRows.value.filter((r) => r.submission_id > 0).map((r) => r.submission_id),
+  selectRows.value
+    .filter((r) => r.submission_id > 0)
+    .map((r) => r.submission_id),
 );
 
 async function batch(isExport) {
   const ids = selectableSubmissionIds.value;
-  if (!ids.length) {
+  if (ids.length === 0) {
     message.warning('请至少选择一条已提交的记录');
     return;
   }
@@ -340,8 +422,8 @@ async function batch(isExport) {
       };
       previewOpen.value = true;
     }
-  } catch (e) {
-    console.error(e);
+  } catch (error) {
+    console.error(error);
   } finally {
     batching.value = false;
   }
@@ -358,7 +440,7 @@ watch(() => appStore.defaultProject?.id, refreshAll);
 
 <template>
   <div>
-     <AppCrudTable
+    <AppCrudTable
       ref="tableRef"
       v-model="editingItem"
       v-model:selected="selectRows"
@@ -370,7 +452,12 @@ watch(() => appStore.defaultProject?.id, refreshAll);
       :actions-config="actionsConfig"
       :detail-format="detailFormat"
       :fields="[]"
-      :grid-options="{ columns: gridColumns, checkboxConfig: { highlight: true, checkStrictly: true }, showOverflow: false, columnConfig: { resizable: true } }"
+      :grid-options="{
+        columns: gridColumns,
+        checkboxConfig: { highlight: true, showHeader: true },
+        showOverflow: false,
+        columnConfig: { resizable: true },
+      }"
       :open-mode="{ create: 'drawer', detail: 'drawer' }"
       :toolbar="{ filter: true, create: false, refresh: true }"
       title="任务记录"
@@ -473,12 +560,16 @@ watch(() => appStore.defaultProject?.id, refreshAll);
             :rules="editingItem.submission?.rules || {}"
             :readonly="!isEditing"
           />
-          <div v-else class="py-10 text-center text-gray-400">该任务未配置表单</div>
+          <div v-else class="py-10 text-center text-gray-400">
+            该任务未配置表单
+          </div>
         </div>
       </template>
 
       <template #form-action>
-        <Button v-if="editingItem.submission_id" @click="openPreview">预览</Button>
+        <Button v-if="editingItem.submission_id" @click="openPreview">
+预览
+</Button>
         <template v-if="isEditing">
           <Button @click="reset">重置</Button>
           <Button type="primary" @click="save">提交</Button>
@@ -486,7 +577,11 @@ watch(() => appStore.defaultProject?.id, refreshAll);
       </template>
 
       <template #default_code="{ row }">
-        <Tag v-if="row.submission_id" color="blue">{{ row.submission?.code || '-' }}</Tag>
+        <Tag v-if="row.submission_id" color="blue">
+{{
+          row.submission?.code || '-'
+        }}
+</Tag>
         <span v-else>-</span>
       </template>
 
@@ -495,13 +590,18 @@ watch(() => appStore.defaultProject?.id, refreshAll);
       </template>
 
       <template #default_state="{ row }">
-        <Tag :color="!row.status ? 'red' : stateColorMap[row.state] || 'default'">
+        <Tag
+          :color="!row.status ? 'red' : stateColorMap[row.state] || 'default'"
+        >
           {{ !row.status ? '已取消' : row.state_label || '未知' }}
         </Tag>
       </template>
 
       <template #default_submission_state="{ row }">
-        <Tag v-if="row.submission_id" :color="submissionStateColorMap[row.submission?.state] || 'default'">
+        <Tag
+          v-if="row.submission_id"
+          :color="submissionStateColorMap[row.submission?.state] || 'default'"
+        >
           {{ row.submission?.state_label || '-' }}
         </Tag>
         <span v-else>-</span>
@@ -522,11 +622,7 @@ watch(() => appStore.defaultProject?.id, refreshAll);
         >
           审核
         </Button>
-        <Button
-          type="link"
-          size="small"
-          @click="openPrereqWarnings(row)"
-        >
+        <Button type="link" size="small" @click="openPrereqWarnings(row)">
           前置警告
         </Button>
       </template>
@@ -550,7 +646,9 @@ watch(() => appStore.defaultProject?.id, refreshAll);
           <div class="min-w-0 flex-1 text-sm">
             <div>
               桩号
-              <span class="font-medium">{{ w.milepost?.name || '项目整体' }}</span>
+              <span class="font-medium">{{
+                w.milepost?.name || '项目整体'
+              }}</span>
               尚未完成前置工序
               <span class="font-medium">{{ w.prerequisite_name }}</span>
             </div>
@@ -559,7 +657,12 @@ watch(() => appStore.defaultProject?.id, refreshAll);
             </div>
           </div>
           <Button
-            v-if="hasAccessByCodes(['prerequisite_warning.resolve', 'submission.audit'])"
+            v-if="
+              hasAccessByCodes([
+                'prerequisite_warning.resolve',
+                'submission.audit',
+              ])
+            "
             size="small"
             type="link"
             @click="resolvePrereqWarning(w)"
@@ -626,7 +729,10 @@ watch(() => appStore.defaultProject?.id, refreshAll);
             />
           </div>
         </div>
-        <div v-if="!nonconformanceFields.length" class="py-6 text-center text-gray-400">
+        <div
+          v-if="!nonconformanceFields.length"
+          class="py-6 text-center text-gray-400"
+        >
           无不符合项字段
         </div>
       </div>
@@ -640,10 +746,7 @@ watch(() => appStore.defaultProject?.id, refreshAll);
       destroy-on-close
     >
       <div v-if="previewDocument" class="h-[calc(100vh-120px)]">
-        <AppOffice
-          :document="previewDocument"
-          mode="view"
-        />
+        <AppOffice :document="previewDocument" mode="view" />
       </div>
     </Drawer>
   </div>

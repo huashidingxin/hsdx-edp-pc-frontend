@@ -40,7 +40,6 @@ const levelColors = {
   7: 'purple',
 };
 
-// 每个父层级可选的子层级（与 App 端一致）
 const parentLevelOptions = {
   null: [{ label: '单位工程', value: 1 }],
   1: [
@@ -69,7 +68,8 @@ function toTreeNode(node) {
     code: node.code,
     level: node.level,
     parent_id: node.parent_id,
-    children: (node.children || []).map(toTreeNode),
+    title: node.name,
+    children: (node.children || []).map((item) => toTreeNode(item)),
   };
 }
 
@@ -84,7 +84,7 @@ function buildTree(flat) {
       roots.push(node);
     }
   });
-  return roots.map(toTreeNode);
+  return roots.map((item) => toTreeNode(item));
 }
 
 function collectKeys(nodes) {
@@ -124,7 +124,7 @@ async function copyCode(code) {
     await navigator.clipboard.writeText(String(code || ''));
     message.success('编号已复制');
   } catch {
-    /* 剪贴板不可用时静默 */
+    /* 静默 */
   }
 }
 
@@ -141,7 +141,9 @@ const form = ref({
   project_id: null,
 });
 
-const availableLevels = computed(() => parentLevelOptions[form.value.parent_level] || []);
+const availableLevels = computed(
+  () => parentLevelOptions[form.value.parent_level] || [],
+);
 
 function openAdd(parent) {
   isEdit.value = false;
@@ -180,13 +182,15 @@ async function submit() {
     message.warning('请输入名称');
     return;
   }
+  if (!form.value.code?.trim()) {
+    message.warning('请输入编号');
+    return;
+  }
   try {
     const api = new Resource('divisions');
-    if (isEdit.value) {
-      await api.update(String(editingId.value), { ...form.value });
-    } else {
-      await api.store({ ...form.value });
-    }
+    isEdit.value
+      ? await api.update(String(editingId.value), { ...form.value })
+      : await api.store({ ...form.value });
     message.success(isEdit.value ? '保存成功' : '创建成功');
     open.value = false;
     loadAll();
@@ -225,16 +229,18 @@ function handleDelete(node) {
           </template>
           单位工程
         </Button>
-        <span v-if="!projectId" class="text-xs text-gray-400">
+        <span v-if="!projectId" class="ml-2 text-xs text-gray-400">
           请先在右上角选择项目
         </span>
       </div>
-      <Button @click="toggleAll">
+      <Button v-if="treeData.length" @click="toggleAll">
         {{ allExpanded ? '全部收起' : '全部展开' }}
       </Button>
     </div>
 
-    <div class="rounded border border-gray-200 bg-white p-3 dark:border-gray-600">
+    <div
+      class="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-600"
+    >
       <Tree
         v-if="treeData.length"
         :expanded-keys="expandedKeys"
@@ -242,24 +248,28 @@ function handleDelete(node) {
         block-node
         @expand="(keys) => (expandedKeys = keys)"
       >
-        <template #title="{ id, name, code, level, parent_id }">
-          <div class="flex items-center gap-2">
-            <Tag :color="levelColors[level] || 'default'">{{ levelNames[level] }}</Tag>
-            <span>{{ name }}</span>
-            <span
-              class="cursor-pointer text-xs text-gray-400 hover:text-gray-600"
-              title="点击复制编号"
-              @click.stop="copyCode(code)"
+        <template #title="node">
+          <div class="flex items-center gap-2 py-1">
+            <Tag
+              :color="levelColors[node.level] || 'default'"
+              class="!mr-0 !text-xs"
             >
-              {{ code }}
+              {{ levelNames[node.level] }}
+            </Tag>
+            <span class="text-sm font-medium">{{ node.name }}</span>
+            <span
+              class="cursor-pointer rounded bg-gray-50 px-1.5 py-0.5 text-xs text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              @click.stop="copyCode(node.code)"
+            >
+              {{ node.code }}
             </span>
-            <span class="ml-auto flex items-center gap-1">
+            <span class="ml-auto flex items-center gap-0.5">
               <Button
-                v-if="canCreate && level < 7"
+                v-if="canCreate && node.level < 7"
                 type="link"
                 size="small"
                 title="添加下级"
-                @click.stop="openAdd({ id, code, level })"
+                @click.stop="openAdd(node)"
               >
                 <template #icon>
                   <i class="icon-[mdi--plus-circle-outline] text-blue-500"></i>
@@ -270,7 +280,7 @@ function handleDelete(node) {
                 type="link"
                 size="small"
                 title="编辑"
-                @click.stop="openEdit({ id, name, code, level, parent_id })"
+                @click.stop="openEdit(node)"
               >
                 <template #icon>
                   <i class="icon-[mdi--pencil-outline] text-amber-500"></i>
@@ -281,7 +291,7 @@ function handleDelete(node) {
                 type="link"
                 size="small"
                 title="删除"
-                @click.stop="handleDelete({ id, name })"
+                @click.stop="handleDelete(node)"
               >
                 <template #icon>
                   <i class="icon-[mdi--trash-can-outline] text-red-500"></i>
@@ -292,7 +302,9 @@ function handleDelete(node) {
         </template>
       </Tree>
       <div v-else class="py-10 text-center text-gray-400">
-        {{ projectId ? '暂无项目划分，点击"单位工程"开始创建' : '请先选择项目' }}
+        {{
+          projectId ? '暂无项目划分，点击"单位工程"开始创建' : '请先选择项目'
+        }}
       </div>
     </div>
 
@@ -304,7 +316,10 @@ function handleDelete(node) {
       @cancel="closeDialog"
     >
       <div class="mb-3">
-        <div v-if="!isEdit && availableLevels.length > 1" class="mb-2 text-sm text-gray-500">
+        <div
+          v-if="!isEdit && availableLevels.length > 1"
+          class="mb-2 text-sm text-gray-500"
+        >
           选择层级
         </div>
         <Radio.Group
@@ -312,14 +327,22 @@ function handleDelete(node) {
           v-model:value="form.level"
           class="mb-3"
         >
-          <Radio v-for="opt in availableLevels" :key="opt.value" :value="opt.value">
+          <Radio
+            v-for="opt in availableLevels"
+            :key="opt.value"
+            :value="opt.value"
+          >
             {{ opt.label }}
           </Radio>
         </Radio.Group>
-        <div class="mb-2 text-sm text-gray-500">名称</div>
+        <div class="mb-2 text-sm text-gray-500">
+          名称 <span class="text-red-400">*</span>
+        </div>
         <Input v-model:value="form.name" placeholder="请输入名称" />
-        <div class="mb-2 mt-3 text-sm text-gray-500">编号</div>
-        <Input v-model:value="form.code" placeholder="请输入编号" />
+        <div class="mb-2 mt-3 text-sm text-gray-500">
+          编号 <span class="text-red-400">*</span>
+        </div>
+        <Input v-model:value="form.code" placeholder="请输入编号（必填）" />
       </div>
     </Modal>
   </div>
