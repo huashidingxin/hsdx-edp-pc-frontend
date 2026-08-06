@@ -41,17 +41,22 @@ const defaultValues = ref([]);
 const warnings = ref([]);
 
 function detailFormat(data) {
-  defaultValues.value = JSON.parse(
-    JSON.stringify(data.submission?.values || []),
-  );
-  editingItem.value._values = JSON.parse(JSON.stringify(defaultValues.value));
-  editingItem.value._formId =
-    data.form_id ||
-    data.submission?.form_id ||
-    data.project?.supervision_log_form_id;
-  editingItem.value._projectId = data.project_id;
+  // 注意：不能只在 editingItem 上挂 _values，loadDetail 会用返回值整体替换 modelValue，
+  // 挂在原对象上的字段会随替换丢失，导致 props.values 变回 []、回显被清空。
+  // 因此把 _values/_formId/_projectId 并入返回值，随 detailFormat 返回的对象一起保留。
+  const submission = data.submission || {};
+  const values = submission.values || [];
+  defaultValues.value = JSON.parse(JSON.stringify(values));
   warnings.value = data.warnings || [];
-  return data;
+  return {
+    ...data,
+    _values: JSON.parse(JSON.stringify(values)),
+    _formId:
+      data.form_id ||
+      submission.form_id ||
+      data.project?.supervision_log_form_id,
+    _projectId: data.project_id,
+  };
 }
 
 // ---- 提交：PUT supervision-logs/{id} { form_id, values } ----
@@ -66,7 +71,7 @@ async function save() {
     const res = await new Resource('supervision-logs').update(
       editingItem.value.id,
       {
-        form_id: editingItem.value._formId,
+        form_id: effectiveFormId.value,
         values: formData.values,
       },
     );
@@ -574,7 +579,7 @@ function rowState(row) {
       </div>
     </template>
 
-    <template #form-action>
+    <template #form-actions>
       <Button
         v-if="Number(editingItem.submission_id) > 0"
         @click="openPreview(editingItem)"
@@ -711,7 +716,7 @@ function rowState(row) {
   <Drawer
     v-model:open="previewOpen"
     title="记录预览"
-    width="90%"
+    width="880px"
     destroy-on-close
   >
     <div v-if="previewDocument" class="h-[calc(100vh-120px)]">
