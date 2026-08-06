@@ -1,11 +1,12 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue';
 
+import { Page } from '@vben/common-ui';
+
 import { Button, Drawer, message, TabPane, Tabs, Tag, Tree } from 'antdv-next';
 
 import Resource from '#/api/resource';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
-import { Page } from '@vben/common-ui';
 
 const filterFields = ref([
   { field: 'name', label: '编码', type: 'text', span: 8 },
@@ -17,15 +18,14 @@ const formFields = ref([
     attrs: { placeholder: '如 admin / manager' } },
   { field: 'display_name', type: 'text', label: '名称', span: 12, required: true },
   {
-    field: 'scope',
+    field: 'type',
     type: 'select',
-    label: '作用域',
+    label: '角色类型',
     span: 12,
     attrs: {
       items: [
-        { id: 1, name: '项目级' },
-        { id: 2, name: '团队级' },
-        { id: 3, name: '全局' },
+        { id: 'system', name: '平台角色' },
+        { id: 'project', name: '项目角色' },
       ],
     },
   },
@@ -35,9 +35,15 @@ const gridColumns = ref([
   { field: 'id', title: 'ID', width: 70 },
   { field: 'name', title: '编码', minWidth: 160 },
   { field: 'display_name', title: '名称', minWidth: 160 },
+  { field: 'type', title: '类型', width: 90, slots: { default: 'default_type' } },
   { field: 'scope', title: '作用域', width: 90, slots: { default: 'default_scope' } },
   { field: 'created_at', title: '创建时间', width: 160 },
 ]);
+
+const typeMap = { system: '平台角色', project: '项目角色' };
+function typeText(t) {
+  return typeMap[t] || '-';
+}
 
 const scopeMap = { 1: '项目级', 2: '团队级', 3: '全局' };
 function scopeText(s) {
@@ -79,10 +85,15 @@ function buildTree(list) {
   return roots;
 }
 
+/** 当前分配权限的角色的权限类型（platform=平台权限 / project=项目权限），按角色类型过滤权限树 */
+const assignRoleScope = ref('project');
+
 const groupData = computed(() => {
   const result = {};
   PERMISSION_GROUPS.forEach((g) => {
-    const list = allPermissions.value.filter((p) => g.types.includes(p.type));
+    const list = allPermissions.value.filter(
+      (p) => g.types.includes(p.type) && p.scope === assignRoleScope.value,
+    );
     result[g.key] = {
       list,
       tree: buildTree(list),
@@ -136,7 +147,7 @@ const expandedByGroup = ref({ func: [], pc: [], app: [] });
 async function openAssign(row) {
   assignRoleId.value = row.id;
   assignRoleName.value = row.display_name || row.name;
-  assignRoleScope.value = row.scope;
+  assignRoleScope.value = row.type === 'system' ? 'platform' : 'project';
   activeTab.value = 'func';
   checkedByGroup.value = { func: [], pc: [], app: [] };
   expandedByGroup.value = {
@@ -231,6 +242,9 @@ onMounted(loadPermissions);
       title="角色管理"
       class="p-4"
     >
+      <template #default_type="{ row }">
+        <Tag :color="row.type === 'project' ? 'blue' : 'green'">{{ typeText(row.type) }}</Tag>
+      </template>
       <template #default_scope="{ row }">
         <Tag color="purple">{{ scopeText(row.scope) }}</Tag>
       </template>
@@ -243,7 +257,8 @@ onMounted(loadPermissions);
       @close="assignOpen = false"
     >
     <div class="mb-2 text-xs text-gray-500">
-      作用域：{{ scopeText(assignRoleScope) }}。勾选父节点将自动勾选其全部子权限；
+      权限范围：{{ assignRoleScope === 'platform' ? '平台权限（平台角色专用）' : '项目权限（项目角色专用）' }}。
+      勾选父节点将自动勾选其全部子权限；
       取消勾选仅影响该节点及其子孙，父节点可独立保留。
     </div>
     <Tabs v-model:active-key="activeTab">
@@ -255,17 +270,18 @@ onMounted(loadPermissions);
             已选 {{ checkedByGroup[g.key].length }} / {{ groupData[g.key]?.list.length || 0 }}
           </span>
         </div>
-        <Tree
-          :checked-keys="checkedByGroup[g.key]"
-          :tree-data="groupData[g.key]?.tree || []"
-          :expanded-keys="expandedByGroup[g.key]"
-          checkable
-          check-strictly
-          block-node
-          :height="440"
-          @check="(keys, e) => onGroupCheck(g.key, keys, e)"
-          @expand="(keys) => (expandedByGroup[g.key] = keys)"
-        />
+        <div style="height: calc(100vh - 260px); overflow-y: auto" class="rounded border border-gray-200 dark:border-gray-600">
+          <Tree
+            :checked-keys="checkedByGroup[g.key]"
+            :tree-data="groupData[g.key]?.tree || []"
+            :expanded-keys="expandedByGroup[g.key]"
+            checkable
+            check-strictly
+            block-node
+            @check="(keys, e) => onGroupCheck(g.key, keys, e)"
+            @expand="(keys) => (expandedByGroup[g.key] = keys)"
+          />
+        </div>
       </TabPane>
     </Tabs>
     <template #footer>

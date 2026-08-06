@@ -30,7 +30,12 @@ async function loadRoles() {
 
 async function loadStaff() {
   const { data } = await new Resource('staff').list({ per_page: 'all' });
-  staffOptions.value = (data || []).map((s) => ({ value: s.id, label: s.name }));
+  staffOptions.value = (data || []).map((s) => ({
+    value: s.id,
+    label: s.name,
+    avatar: s.avatar,
+    name: s.name,
+  }));
 }
 
 // ========================= 列表 =========================
@@ -215,32 +220,143 @@ async function submitBatchCancel() {
 const batchAddDialog = ref(false);
 const batchAddForm = ref({ staff: [], roles: [], joining_date: '' });
 
+// 用于批量添加的成员表格数据
+const batchAddTableRows = ref([]);
+// 批量填写角色
+const batchFillRoles = ref([]);
+// 批量填写加入时间
+const batchFillJoiningDate = ref('');
+
+// 自定义员工选择下拉框状态
+const showStaffDropdown = ref(false);
+const staffSearchText = ref('');
+
+// 过滤后的员工选项
+const filteredStaffOptions = computed(() => {
+  const text = staffSearchText.value.toLowerCase();
+  if (!text) return staffOptions.value;
+  return staffOptions.value.filter(opt => 
+    opt.name?.toLowerCase().includes(text) || 
+    opt.label?.toLowerCase().includes(text)
+  );
+});
+
+function toggleStaffDropdown() {
+  showStaffDropdown.value = !showStaffDropdown.value;
+  if (showStaffDropdown.value) {
+    // 点击外部关闭下拉框
+    setTimeout(() => {
+      document.addEventListener('click', closeStaffDropdown);
+    }, 0);
+  }
+}
+
+function closeStaffDropdown(e) {
+  if (!e.target.closest('.relative')) {
+    showStaffDropdown.value = false;
+    document.removeEventListener('click', closeStaffDropdown);
+  }
+}
+
+function toggleStaffOption(id) {
+  if (!batchAddForm.value.staff) {
+    batchAddForm.value.staff = [];
+  }
+  const index = batchAddForm.value.staff.indexOf(id);
+  if (index > -1) {
+    batchAddForm.value.staff.splice(index, 1);
+  } else {
+    batchAddForm.value.staff.push(id);
+  }
+  onStaffSelectChange([...batchAddForm.value.staff]);
+}
+
+function removeStaffFromSelection(id) {
+  const index = batchAddForm.value.staff.indexOf(id);
+  if (index > -1) {
+    batchAddForm.value.staff.splice(index, 1);
+    onStaffSelectChange([...batchAddForm.value.staff]);
+  }
+}
+
 function openBatchAdd() {
   if (!currentProjectId.value) {
     message.warning('请先选择项目');
     return;
   }
   batchAddForm.value = { staff: [], roles: [], joining_date: '' };
+  batchAddTableRows.value = [];
+  batchFillRoles.value = [];
+  batchFillJoiningDate.value = '';
+  showStaffDropdown.value = false;
+  staffSearchText.value = '';
   batchAddDialog.value = true;
 }
 
+// 当选择员工时更新表格
+function onStaffSelectChange(selectedIds) {
+  // 保留已有配置
+  const existingRows = new Map(batchAddTableRows.value.map((row) => [row.id, row]));
+  const newRows = [];
+  
+  for (const id of selectedIds) {
+    if (existingRows.has(id)) {
+      newRows.push(existingRows.get(id));
+    } else {
+      const staffOption = staffOptions.value.find((opt) => opt.value === id);
+      if (staffOption) {
+        newRows.push({
+          id: staffOption.value,
+          name: staffOption.name,
+          avatar: staffOption.avatar,
+          roles: [],
+          joining_date: batchFillJoiningDate.value || '',
+        });
+      }
+    }
+  }
+  
+  batchAddTableRows.value = newRows;
+}
+
+// 应用批量填写
+function applyBatchFill() {
+  for (const row of batchAddTableRows.value) {
+    if (batchFillRoles.value.length > 0) {
+      row.roles = [...batchFillRoles.value];
+    }
+    if (batchFillJoiningDate.value) {
+      row.joining_date = batchFillJoiningDate.value;
+    }
+  }
+}
+
+// 从表格中移除行
+function removeBatchAddRow(staffId) {
+  batchAddTableRows.value = batchAddTableRows.value.filter((row) => row.id !== staffId);
+  batchAddForm.value.staff = batchAddForm.value.staff.filter((id) => id !== staffId);
+}
+
 async function submitBatchAdd() {
-  const form = batchAddForm.value;
-  if (!form.staff?.length) {
+  if (batchAddTableRows.value.length === 0) {
     message.warning('请选择要添加的员工');
     return;
   }
-  if (!form.roles?.length) {
-    message.warning('请选择角色');
+  
+  // 检查每个员工是否都选择了角色
+  const missingRoles = batchAddTableRows.value.filter((row) => !row.roles || row.roles.length === 0);
+  if (missingRoles.length > 0) {
+    message.warning('请为每个员工至少选择一个角色');
     return;
   }
+  
   try {
     const res = await new Resource('project-users/batch-store').store({
       project_id: currentProjectId.value,
-      users: form.staff.map((id) => ({
-        id,
-        roles: form.roles,
-        joining_date: form.joining_date || null,
+      users: batchAddTableRows.value.map((row) => ({
+        id: row.id,
+        roles: row.roles,
+        joining_date: row.joining_date || null,
       })),
     });
     const { added = 0, updated = 0 } = res?.data || {};
@@ -468,45 +584,186 @@ onMounted(() => {
     <Modal
       v-model:open="batchAddDialog"
       title="批量添加成员"
+      width="800px"
       ok-text="添加"
       @ok="submitBatchAdd"
     >
       <div class="space-y-4 py-2">
         <div>
           <div class="mb-1 text-sm text-gray-600">选择员工</div>
-          <Select
-            v-model:value="batchAddForm.staff"
-            :options="staffOptions"
-            placeholder="请选择要加入项目的员工（可多选）"
-            mode="multiple"
-            allow-clear
-            show-search
-            option-filter-prop="label"
-            style="width: 100%"
-          />
+          <div class="relative">
+            <div
+              class="flex min-h-[32px] cursor-pointer flex-wrap items-center gap-1 rounded border border-gray-300 px-2 py-1"
+              @click="toggleStaffDropdown"
+            >
+              <span v-if="!batchAddForm.staff?.length" class="text-gray-400">请选择要加入项目的员工（可多选）</span>
+              <template v-else>
+                <span
+                  v-for="id in batchAddForm.staff.slice(0, 5)"
+                  :key="id"
+                  class="inline-flex items-center rounded bg-blue-100 pl-2 pr-1 text-sm text-blue-800"
+                >
+                  {{ staffOptions.find(opt => opt.value === id)?.name || id }}
+                  <button
+                    class="ml-1 rounded-full p-0.5 hover:bg-blue-200"
+                    @click.stop="removeStaffFromSelection(id)"
+                  >
+                    ×
+                  </button>
+                </span>
+                <span v-if="batchAddForm.staff.length > 5" class="text-sm text-gray-500">
+                  +{{ batchAddForm.staff.length - 5 }} 项
+                </span>
+              </template>
+            </div>
+            <!-- 自定义下拉列表 -->
+            <div
+              v-if="showStaffDropdown"
+              class="absolute left-0 top-full z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-gray-200 bg-white shadow-lg"
+            >
+              <div class="sticky top-0 border-b border-gray-100 bg-white p-2">
+                <input
+                  v-model="staffSearchText"
+                  type="text"
+                  class="w-full rounded border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
+                  placeholder="搜索员工..."
+                  @click.stop
+                />
+              </div>
+              <div
+                v-for="option in filteredStaffOptions"
+                :key="option.value"
+                class="flex cursor-pointer items-center px-3 py-2 hover:bg-blue-50"
+                :class="{ 'bg-blue-50': batchAddForm.staff?.includes(option.value) }"
+                @click="toggleStaffOption(option.value)"
+              >
+                <div class="flex items-center flex-1">
+                  <img
+                    v-if="option.avatar"
+                    :src="option.avatar"
+                    class="mr-2 h-8 w-8 rounded-full object-cover"
+                  />
+                  <div
+                    v-else
+                    class="mr-2 flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-blue-400 to-blue-600 text-sm font-medium text-white"
+                  >
+                    {{ option.name?.charAt(0) || '?' }}
+                  </div>
+                  <div>
+                    <div class="text-sm font-medium text-gray-800">{{ option.name }}</div>
+                  </div>
+                </div>
+                <div
+                  v-if="batchAddForm.staff?.includes(option.value)"
+                  class="flex h-5 w-5 items-center justify-center rounded-full bg-blue-500"
+                >
+                  <svg class="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+              </div>
+              <div v-if="filteredStaffOptions.length === 0" class="p-4 text-center text-gray-500">
+                暂无数据
+              </div>
+            </div>
+          </div>
         </div>
-        <div>
-          <div class="mb-1 text-sm text-gray-600">角色</div>
-          <Select
-            v-model:value="batchAddForm.roles"
-            :options="roleOptions"
-            placeholder="请选择项目角色（可多选）"
-            mode="multiple"
-            allow-clear
-            show-search
-            option-filter-prop="label"
-            style="width: 100%"
-          />
-        </div>
-        <div>
-          <div class="mb-1 text-sm text-gray-600">加入时间</div>
-          <DatePicker
-            v-model:value="batchAddForm.joining_date"
-            value-format="YYYY-MM-DD"
-            format="YYYY-MM-DD"
-            style="width: 100%"
-            placeholder="请选择加入时间（选填）"
-          />
+        
+        <!-- 成员配置表格 -->
+        <div v-if="batchAddTableRows.length > 0">
+          <div class="mb-2 text-sm text-gray-600">成员配置</div>
+          <div class="overflow-x-auto">
+            <table class="w-full border-collapse">
+              <thead>
+                <tr class="bg-gray-50">
+                  <th class="border border-gray-200 px-4 py-2 text-left text-sm font-medium text-gray-700">
+                    员工
+                  </th>
+                  <th class="border border-gray-200 px-4 py-2 text-left text-sm font-medium text-gray-700">
+                    <div class="flex items-center">
+                      <span>角色</span>
+                      <Select
+                        v-model:value="batchFillRoles"
+                        :options="roleOptions"
+                        mode="multiple"
+                        placeholder="批量设置"
+                        style="width: 150px; margin-left: 8px; font-size: 12px"
+                        size="small"
+                        @change="applyBatchFill"
+                      />
+                    </div>
+                  </th>
+                  <th class="border border-gray-200 px-4 py-2 text-left text-sm font-medium text-gray-700">
+                    <div class="flex items-center">
+                      <span>加入时间</span>
+                      <DatePicker
+                        v-model:value="batchFillJoiningDate"
+                        value-format="YYYY-MM-DD"
+                        format="YYYY-MM-DD"
+                        placeholder="批量设置"
+                        style="width: 150px; margin-left: 8px; font-size: 12px"
+                        size="small"
+                        @change="applyBatchFill"
+                      />
+                    </div>
+                  </th>
+                  <th class="border border-gray-200 px-4 py-2 text-center text-sm font-medium text-gray-700">
+                    操作
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in batchAddTableRows" :key="row.id" class="hover:bg-gray-50">
+                  <td class="border border-gray-200 px-4 py-2">
+                    <div class="flex items-center">
+                      <img
+                        v-if="row.avatar"
+                        :src="row.avatar"
+                        class="mr-2 h-8 w-8 rounded-full object-cover"
+                      />
+                      <div
+                        v-else
+                        class="mr-2 flex h-8 w-8 items-center justify-center rounded-full bg-blue-500 text-sm text-white"
+                      >
+                        {{ row.name?.charAt(0) || '?' }}
+                      </div>
+                      <span>{{ row.name }}</span>
+                    </div>
+                  </td>
+                  <td class="border border-gray-200 px-4 py-2">
+                    <Select
+                      v-model:value="row.roles"
+                      :options="roleOptions"
+                      mode="multiple"
+                      placeholder="请选择角色"
+                      style="width: 100%"
+                    />
+                  </td>
+                  <td class="border border-gray-200 px-4 py-2">
+                    <DatePicker
+                      v-model:value="row.joining_date"
+                      value-format="YYYY-MM-DD"
+                      format="YYYY-MM-DD"
+                      style="width: 100%"
+                    />
+                  </td>
+                  <td class="border border-gray-200 px-4 py-2 text-center">
+                    <Button
+                      type="link"
+                      danger
+                      size="small"
+                      @click="removeBatchAddRow(row.id)"
+                    >
+                      移除
+                    </Button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="mt-2 text-xs text-gray-500">
+            提示：可在表头批量设置角色和加入时间，设置后会应用到所有已选择的员工
+          </div>
         </div>
       </div>
     </Modal>

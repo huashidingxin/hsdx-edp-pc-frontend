@@ -130,16 +130,61 @@ const batchOpen = ref(false);
 const batchSelected = ref([]);
 const batchOptions = ref([]);
 const batchLoading = ref(false);
+const showBatchDropdown = ref(false);
+const batchSearchText = ref('');
+
+const filteredBatchOptions = computed(() => {
+  const text = batchSearchText.value.toLowerCase();
+  if (!text) return batchOptions.value;
+  return batchOptions.value.filter(opt => 
+    opt.label?.toLowerCase().includes(text)
+  );
+});
+
+function toggleBatchDropdown() {
+  showBatchDropdown.value = !showBatchDropdown.value;
+  if (showBatchDropdown.value) {
+    setTimeout(() => {
+      document.addEventListener('click', closeBatchDropdown);
+    }, 0);
+  }
+}
+
+function closeBatchDropdown(e) {
+  if (!e.target.closest('.relative')) {
+    showBatchDropdown.value = false;
+    document.removeEventListener('click', closeBatchDropdown);
+  }
+}
+
+function toggleBatchOption(id) {
+  const index = batchSelected.value.indexOf(id);
+  if (index > -1) {
+    batchSelected.value.splice(index, 1);
+  } else {
+    batchSelected.value.push(id);
+  }
+}
+
+function removeBatchSelection(id) {
+  const index = batchSelected.value.indexOf(id);
+  if (index > -1) {
+    batchSelected.value.splice(index, 1);
+  }
+}
 
 async function openBatch() {
   batchSelected.value = [];
   batchOptions.value = [];
+  showBatchDropdown.value = false;
+  batchSearchText.value = '';
   batchOpen.value = true;
   try {
     const { data } = await new Resource('staff').list({ per_page: 'all' });
     batchOptions.value = (data || []).map((s) => ({
       label: s.name || s.username,
       value: s.id,
+      avatar: s.avatar,
     }));
   } catch (error) {
     console.error(error);
@@ -212,13 +257,81 @@ onMounted(loadPositions);
     @ok="saveBatch"
   >
     <p class="mb-2 text-gray-500">选择需要设为离职的员工：</p>
-    <Select
-      v-model:value="batchSelected"
-      mode="multiple"
-      style="width: 100%"
-      :options="batchOptions"
-      placeholder="请选择员工"
-      :max-tag-count="5"
-    />
+    <div class="relative">
+      <div
+        class="flex min-h-[32px] cursor-pointer flex-wrap items-center gap-1 rounded border border-gray-300 px-2 py-1"
+        @click="toggleBatchDropdown"
+      >
+        <span v-if="!batchSelected.length" class="text-gray-400">请选择员工</span>
+        <template v-else>
+          <span
+            v-for="id in batchSelected.slice(0, 5)"
+            :key="id"
+            class="inline-flex items-center rounded bg-blue-100 pl-2 pr-1 text-sm text-blue-800"
+          >
+            {{ batchOptions.find(opt => opt.value === id)?.label || id }}
+            <button
+              class="ml-1 rounded-full p-0.5 hover:bg-blue-200"
+              @click.stop="removeBatchSelection(id)"
+            >
+              ×
+            </button>
+          </span>
+          <span v-if="batchSelected.length > 5" class="text-sm text-gray-500">
+            +{{ batchSelected.length - 5 }} 项
+          </span>
+        </template>
+      </div>
+      <!-- 自定义下拉列表 -->
+      <div
+        v-if="showBatchDropdown"
+        class="absolute left-0 top-full z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-gray-200 bg-white shadow-lg"
+      >
+        <div class="sticky top-0 border-b border-gray-100 bg-white p-2">
+          <input
+            v-model="batchSearchText"
+            type="text"
+            class="w-full rounded border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
+            placeholder="搜索员工..."
+            @click.stop
+          />
+        </div>
+        <div
+          v-for="option in filteredBatchOptions"
+          :key="option.value"
+          class="flex cursor-pointer items-center px-3 py-2 hover:bg-blue-50"
+          :class="{ 'bg-blue-50': batchSelected.includes(option.value) }"
+          @click="toggleBatchOption(option.value)"
+        >
+          <div class="flex flex-1 items-center">
+            <img
+              v-if="option.avatar"
+              :src="option.avatar"
+              class="mr-2 h-8 w-8 rounded-full object-cover"
+            />
+            <div
+              v-else
+              class="mr-2 flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-blue-400 to-blue-600 text-sm font-medium text-white"
+            >
+              {{ option.label?.charAt(0) || '?' }}
+            </div>
+            <div>
+              <div class="text-sm font-medium text-gray-800">{{ option.label }}</div>
+            </div>
+          </div>
+          <div
+            v-if="batchSelected.includes(option.value)"
+            class="flex h-5 w-5 items-center justify-center rounded-full bg-blue-500"
+          >
+            <svg class="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+        </div>
+        <div v-if="filteredBatchOptions.length === 0" class="p-4 text-center text-gray-500">
+          暂无数据
+        </div>
+      </div>
+    </div>
   </Modal>
 </template>
