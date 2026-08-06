@@ -115,6 +115,18 @@ function normalizeFieldValue(field, val) {
       }
       return Array.isArray(val) ? val : [val];
     }
+    case 'select':
+    case 'multiselect': {
+      // 多选模式：确保值为数组，空值归一化为空数组
+      const isMultiple = field.type === 'multiselect' || field.attrs?.multiple || field.attrs?.mode === 'multiple';
+      if (isMultiple) {
+        if (val === undefined || val === null || val === '') {
+          return [];
+        }
+        return Array.isArray(val) ? val : [val];
+      }
+      return val;
+    }
     default: {
       return val;
     }

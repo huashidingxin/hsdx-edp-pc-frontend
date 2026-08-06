@@ -1,7 +1,7 @@
 const { chromium } = require('playwright');
 
 (async () => {
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: false });
   const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
   page.on('response', (res) => {
     if (res.status() >= 400 && !res.url().includes('.js') && !res.url().includes('.css'))
