@@ -329,6 +329,16 @@ function initComponent() {
       component.value = AppEditor;
       break;
     }
+    case 'multiselect': {
+      defaultAttrs.value = {
+        mode: 'multiple',
+        showSearch: true,
+        filterOption,
+        style: { width: '100%' },
+      };
+      component.value = Select;
+      break;
+    }
     case 'number': {
       defaultAttrs.value = {};
       component.value = InputNumber;

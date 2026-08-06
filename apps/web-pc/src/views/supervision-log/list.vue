@@ -451,7 +451,7 @@ function rowState(row) {
       checkboxConfig: { checkStrictly: true, highlight: true },
     }"
     :open-mode="{ create: false, detail: 'drawer' }"
-    :detail-props="{ width: 720 }"
+    :detail-props="{ width: 960 }"
     title="监理日志"
     class="p-4"
     @show-detail="onShowDetail"

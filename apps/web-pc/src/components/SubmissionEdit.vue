@@ -91,13 +91,16 @@ function mapType(field) {
   const type = field.type || 'text';
   // 后端 FormController.show 对 type=stakeholder/construction 已转为 multiselect 并填好 options
   switch (type) {
+    case 'construction':
+    case 'multiselect':
+    case 'stakeholder':
+      return 'multiselect';
     case 'date':
     case 'datetime':
     case 'digit':
     case 'file':
     case 'image':
     case 'images':
-    case 'multiselect':
     case 'number':
     case 'select':
     case 'switch':
@@ -133,7 +136,7 @@ function mapAttrs(field) {
       return { value: o, label: o };
     });
     if (type === 'multiselect' || (field.type === 'construction' && field.options?.length)) {
-      attrs.multiple = true;
+      attrs.mode = 'multiple';
     }
   } else if (type === 'unit_project') {
     attrs.options = unitProjects.value.map((u) => ({ value: u.name, label: u.name }));
