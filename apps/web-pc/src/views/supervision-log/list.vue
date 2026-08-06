@@ -6,6 +6,7 @@ import { useUserStore } from '@vben/stores';
 
 import {
   Button,
+  Checkbox,
   DatePicker,
   Drawer,
   Input,
@@ -91,19 +92,79 @@ const tableRef = ref(null);
 const previewOpen = ref(false);
 const previewDocument = ref(null);
 
-function openPreview() {
-  const filePath = editingItem.value.submission?.file_path;
+function openPreview(row = editingItem.value) {
+  const filePath = row?.submission?.file_path;
   if (!filePath) {
     message.warning('该记录未配置打印模板或渲染失败');
     return;
   }
   previewDocument.value = {
     fileType: 'docx',
-    key: `submission-${editingItem.value.submission?.id || editingItem.value.id}`,
+    key: `submission-${row?.submission?.id || row.id}`,
     url: filePath,
-    title: `${editingItem.value.submission?.code || '记录'}.docx`,
+    title: `${row?.submission?.code || '记录'}.docx`,
   };
   previewOpen.value = true;
+}
+
+// ---- 批量导出 / 批量打印（submission/batch）----
+const selectedRows = ref([]);
+const withSignature = ref(false);
+
+function batchIds() {
+  return selectedRows.value
+    .filter((r) => r.submission_id > 0)
+    .map((r) => r.submission_id);
+}
+
+async function batchExport() {
+  const ids = batchIds();
+  if (!ids.length) {
+    message.error('请至少选择一条已提交的记录');
+    return;
+  }
+  try {
+    const { data } = await new Resource('submission').get('batch', {
+      merge: 1,
+      signature: withSignature.value ? 1 : 0,
+      list: ids.join(','),
+    });
+    const link = window.document.createElement('a');
+    link.href = data.url;
+    link.setAttribute('download', data.name);
+    window.document.body.append(link);
+    link.click();
+    link.remove();
+    message.success('导出成功');
+  } catch (error) {
+    console.error(error);
+    message.error(error?.response?.data?.message || '导出失败');
+  }
+}
+
+async function batchPrint() {
+  const ids = batchIds();
+  if (!ids.length) {
+    message.error('请至少选择一条已提交的记录');
+    return;
+  }
+  try {
+    const { data } = await new Resource('submission').get('batch', {
+      merge: 0,
+      signature: withSignature.value ? 1 : 0,
+      list: ids.join(','),
+    });
+    previewDocument.value = {
+      fileType: 'docx',
+      key: `batch-${Date.now()}`,
+      url: data.url,
+      title: data.name,
+    };
+    previewOpen.value = true;
+  } catch (error) {
+    console.error(error);
+    message.error(error?.response?.data?.message || '批量打印失败');
+  }
 }
 
 // ---- P3-L03 关键字警告手动解除（总监/有权限成员，保留记录）----
@@ -206,6 +267,11 @@ loadUsers();
 // 列表列（参考 web-admin：编号/日期/记录人/状态/记录时间/项目/超时）
 const gridColumns = computed(() => {
   const columns = [
+    {
+      type: 'checkbox',
+      width: 44,
+      fixed: 'left',
+    },
     {
       field: 'submission.code',
       title: '编号',
@@ -347,21 +413,32 @@ function rowState(row) {
   <AppCrudTable
     ref="tableRef"
     v-model="editingItem"
+    v-model:selected="selectedRows"
     api-url="supervision-logs"
     :filter-fields="filterFields"
     :fields="formFields"
     :extra-query="{ project_id: currentProjectId }"
     :list-scope="listScope"
-    permission-name="supervision_log"
+    :toolbar="{ create: false, refresh: true }"
     :inline-actions="['view', 'edit']"
     :actions-config="[
       { key: 'view', visible: () => true },
       {
         key: 'edit',
+        permission: '',
         visible: (row) =>
           row.user_id === userStore.userInfo?.id &&
           (row.submission_id === 0 ||
             (row.submission_id > 0 && row.submission?.state !== 2)),
+      },
+      {
+        key: 'preview',
+        label: '预览',
+        icon: 'mdi--file-eye-outline',
+        permission: '',
+        visible: (row) => row.submission_id > 0,
+        onClick: (row) => openPreview(row),
+        order: 25,
       },
     ]"
     :detail-format="detailFormat"
@@ -369,6 +446,7 @@ function rowState(row) {
       columns: gridColumns,
       showOverflow: false,
       columnConfig: { resizable: true },
+      checkboxConfig: { checkStrictly: true, highlight: true },
     }"
     :open-mode="{ create: false, detail: 'modal' }"
     title="监理日志"
@@ -385,6 +463,17 @@ function rowState(row) {
           size="small"
         />
       </div>
+    </template>
+
+    <!-- 批量导出/打印 -->
+    <template #toolbar-append>
+      <Checkbox v-model:checked="withSignature">打印/导出包含签名</Checkbox>
+      <Button :disabled="!selectedRows.length" @click="batchPrint">
+        批量打印
+      </Button>
+      <Button :disabled="!selectedRows.length" @click="batchExport">
+        批量导出
+      </Button>
     </template>
 
     <!-- 记录人（项目成员选择） -->
@@ -414,7 +503,15 @@ function rowState(row) {
     </template>
 
     <template #default_code="{ row }">
-      <span>{{ row.submission?.code || '-' }}</span>
+      <Tag
+        v-if="row.submission_id > 0"
+        color="blue"
+        class="cursor-pointer"
+        @click="openPreview(row)"
+      >
+        {{ row.submission?.code || '-' }}
+      </Tag>
+      <span v-else>-</span>
     </template>
     <template #default_state="{ row }">
       <Tag :color="stateMap[rowState(row)]?.color || 'default'">
@@ -454,7 +551,7 @@ function rowState(row) {
     </template>
 
     <template #form-action>
-      <Button v-if="editingItem.submission_id" @click="openPreview">
+      <Button v-if="editingItem.submission_id" @click="openPreview(editingItem)">
         预览
       </Button>
       <template v-if="isEditing">
