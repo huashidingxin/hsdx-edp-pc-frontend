@@ -1,6 +1,8 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue';
 
+import { useAccess } from '@vben/access';
+
 import { Button, Input, message, Modal, Radio, Tag, Tree } from 'antdv-next';
 
 import Resource from '#/api/resource';
