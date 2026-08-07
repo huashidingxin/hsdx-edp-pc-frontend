@@ -402,8 +402,21 @@ function setNonconformanceFields(warnings) {
   nonconformanceReady.value = true;
 }
 
-function openPreview() {
-  previewRef.value?.open(editingItem.value.submission);
+// ---- 已提交记录预览（SubmissionPreviewDrawer 封装）----
+async function openPreview(row = editingItem.value) {
+  let submission = row?.submission;
+  // 若行数据无 file_path，尝试加载详情获取
+  if (!submission?.file_path) {
+    try {
+      const { data } = await new Resource('task-submissions').get(
+        String(row.id || row.task_id),
+      );
+      submission = data?.submission || {};
+    } catch (error) {
+      console.error(error);
+    }
+  }
+  previewRef.value?.open(submission);
 }
 
 const tableRef = ref(null);
@@ -613,7 +626,7 @@ watch(() => appStore.defaultProject?.id, refreshAll);
       </template>
 
       <template #form-actions>
-        <Button v-if="editingItem.submission_id" @click="openPreview">
+        <Button v-if="editingItem.submission_id" @click="openPreview(editingItem)">
           预览
         </Button>
         <template v-if="isEditing">
@@ -627,7 +640,7 @@ watch(() => appStore.defaultProject?.id, refreshAll);
           v-if="row.submission_id"
           color="blue"
           class="cursor-pointer"
-          @click="previewRef?.open(row.submission)"
+          @click="openPreview(row)"
         >
           {{ row.submission?.code || '-' }}
         </Tag>
