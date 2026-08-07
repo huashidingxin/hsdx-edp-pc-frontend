@@ -8,7 +8,6 @@ import {
   Button,
   Checkbox,
   DatePicker,
-  Drawer,
   Input,
   message,
   Modal,
@@ -20,8 +19,8 @@ import {
 
 import Resource from '#/api/resource';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
-import AppOffice from '#/components/AppOffice.vue';
 import SubmissionEdit from '#/components/SubmissionEdit.vue';
+import SubmissionPreviewDrawer from '#/components/SubmissionPreviewDrawer.vue';
 import { useAppStore } from '#/store';
 
 const appStore = useAppStore();
@@ -30,6 +29,7 @@ const { hasAccessByCodes } = useAccess();
 
 const editingItem = ref({});
 const submissionRef = ref(null);
+const previewRef = ref(null);
 // 详情打开是否编辑模式（view=false / edit=true）
 const isEditing = ref(false);
 function onShowDetail(editing) {
@@ -157,12 +157,10 @@ function reset() {
 
 const tableRef = ref(null);
 
-// ---- 已提交记录预览（AppOffice 打开渲染 docx）----
-const previewOpen = ref(false);
-const previewDocument = ref(null);
-
+// ---- 已提交记录预览（SubmissionPreviewDrawer 封装）----
 async function openPreview(row = editingItem.value) {
   let submission = row?.submission;
+  // 若行数据无 file_path，尝试加载详情获取
   if (!submission?.file_path) {
     try {
       const { data } = await new Resource('supervision-logs').get(
@@ -173,18 +171,7 @@ async function openPreview(row = editingItem.value) {
       console.error(error);
     }
   }
-  const filePath = submission?.file_path;
-  if (!filePath) {
-    message.warning('该记录未配置打印模板或渲染失败');
-    return;
-  }
-  previewDocument.value = {
-    fileType: 'docx',
-    key: `submission-${submission?.id || row.id}`,
-    url: filePath,
-    title: `${submission?.code || '记录'}.docx`,
-  };
-  previewOpen.value = true;
+  previewRef.value?.open(submission);
 }
 
 // ---- 批量导出 / 批量打印（submission/batch）----
@@ -234,13 +221,12 @@ async function batchPrint() {
       signature: withSignature.value ? 1 : 0,
       list: ids.join(','),
     });
-    previewDocument.value = {
-      fileType: 'docx',
+    previewRef.value?.open({
+      file_path: data.url,
+      code: data.name || '批量打印',
       key: `batch-${Date.now()}`,
-      url: data.url,
       title: data.name,
-    };
-    previewOpen.value = true;
+    });
   } catch (error) {
     console.error(error);
     message.error(error?.response?.data?.message || '批量打印失败');
@@ -879,15 +865,5 @@ function warningTooltip(procsJson) {
     </div>
   </Modal>
 
-  <!-- 已提交记录预览（AppOffice 只读） -->
-  <Drawer
-    v-model:open="previewOpen"
-    title="记录预览"
-    width="880px"
-    destroy-on-close
-  >
-    <div v-if="previewDocument" class="h-[calc(100vh-120px)]">
-      <AppOffice :document="previewDocument" mode="view" />
-    </div>
-  </Drawer>
+  <SubmissionPreviewDrawer ref="previewRef" />
 </template>

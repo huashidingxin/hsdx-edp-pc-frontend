@@ -6,11 +6,13 @@ import { DatePicker, message, Radio, Select, Tag, Tooltip } from 'antdv-next';
 import Resource from '#/api/resource';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
 import AppCancelDialog from '#/components/AppCancelDialog.vue';
+import SubmissionPreviewDrawer from '#/components/SubmissionPreviewDrawer.vue';
 import { useTaskFormLoader } from '#/composables/use-task-form';
 import { useAppStore } from '#/store';
 
 const appStore = useAppStore();
 const tableRef = ref(null);
+const previewRef = ref(null);
 
 const editingItem = ref({});
 
@@ -129,6 +131,11 @@ const actionsConfig = [
   { key: 'edit', visible: (row) => !row?.id || (row.status && row.state < 2) },
   { key: 'delete', visible: (row) => row.state < 2 },
 ];
+
+// 预览提交记录
+function openSubmissionPreview(submission) {
+  previewRef.value?.open(submission);
+}
 
 // 编辑时不可修改执行人（后端 update 不保存 executor_id，去除无效字段）
 const excludeFields = computed(() =>
@@ -258,6 +265,8 @@ onMounted(refreshAll);
       <template v-if="row.submission?.code">
         <Tag
           :color="submissionStateColorMap[row.submission.state] || 'default'"
+          class="cursor-pointer"
+          @click="openSubmissionPreview(row.submission)"
         >
           {{ row.submission.code }}
         </Tag>
@@ -280,4 +289,6 @@ onMounted(refreshAll);
       <span v-else>-</span>
     </template>
   </AppCrudTable>
+
+  <SubmissionPreviewDrawer ref="previewRef" />
 </template>

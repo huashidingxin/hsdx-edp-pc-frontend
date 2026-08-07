@@ -16,7 +16,6 @@ import {
   Alert,
   Button,
   DatePicker,
-  Drawer,
   Input,
   message,
   Modal,
@@ -28,9 +27,9 @@ import {
 
 import Resource from '#/api/resource';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
-import AppOffice from '#/components/AppOffice.vue';
 import AppUpload from '#/components/AppUpload.vue';
 import SubmissionEdit from '#/components/SubmissionEdit.vue';
+import SubmissionPreviewDrawer from '#/components/SubmissionPreviewDrawer.vue';
 import { useAppStore } from '#/store';
 
 const appStore = useAppStore();
@@ -50,6 +49,7 @@ const scopeOptions = [
 
 const editingItem = ref({});
 const submissionRef = ref(null);
+const previewRef = ref(null);
 // 详情打开时是否编辑模式（view=false / edit=true），决定 SubmissionEdit 只读
 const isEditing = ref(true);
 
@@ -402,23 +402,8 @@ function setNonconformanceFields(warnings) {
   nonconformanceReady.value = true;
 }
 
-// ---- 已提交记录预览（AppOffice 打开渲染 docx）----
-const previewOpen = ref(false);
-const previewDocument = ref(null);
-
 function openPreview() {
-  const filePath = editingItem.value.submission?.file_path;
-  if (!filePath) {
-    message.warning('该记录未配置打印模板或渲染失败');
-    return;
-  }
-  previewDocument.value = {
-    fileType: 'docx',
-    key: `submission-${editingItem.value.submission?.id || editingItem.value.id}`,
-    url: filePath,
-    title: `${editingItem.value.submission?.code || '记录'}.docx`,
-  };
-  previewOpen.value = true;
+  previewRef.value?.open(editingItem.value.submission);
 }
 
 const tableRef = ref(null);
@@ -456,13 +441,12 @@ async function batch(isExport) {
       window.open(data.url, '_blank');
     } else {
       // 打印：合并 docx 用 AppOffice 预览
-      previewDocument.value = {
-        fileType: 'docx',
+      previewRef.value?.open({
+        file_path: data.url,
+        code: data.name || '合并文档',
         key: `merge-${Date.now()}`,
-        url: data.url,
         title: data.name || '合并文档.docx',
-      };
-      previewOpen.value = true;
+      });
     }
   } catch (error) {
     console.error(error);
@@ -639,7 +623,12 @@ watch(() => appStore.defaultProject?.id, refreshAll);
       </template>
 
       <template #default_code="{ row }">
-        <Tag v-if="row.submission_id" color="blue">
+        <Tag
+          v-if="row.submission_id"
+          color="blue"
+          class="cursor-pointer"
+          @click="previewRef?.open(row.submission)"
+        >
           {{ row.submission?.code || '-' }}
         </Tag>
         <span v-else>-</span>
@@ -785,6 +774,8 @@ watch(() => appStore.defaultProject?.id, refreshAll);
       </div>
     </Modal>
 
+    <SubmissionPreviewDrawer ref="previewRef" />
+
     <!-- 不符合项弹窗 -->
     <Modal
       v-model:open="nonconformanceDialog"
@@ -820,16 +811,5 @@ watch(() => appStore.defaultProject?.id, refreshAll);
       </div>
     </Modal>
 
-    <!-- 已提交记录预览（AppOffice 只读） -->
-    <Drawer
-      v-model:open="previewOpen"
-      title="记录预览"
-      width="880px"
-      destroy-on-close
-    >
-      <div v-if="previewDocument" class="h-[calc(100vh-120px)]">
-        <AppOffice :document="previewDocument" mode="view" />
-      </div>
-    </Drawer>
   </div>
 </template>
