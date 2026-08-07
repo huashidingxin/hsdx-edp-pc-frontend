@@ -17,7 +17,6 @@ export interface StatsOverviews {
   supervision_log: OverviewItem;
   task: OverviewItem;
   nonconformance: OverviewItem;
-  issue: OverviewItem;
 }
 
 export async function getStatsOverviews(params: {

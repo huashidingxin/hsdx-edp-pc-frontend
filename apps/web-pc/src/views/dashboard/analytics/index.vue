@@ -75,7 +75,6 @@ const typeMeta = {
   supervision_log: { label: '监理日志', color: '#4f8ef7', icon: '📋' },
   task: { label: '任务', color: '#36cfc9', icon: '✅' },
   nonconformance: { label: '不符合项', color: '#faad14', icon: '⚠️' },
-  issue: { label: '问题', color: '#52c41a', icon: '🔍' },
 } satisfies Record<string, { color: string; icon: string; label: string; }>;
 
 function dateFilterParams() {
@@ -202,7 +201,7 @@ function renderChart() {
 
 const overviewCards = computed(() => {
   const ov = overviews.value as null | StatsOverviews;
-  const keys: Array<keyof StatsOverviews> = ['supervision_log', 'task', 'nonconformance', 'issue'];
+  const keys: Array<keyof StatsOverviews> = ['supervision_log', 'task', 'nonconformance'];
   return keys.map((key) => ({
     key: key as string,
     label: typeMeta[key].label,
@@ -267,16 +266,6 @@ const statsTypes = [
       { field: 'completed', title: '已完成', width: 100 },
       { field: 'completed_in_7_days', title: '7日内完成', width: 110 },
       { field: 'rate', title: '7日闭合率', width: 100, slots: { default: 'stats_default_rate' } },
-    ],
-  },
-  {
-    value: 'issue',
-    label: '问题',
-    columns: [
-      { field: 'project.name', title: '项目', minWidth: 200 },
-      { field: 'total', title: '总数', width: 100 },
-      { field: 'processing', title: '处理中', width: 100 },
-      { field: 'completed', title: '已完成', width: 100 },
     ],
   },
 ];
@@ -479,10 +468,6 @@ onMounted(() => {
             <span class="stat-list-item__label">不符合项总数</span>
             <span class="stat-list-item__value stat-list-item__value--yellow">{{ overviews?.nonconformance.total ?? 0 }}</span>
           </div>
-          <div class="stat-list-item">
-            <span class="stat-list-item__label">问题总数</span>
-            <span class="stat-list-item__value stat-list-item__value--green">{{ overviews?.issue.total ?? 0 }}</span>
-          </div>
         </div>
       </div>
 
@@ -645,7 +630,6 @@ onMounted(() => {
 .overview-card--supervision_log::before { background: linear-gradient(180deg, #4f8ef7, #69b1ff); }
 .overview-card--task::before { background: linear-gradient(180deg, #36cfc9, #5cdbd3); }
 .overview-card--nonconformance::before { background: linear-gradient(180deg, #faad14, #ffc53d); }
-.overview-card--issue::before { background: linear-gradient(180deg, #52c41a, #95de64); }
 
 .overview-card:hover {
   transform: translateY(-2px);
@@ -666,7 +650,6 @@ onMounted(() => {
 .overview-card--supervision_log .overview-card__icon { background: linear-gradient(135deg, #e6f7ff, #bae7ff); }
 .overview-card--task .overview-card__icon { background: linear-gradient(135deg, #e6fffb, #b5f5ec); }
 .overview-card--nonconformance .overview-card__icon { background: linear-gradient(135deg, #fffbe6, #fff1b8); }
-.overview-card--issue .overview-card__icon { background: linear-gradient(135deg, #f6ffed, #d9f7be); }
 
 .overview-card__body {
   flex: 1;
