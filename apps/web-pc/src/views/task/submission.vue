@@ -13,6 +13,7 @@ import { useAccess } from '@vben/access';
 import { useUserStore } from '@vben/stores';
 
 import {
+  Alert,
   Button,
   DatePicker,
   Drawer,
@@ -22,6 +23,7 @@ import {
   Radio,
   Select,
   Tag,
+  Tooltip,
 } from 'antdv-next';
 
 import Resource from '#/api/resource';
@@ -105,7 +107,6 @@ const filterFields = ref([
     label: '提交状态',
     type: 'select',
     span: 8,
-    default: 1,
     attrs: {
       options: [
         { value: 0, label: '待提交' },
@@ -170,6 +171,12 @@ const gridColumns = ref([
     width: 80,
     slots: { default: 'default_timeout' },
   },
+  {
+    field: 'has_prereq_warning',
+    title: '前置警告',
+    width: 100,
+    slots: { default: 'default_prereq_warning' },
+  },
   { field: 'date', title: '日期', width: 110 },
   { field: 'start_time', title: '开始时间', width: 100 },
   { field: 'end_time', title: '结束时间', width: 100 },
@@ -179,15 +186,30 @@ const gridColumns = ref([
 const stateColorMap = { 1: 'blue', 2: 'blue', 3: 'green', 4: 'orange' };
 const submissionStateColorMap = { 1: 'orange', 2: 'green', 3: 'red' };
 
-// 行操作：编辑 = 本人执行 + 已签到(任务 state>1) + 未审核通过（含未提交的首次填写）
+// P3-T02 前置警告列 tooltip：解析后端返回的 prereq_warning_procedures JSON 字符串
+function prereqWarningTooltip(procsJson) {
+  try {
+    const list = JSON.parse(procsJson || '[]');
+    return list
+      .map((p) => {
+        const scope = p.milepost_name ? `桩号${p.milepost_name}` : '项目整体';
+        return `${scope}缺前置工序"${p.prerequisite_name}"`;
+      })
+      .join('；');
+  } catch {
+    return '';
+  }
+}
+
+// 行操作：编辑 = 本人执行 + 未审核通过（含未提交的首次填写）
+// 注意：未提交任务的 submission_id 为 null（非 0），不能用 === 0 判断；
+// 未签到任务同样允许进入填写，提交时需登记无签到原因（P3-T07）
 const actionsConfig = [
   {
     key: 'edit',
     visible: (row) =>
       row.executor?.id === userStore.userInfo?.id &&
-      row.state > 1 &&
-      (row.submission_id === 0 ||
-        (row.submission_id > 0 && row.submission?.state !== 2)),
+      (!row.submission_id || row.submission?.state !== 2),
   },
   { key: 'view', visible: (row) => row.submission_id > 0 },
 ];
@@ -195,12 +217,23 @@ const actionsConfig = [
 // ---- 提交链路 ----
 const defaultValues = ref({});
 
+// P3-T07 无签到声明：任务无签到（attendances type=1 无记录）时必须登记原因提交
+const noAttendanceReason = ref('');
+const noAttendanceRequired = computed(
+  () => !editingItem.value?.attendance_in?.check_time,
+);
+
 function detailFormat(data) {
-  // 备份原始值（重置用）
-  defaultValues.value = JSON.parse(
-    JSON.stringify(data.submission?.values || []),
-  );
-  return data;
+  // 备份原始值（重置用）；未提交任务 submission 为 []（空数组），取其 values 会命中 Array.prototype.values，规整为对象
+  const submission = Array.isArray(data.submission)
+    ? {}
+    : data.submission || {};
+  const values = submission.values || [];
+  defaultValues.value =
+    values.length > 0 ? JSON.parse(JSON.stringify(values)) : [];
+  // 重置无签到原因
+  noAttendanceReason.value = '';
+  return { ...data, submission };
 }
 
 async function save() {
@@ -210,14 +243,16 @@ async function save() {
     message.error('请检查表单');
     return;
   }
+  if (noAttendanceRequired.value && !noAttendanceReason.value.trim()) {
+    message.error('该任务无签到记录，请填写无签到原因');
+    return;
+  }
 
   const hasWarnings = Object.keys(formData.warnings || {}).length > 0;
-  if (hasWarnings) {
-    if (!nonconformanceDialog.value || !nonconformanceReady.value) {
-      setNonconformanceFields(formData.warnings);
-      nonconformanceDialog.value = true;
-      return;
-    }
+  if (hasWarnings && (!nonconformanceDialog.value || !nonconformanceReady.value)) {
+    setNonconformanceFields(formData.warnings);
+    nonconformanceDialog.value = true;
+    return;
   }
 
   nonconformanceDialog.value = false;
@@ -227,6 +262,10 @@ async function save() {
       form_id: editingItem.value.form_id,
       ...formData,
       nonconformances: nonconformanceEditing.value,
+      no_attendance: noAttendanceRequired.value ? 1 : 0,
+      no_attendance_reason: noAttendanceRequired.value
+        ? noAttendanceReason.value.trim()
+        : '',
     });
     message.success('保存成功');
     // P3-T02 前置工序警告（桩号维度）：提交后如有缺失前置，弹窗提示
@@ -345,7 +384,7 @@ function setNonconformanceFields(warnings) {
     const warns = warnings[fieldKey] || [];
     const tips =
       field.type === 'switch'
-        ? `检查结果：${(field.options || ['是', '否'])[warns[0]?.value == 1 ? 0 : 1] || '否'}（要求：${warns[0]?.message || ''}）`
+        ? `检查结果：${(field.options || ['是', '否'])[warns[0]?.value === 1 ? 0 : 1] || '否'}（要求：${warns[0]?.message || ''}）`
         : warns
             .map((w) => `检查结果：${w.value || '未填写'}，${w.message}`)
             .join('；');
@@ -551,6 +590,25 @@ watch(() => appStore.defaultProject?.id, refreshAll);
 
       <template #form-default>
         <div v-if="editingItem.id" class="min-h-[300px]">
+          <Alert
+            v-if="noAttendanceRequired && isEditing"
+            type="warning"
+            show-icon
+            class="mb-4"
+            message="该任务无签到记录，提交记录需登记无签到原因"
+            description="任务执行人当天未打卡（或补录任务），提交时将标记为无签到记录。"
+          />
+          <div v-if="noAttendanceRequired && isEditing" class="mb-4">
+            <label class="mb-1 block text-sm text-gray-500">
+              无签到原因（必填）
+            </label>
+            <Input.TextArea
+              v-model:value="noAttendanceReason"
+              :rows="2"
+              maxlength="500"
+              placeholder="请输入无签到原因，如：忘记打卡 / 现场临时安排未打卡"
+            />
+          </div>
           <SubmissionEdit
             v-if="editingItem.form_id"
             ref="submissionRef"
@@ -602,13 +660,34 @@ watch(() => appStore.defaultProject?.id, refreshAll);
         >
           {{ row.submission?.state_label || '-' }}
         </Tag>
-        <span v-else>-</span>
+        <Tag v-else color="default">待提交</Tag>
+        <Tag
+          v-if="Number(row.submission?.attendance_type) === 1"
+          color="purple"
+        >
+          无签到
+        </Tag>
       </template>
 
       <template #default_timeout="{ row }">
         <Tag :color="row.submission_timeout ? 'red' : 'green'">
           {{ row.submission_timeout ? '超时' : '正常' }}
         </Tag>
+      </template>
+
+      <template #default_prereq_warning="{ row }">
+        <template v-if="Number(row.has_prereq_warning) === 1">
+          <Tooltip :title="prereqWarningTooltip(row.prereq_warning_procedures)">
+            <Tag color="orange" class="cursor-pointer">
+              {{
+                Number(row.active_prereq_warning_count) > 1
+                  ? `有警告(${row.active_prereq_warning_count})`
+                  : '有警告'
+              }}
+            </Tag>
+          </Tooltip>
+        </template>
+        <span v-else>-</span>
       </template>
 
       <template #row-action-extra="{ row }">
@@ -739,9 +818,9 @@ watch(() => appStore.defaultProject?.id, refreshAll);
     <!-- 已提交记录预览（AppOffice 只读） -->
     <Drawer
       v-model:open="previewOpen"
-    title="记录预览"
-    width="880px"
-    destroy-on-close
+      title="记录预览"
+      width="880px"
+      destroy-on-close
     >
       <div v-if="previewDocument" class="h-[calc(100vh-120px)]">
         <AppOffice :document="previewDocument" mode="view" />

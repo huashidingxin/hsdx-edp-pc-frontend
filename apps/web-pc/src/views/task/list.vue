@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue';
 
-import { DatePicker, message, Radio, Select, Tag } from 'antdv-next';
+import { DatePicker, message, Radio, Select, Tag, Tooltip } from 'antdv-next';
 
 import Resource from '#/api/resource';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
@@ -97,11 +97,32 @@ const gridColumns = ref([
     width: 150,
     slots: { default: 'default_submission' },
   },
+  {
+    field: 'has_prereq_warning',
+    title: '前置警告',
+    width: 100,
+    slots: { default: 'default_prereq_warning' },
+  },
   { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 
 const stateColorMap = { 1: 'blue', 2: 'blue', 3: 'green', 4: 'orange' };
 const submissionStateColorMap = { 1: 'orange', 2: 'green', 3: 'red' };
+
+// P3-T02 前置警告列 tooltip：解析后端返回的 prereq_warning_procedures JSON 字符串
+function prereqWarningTooltip(procsJson) {
+  try {
+    const list = JSON.parse(procsJson || '[]');
+    return list
+      .map((p) => {
+        const scope = p.milepost_name ? `桩号${p.milepost_name}` : '项目整体';
+        return `${scope}缺前置工序"${p.prerequisite_name}"`;
+      })
+      .join('；');
+  } catch {
+    return '';
+  }
+}
 
 // 行操作：编辑仅待执行可改，取消后不可编辑/删除
 const actionsConfig = [
@@ -240,6 +261,21 @@ onMounted(refreshAll);
         >
           {{ row.submission.code }}
         </Tag>
+      </template>
+      <span v-else>-</span>
+    </template>
+
+    <template #default_prereq_warning="{ row }">
+      <template v-if="Number(row.has_prereq_warning) === 1">
+        <Tooltip :title="prereqWarningTooltip(row.prereq_warning_procedures)">
+          <Tag color="orange" class="cursor-pointer">
+            {{
+              Number(row.active_prereq_warning_count) > 1
+                ? `有警告(${row.active_prereq_warning_count})`
+                : '有警告'
+            }}
+          </Tag>
+        </Tooltip>
       </template>
       <span v-else>-</span>
     </template>
