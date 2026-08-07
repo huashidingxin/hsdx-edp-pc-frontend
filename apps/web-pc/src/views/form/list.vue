@@ -12,6 +12,7 @@ import {
   message,
   Modal,
   Popconfirm,
+  Popover,
   Select,
   Switch,
   Table,
@@ -140,6 +141,10 @@ function applyFilter() {
   filterOpen.value = false;
   loadForms(true);
 }
+
+const filterActive = computed(
+  () => filterType.value !== undefined || filterCategory.value !== undefined,
+);
 
 function resetFilter() {
   filterType.value = undefined;
@@ -616,7 +621,44 @@ onMounted(async () => {
             allow-clear
             class="flex-1"
           />
-          <Button @click="filterOpen = true">筛选</Button>
+          <Popover
+            v-model:open="filterOpen"
+            trigger="click"
+            placement="bottomLeft"
+            :destroy-on-hidden="true"
+          >
+            <Button :type="filterActive ? 'primary' : 'default'">筛选</Button>
+            <template #content>
+              <div class="w-64">
+                <div class="mb-2">
+                  <div class="config-label">表单类型</div>
+                  <Select
+                    v-model:value="filterType"
+                    :options="formTypeOptions"
+                    style="width: 100%"
+                    allow-clear
+                    placeholder="全部类型"
+                  />
+                </div>
+                <div class="mb-3">
+                  <div class="config-label">项目分类</div>
+                  <Select
+                    v-model:value="filterCategory"
+                    :options="categoryOptions"
+                    style="width: 100%"
+                    allow-clear
+                    placeholder="全部分类"
+                  />
+                </div>
+                <div class="flex justify-end gap-2">
+                  <Button size="small" @click="resetFilter">重置</Button>
+                  <Button size="small" type="primary" @click="applyFilter">
+                    应用
+                  </Button>
+                </div>
+              </div>
+            </template>
+          </Popover>
           <Button type="primary" @click="openFormCreate">+ 新增</Button>
         </div>
         <div
@@ -743,36 +785,6 @@ onMounted(async () => {
         </template>
       </div>
     </div>
-
-    <!-- 筛选弹窗 -->
-    <Modal v-model:open="filterOpen" title="筛选表单" width="480px">
-      <div class="grid grid-cols-12 gap-4">
-        <div class="col-span-12">
-          <label class="config-label">表单类型</label>
-          <Select
-            v-model:value="filterType"
-            :options="formTypeOptions"
-            style="width: 100%"
-            allow-clear
-            placeholder="全部类型"
-          />
-        </div>
-        <div class="col-span-12">
-          <label class="config-label">项目分类</label>
-          <Select
-            v-model:value="filterCategory"
-            :options="categoryOptions"
-            style="width: 100%"
-            allow-clear
-            placeholder="全部分类"
-          />
-        </div>
-      </div>
-      <template #footer>
-        <Button @click="resetFilter">重置</Button>
-        <Button type="primary" @click="applyFilter">应用</Button>
-      </template>
-    </Modal>
 
     <!-- 表单新增/编辑弹窗 -->
     <Modal
