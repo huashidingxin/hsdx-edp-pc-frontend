@@ -11,6 +11,8 @@ import { computed } from 'vue';
 
 import { DocumentEditor } from '@onlyoffice/document-editor-vue';
 
+const emit = defineEmits(['document-ready', 'load-error']);
+
 const props = defineProps({
   type: {
     type: String,
@@ -103,10 +105,12 @@ const config = computed(() => ({
 
 function onDocumentReady() {
   console.log('Document is loaded');
+  emit('document-ready');
 }
 
 function onLoadComponentError(errorCode, errorDescription) {
   console.error(`OnlyOffice 加载失败 (${errorCode}):`, errorDescription);
+  emit('load-error', { code: errorCode, description: errorDescription });
 }
 </script>
 

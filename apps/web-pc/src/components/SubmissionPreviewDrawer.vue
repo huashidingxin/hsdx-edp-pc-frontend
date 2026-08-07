@@ -18,19 +18,11 @@ import AppOffice from '#/components/AppOffice.vue';
 const open = ref(false);
 const document = ref(null);
 const loading = ref(false);
-const shouldLoad = ref(false);
 
-// 监听 Drawer 打开状态，延迟加载组件
+// 监听 Drawer 打开状态
 watch(open, (val) => {
-  if (val && document.value) {
-    // 延迟 300ms 后加载，让用户先看到 Drawer 动画
-    setTimeout(() => {
-      shouldLoad.value = true;
-      loading.value = true;
-    }, 300);
-  } else if (!val) {
-    // 关闭时重置，下次打开重新加载
-    shouldLoad.value = false;
+  if (!val) {
+    // 关闭时重置状态
     loading.value = false;
     document.value = null;
   }
@@ -82,9 +74,8 @@ defineExpose({ open: openPreview, close });
           <div class="h-32 w-48" />
         </Spin>
       </div>
-      <!-- OnlyOffice 组件延迟加载 -->
+      <!-- OnlyOffice 组件 -->
       <AppOffice
-        v-if="shouldLoad"
         :document="document"
         mode="view"
         @document-ready="onDocumentReady"
