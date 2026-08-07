@@ -234,7 +234,7 @@ watch(() => appStore.defaultProject?.id, loadUsers);
   <Drawer
     v-model:open="previewOpen"
     title="记录预览"
-    width="90%"
+    width="880px"
     destroy-on-close
   >
     <div v-if="previewDocument" class="h-[calc(100vh-120px)]">

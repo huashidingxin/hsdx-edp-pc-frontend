@@ -315,6 +315,10 @@ function handleCheckboxChange(params) {
   emit('update:selected', params?.records || []);
 }
 
+function handleCheckboxAll(params) {
+  emit('update:selected', params?.records || []);
+}
+
 function handleDetailSubmit() {
   detailApi.submit();
 }
@@ -505,6 +509,7 @@ defineExpose({
         @sort-change="handleSortChange"
         @page-change="handlePageChange"
         @checkbox-change="handleCheckboxChange"
+        @checkbox-all="handleCheckboxAll"
       >
         <template
           v-for="slotName in columnSlotNames"

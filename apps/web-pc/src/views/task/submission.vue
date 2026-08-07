@@ -739,9 +739,9 @@ watch(() => appStore.defaultProject?.id, refreshAll);
     <!-- 已提交记录预览（AppOffice 只读） -->
     <Drawer
       v-model:open="previewOpen"
-      title="记录预览"
-      width="90%"
-      destroy-on-close
+    title="记录预览"
+    width="880px"
+    destroy-on-close
     >
       <div v-if="previewDocument" class="h-[calc(100vh-120px)]">
         <AppOffice :document="previewDocument" mode="view" />
