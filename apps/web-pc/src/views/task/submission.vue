@@ -201,14 +201,17 @@ function prereqWarningTooltip(procsJson) {
   }
 }
 
-// 行操作：编辑 = 本人执行 + 未审核通过（含未提交的首次填写）
+// 行操作：编辑 = 本人执行 或 有 task_submission.edit 权限的管理员（super 代填场景），
+// 且未审核通过（含未提交的首次填写）；permission 置空避免权限码缺失时本人也无法填写
 // 注意：未提交任务的 submission_id 为 null（非 0），不能用 === 0 判断；
 // 未签到任务同样允许进入填写，提交时需登记无签到原因（P3-T07）
 const actionsConfig = [
   {
     key: 'edit',
+    permission: '',
     visible: (row) =>
-      row.executor?.id === userStore.userInfo?.id &&
+      (row.executor?.id === userStore.userInfo?.id ||
+        hasAccessByCodes(['task_submission.edit'])) &&
       (!row.submission_id || row.submission?.state !== 2),
   },
   { key: 'view', visible: (row) => row.submission_id > 0 },
@@ -489,6 +492,7 @@ watch(() => appStore.defaultProject?.id, refreshAll);
       :extra-query="extraQuery"
       :filter-fields="filterFields"
       :actions-config="actionsConfig"
+      :inline-actions="['view', 'edit']"
       :detail-format="detailFormat"
       :fields="[]"
       :grid-options="{
@@ -624,7 +628,7 @@ watch(() => appStore.defaultProject?.id, refreshAll);
         </div>
       </template>
 
-      <template #form-action>
+      <template #form-actions>
         <Button v-if="editingItem.submission_id" @click="openPreview">
           预览
         </Button>
