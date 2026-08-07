@@ -56,7 +56,6 @@ const filters = ref([
         {id:2,name:'已加入'},
         {id:3,name:'已拒绝'},
       ],
-      multiple:true
     }
   },
 ]);
