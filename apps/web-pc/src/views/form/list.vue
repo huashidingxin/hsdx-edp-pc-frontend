@@ -1,14 +1,15 @@
 <script setup>
 import { ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 
-import { Select, Tag } from 'antdv-next';
+import { Button, Select, Tag } from 'antdv-next';
 
 import Resource from '#/api/resource';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
 
-import FormFieldList from './field-list.vue';
 import FormTemplateList from './form-template-list.vue';
 
+const router = useRouter();
 const editingItem = ref({});
 
 const categories = ref([]);
@@ -130,7 +131,7 @@ function loadSettingFromEdit(item) {
 
 function saveFormat(payload) {
   const p = { ...payload };
-  if (p.type == 4) p.setting = formSetting.value;
+  if (p.type === 4) p.setting = formSetting.value;
   return p;
 }
 
@@ -222,7 +223,23 @@ loadCategories();
 
     <template #form-default>
       <div v-if="editingItem.id" class="mt-2 space-y-4">
-        <FormFieldList :key="formFieldListKey" :form-id="editingItem.id" />
+        <div class="flex items-center justify-between rounded border px-3 py-2">
+          <div class="text-sm text-gray-500">
+            字段与校验规则已迁移到独立配置页
+          </div>
+          <Button
+            type="primary"
+            size="small"
+            @click="
+              router.push({
+                path: '/field-config',
+                query: { form_id: editingItem.id },
+              })
+            "
+          >
+            配置字段与校验规则 →
+          </Button>
+        </div>
         <FormTemplateList
           :key="`tpl-${formFieldListKey}`"
           :form-id="editingItem.id"

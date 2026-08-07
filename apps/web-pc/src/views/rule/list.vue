@@ -30,10 +30,31 @@ async function loadCategories() {
   }));
   const f = formFields.value.find((x) => x.field === 'category_id');
   if (f) f.attrs.options = categoryOptions.value;
+  const fc = filterFields.value.find((x) => x.field === 'category_id');
+  if (fc) fc.attrs.options = categoryOptions.value;
+}
+
+// 所属项目（可选，空 = 通用规范）
+const projectOptions = ref([]);
+async function loadProjects() {
+  const { data } = await new Resource('projects').list({ per_page: 'all' });
+  projectOptions.value = (data || []).map((p) => ({
+    value: p.id,
+    label: p.name,
+  }));
+  const f = formFields.value.find((x) => x.field === 'project_id');
+  if (f) f.attrs.options = projectOptions.value;
 }
 
 const filterFields = ref([
   { field: 'name', label: '名称', type: 'text', span: 8 },
+  {
+    field: 'category_id',
+    label: '分类',
+    type: 'select',
+    span: 8,
+    attrs: { options: [] },
+  },
 ]);
 
 const formFields = ref([
@@ -46,6 +67,17 @@ const formFields = ref([
     attrs: { options: [] },
   },
   { field: 'name', type: 'text', label: '名称', span: 12, required: true },
+  {
+    field: 'project_id',
+    type: 'select',
+    label: '所属项目',
+    span: 12,
+    attrs: {
+      options: [],
+      allowClear: true,
+      placeholder: '通用（不指定项目）',
+    },
+  },
 ]);
 
 const gridColumns = ref([
@@ -66,9 +98,10 @@ const gridColumns = ref([
   { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 
+// 保存时注入所属项目；留空则落 null（通用）
 function saveFormat(payload) {
   const p = { ...payload };
-  p.project_id = p.project_id || currentProjectId.value;
+  p.project_id = p.project_id || null;
   return p;
 }
 
@@ -80,7 +113,9 @@ watch(
   },
 );
 
-onMounted(loadCategories);
+onMounted(async () => {
+  await Promise.all([loadCategories(), loadProjects()]);
+});
 </script>
 
 <template>
@@ -91,8 +126,8 @@ onMounted(loadCategories);
     :fields="formFields"
     :extra-query="extraQuery"
     permission-name="rule"
-    :inline-actions="['view']"
-    :toolbar="{ filter: true, create: false, refresh: true, more: false }"
+    :inline-actions="['view', 'edit', 'delete']"
+    :toolbar="{ filter: true, create: true, refresh: true, more: false }"
     :grid-options="{
       columns: gridColumns,
       showOverflow: false,
@@ -101,7 +136,7 @@ onMounted(loadCategories);
     :open-mode="{ create: 'drawer', detail: 'drawer' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
     :save-format="saveFormat"
-    title="规范规则（历史）"
+    title="规范规则"
     class="p-4"
   >
     <template #default_project="{ row }">
@@ -114,14 +149,14 @@ onMounted(loadCategories);
     </template>
 
     <template #form-default>
-      <Alert
-        type="info"
-        show-icon
-        class="mb-3"
-        message="历史只读"
-        description="P3-V04 起校验规则由「表单管理 → 字段规则」一站配置（写入 field_schemas），此处仅保留历史数据供追溯。"
-      />
       <div v-if="editingItem.id" class="mt-2">
+        <Alert
+          type="info"
+          show-icon
+          class="mb-3"
+          message="关联字段（历史记录）"
+          description="字段的校验规则请到「表单管理 → 字段规则」配置。下方仅列出本规范在旧链路中绑定的字段，供追溯。"
+        />
         <RuleFieldList
           :key="fieldListKey"
           :rule-category-id="editingItem.category_id"
