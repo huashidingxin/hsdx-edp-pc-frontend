@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue';
 
-import { Tag } from 'antdv-next';
+import { Alert, Tag } from 'antdv-next';
 
 import Resource from '#/api/resource';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
@@ -91,7 +91,8 @@ onMounted(loadCategories);
     :fields="formFields"
     :extra-query="extraQuery"
     permission-name="rule"
-    :inline-actions="['view', 'edit']"
+    :inline-actions="['view']"
+    :toolbar="{ filter: true, create: false, refresh: true, more: false }"
     :grid-options="{
       columns: gridColumns,
       showOverflow: false,
@@ -100,7 +101,7 @@ onMounted(loadCategories);
     :open-mode="{ create: 'drawer', detail: 'drawer' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
     :save-format="saveFormat"
-    title="规范规则"
+    title="规范规则（历史）"
     class="p-4"
   >
     <template #default_project="{ row }">
@@ -108,18 +109,24 @@ onMounted(loadCategories);
     </template>
     <template #default_status="{ row }">
       <Tag :color="row.status ? 'green' : 'red'">
-{{
-        row.status ? '正常' : '已停用'
-      }}
-</Tag>
+        {{ row.status ? '正常' : '已停用' }}
+      </Tag>
     </template>
 
     <template #form-default>
+      <Alert
+        type="info"
+        show-icon
+        class="mb-3"
+        message="历史只读"
+        description="P3-V04 起校验规则由「表单管理 → 字段规则」一站配置（写入 field_schemas），此处仅保留历史数据供追溯。"
+      />
       <div v-if="editingItem.id" class="mt-2">
         <RuleFieldList
           :key="fieldListKey"
           :rule-category-id="editingItem.category_id"
           :rule-id="editingItem.id"
+          readonly
         />
       </div>
     </template>

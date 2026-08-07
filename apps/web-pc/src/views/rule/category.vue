@@ -110,7 +110,11 @@ onMounted(loadCategories);
 
     <template #form-default>
       <div v-if="editingItem.id" class="mt-2">
-        <RuleFieldList :key="fieldListKey" :rule-category-id="editingItem.id" />
+        <RuleFieldList
+          :key="fieldListKey"
+          :rule-category-id="editingItem.id"
+          readonly
+        />
       </div>
     </template>
   </AppCrudTable>

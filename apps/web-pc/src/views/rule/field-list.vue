@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, ref } from 'vue';
 
-import { Button, message, Modal, Select } from 'antdv-next';
+import { Alert, Button, message, Modal, Select } from 'antdv-next';
 
 import Resource from '#/api/resource';
 import AppList from '#/components/AppList.vue';
@@ -14,6 +14,11 @@ const props = defineProps({
   ruleId: {
     type: [String, Number],
     default: undefined,
+  },
+  // P3-V04：规范库降级为规则来源，历史只读（隐藏全部写入口，不触发任何写请求）
+  readonly: {
+    type: Boolean,
+    default: false,
   },
 });
 
@@ -32,19 +37,46 @@ const saving = ref(false);
 const snapshotIds = ref([]);
 
 const listFields = ref([
-  { field: 'options', type: 'combobox', label: '选项列表', span: 10, attrs: { multiple: true, placeholder: '输入选项后按回车新增' } },
-  { field: 'sort', type: 'number', label: '排序', span: 4, attrs: { hint: '升序排列' } },
+  {
+    field: 'options',
+    type: 'combobox',
+    label: '选项列表',
+    span: 10,
+    attrs: { multiple: true, placeholder: '输入选项后按回车新增' },
+  },
+  {
+    field: 'sort',
+    type: 'number',
+    label: '排序',
+    span: 4,
+    attrs: { hint: '升序排列' },
+  },
   { field: 'required', type: 'switch', label: '必填', span: 8 },
 ]);
 
 const listColumns = ref([
   { field: 'id', title: 'ID', width: 60 },
-  { field: 'name', title: '名称', minWidth: 140, slots: { default: 'default_name' } },
-  { field: 'type', title: '类型', width: 110, slots: { default: 'default_type' } },
+  {
+    field: 'name',
+    title: '名称',
+    minWidth: 140,
+    slots: { default: 'default_name' },
+  },
+  {
+    field: 'type',
+    title: '类型',
+    width: 110,
+    slots: { default: 'default_type' },
+  },
   { field: 'options', title: '选项', minWidth: 140 },
   { field: 'sort', title: '排序', width: 60 },
   { field: 'required', title: '必填', width: 70 },
-  { field: 'rules', title: '校验规则', width: 100, slots: { default: 'default_rules' } },
+  {
+    field: 'rules',
+    title: '校验规则',
+    width: 100,
+    slots: { default: 'default_rules' },
+  },
 ]);
 
 async function loadFields() {
@@ -63,7 +95,12 @@ async function loadFields() {
 }
 
 function addRow() {
-  rows.value.push({ type: 'text', required: true, sort: rows.value.length + 1, options: [] });
+  rows.value.push({
+    type: 'text',
+    required: true,
+    sort: rows.value.length + 1,
+    options: [],
+  });
 }
 
 async function saveFields() {
@@ -73,7 +110,7 @@ async function saveFields() {
       message.error('每行需填写名称和字段类型');
       return;
     }
-    if (row.type === 'select' && (!row.options || !row.options.length)) {
+    if (row.type === 'select' && (!row.options || row.options.length === 0)) {
       message.error(`字段「${row.name}」类型为选项时，选项列表不能为空`);
       return;
     }
@@ -82,8 +119,8 @@ async function saveFields() {
   saving.value = true;
   try {
     const api = new Resource('fields');
-    const currentIds = rows.value.map((r) => r.id).filter(Boolean);
-    const removedIds = snapshotIds.value.filter((id) => !currentIds.includes(id));
+    const currentIds = new Set(rows.value.map((r) => r.id).filter(Boolean));
+    const removedIds = snapshotIds.value.filter((id) => !currentIds.has(id));
 
     const tasks = [];
     for (const id of removedIds) tasks.push(api.destroy(id));
@@ -130,10 +167,30 @@ const levelOptions = [
 ];
 
 const ruleListFields = ref([
-  { field: 'type', type: 'select', label: '类型', span: 6, required: true, attrs: { options: ruleTypeOptions } },
+  {
+    field: 'type',
+    type: 'select',
+    label: '类型',
+    span: 6,
+    required: true,
+    attrs: { options: ruleTypeOptions },
+  },
   { field: 'value', type: 'text', label: '比对值', span: 6, required: true },
-  { field: 'level', type: 'select', label: '级别', span: 6, required: true, attrs: { options: levelOptions } },
-  { field: 'message', type: 'text', label: '不通过提示', span: 10, required: true },
+  {
+    field: 'level',
+    type: 'select',
+    label: '级别',
+    span: 6,
+    required: true,
+    attrs: { options: levelOptions },
+  },
+  {
+    field: 'message',
+    type: 'text',
+    label: '不通过提示',
+    span: 10,
+    required: true,
+  },
 ]);
 
 const ruleColumns = ref([
@@ -179,8 +236,8 @@ async function saveRules() {
   ruleSaving.value = true;
   try {
     const api = new Resource('field-rules');
-    const currentIds = ruleRows.value.map((r) => r.id).filter(Boolean);
-    const removedIds = ruleSnapshot.value.filter((id) => !currentIds.includes(id));
+    const currentIds = new Set(ruleRows.value.map((r) => r.id).filter(Boolean));
+    const removedIds = ruleSnapshot.value.filter((id) => !currentIds.has(id));
 
     const tasks = [];
     for (const id of removedIds) tasks.push(api.destroy(id));
@@ -210,11 +267,26 @@ onMounted(loadFields);
 
 <template>
   <div class="rounded border p-3">
+    <Alert
+      v-if="readonly"
+      type="info"
+      show-icon
+      class="mb-2"
+      message="历史只读"
+      description="P3-V04 起字段校验规则请在「表单管理 → 字段规则」配置，本页仅保留历史数据。"
+    />
     <div class="mb-2 flex items-center justify-between">
       <div class="text-sm font-semibold text-gray-500">字段列表</div>
-      <div class="space-x-2">
+      <div v-if="!readonly" class="space-x-2">
         <Button size="small" @click="addRow">+ 新增字段</Button>
-        <Button size="small" type="primary" :loading="saving" @click="saveFields">保存字段</Button>
+        <Button
+          size="small"
+          type="primary"
+          :loading="saving"
+          @click="saveFields"
+        >
+          保存字段
+        </Button>
       </div>
     </div>
 
@@ -223,23 +295,35 @@ onMounted(loadFields);
       :options="{ columns: listColumns, showFooter: false }"
       :fields="listFields"
       :loading="loading"
-      :show-delete="true"
+      :show-delete="!readonly"
       :show-edit="false"
       row-key="id"
       height="240"
     >
-      <template #default_name="{ row, rowIndex }">
+      <template #default_name="{ row }">
         <input
           v-model="row.name"
           placeholder="字段名称"
           class="w-full rounded border border-gray-300 px-2 py-1 text-sm"
         />
       </template>
-      <template #default_type="{ row, rowIndex }">
-        <Select v-model:value="row.type" :options="typeOptions" size="small" style="width: 100%" />
+      <template #default_type="{ row }">
+        <Select
+          v-model:value="row.type"
+          :options="typeOptions"
+          size="small"
+          style="width: 100%"
+        />
       </template>
-      <template #default_rules="{ row, rowIndex }">
-        <Button type="link" size="small" class="p-0" @click="openRuleDialog(row)">校验规则</Button>
+      <template #default_rules="{ row }">
+        <Button
+          type="link"
+          size="small"
+          class="p-0"
+          @click="openRuleDialog(row)"
+        >
+          校验规则
+        </Button>
       </template>
     </AppList>
 
@@ -247,25 +331,30 @@ onMounted(loadFields);
     <Modal
       v-model:open="ruleDialog"
       :title="`校验规则 - ${ruleField?.name || ''}`"
-      ok-text="保存"
+      :ok-text="readonly ? '关闭' : '保存'"
       cancel-text="关闭"
       width="760px"
       :confirm-loading="ruleSaving"
+      :footer="readonly ? null : undefined"
       @ok="saveRules"
     >
       <div class="mb-2 flex justify-end">
-        <Button size="small" @click="addRuleRow">+ 新增规则</Button>
+        <Button v-if="!readonly" size="small" @click="addRuleRow">
+          + 新增规则
+        </Button>
       </div>
       <AppList
         v-model="ruleRows"
         :options="{ columns: ruleColumns, showFooter: false }"
         :fields="ruleListFields"
-        :show-delete="true"
+        :show-delete="!readonly"
         :show-edit="false"
         row-key="id"
         height="260"
       />
-      <div class="mt-2 text-xs text-gray-400">警告（级别 2）可以提交，错误（级别 1）无法提交</div>
+      <div class="mt-2 text-xs text-gray-400">
+        警告（级别 2）可以提交，错误（级别 1）无法提交
+      </div>
     </Modal>
   </div>
 </template>
