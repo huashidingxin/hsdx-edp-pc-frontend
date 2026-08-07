@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 
 import { Tag } from 'antdv-next';
 import Resource from '#/api/resource';
@@ -138,6 +138,9 @@ const formData = ref(null);
 const crudRef = ref(null);
 const pointData = ref(null);
 
+// 积分流水查询参数：computed 保持引用稳定，避免父表单每次重渲染生成新对象触发嵌套列表刷新
+const pointExtraQuery = computed(() => ({ user_id: formData.value?.id }));
+
 const typeLabelMap = {
   adjust: '调整',
   earn: '获得',
@@ -253,7 +256,7 @@ onMounted(() => {
         </div>
         <AppCrudTable
           api-url="point-transactions"
-          :extra-query="{ user_id: formData.id }"
+          :extra-query="pointExtraQuery"
           :fields="pointTransactionFields"
           :grid-options="{
             columns: pointTransactionColumns,

@@ -338,6 +338,10 @@ const currentProjectId = computed(
   () => appStore.defaultProject?.id || undefined,
 );
 
+// 查询参数：computed 保持引用稳定，避免页面重渲染（如打开详情抽屉）时每次生成新对象、
+// 触发 AppCrudTable 对 extraQuery 的 deep watch 导致列表被无故刷新
+const extraQuery = computed(() => ({ project_id: currentProjectId.value }));
+
 // 查询范围：2=项目范围（最大权限，默认） 1=仅本人
 const listScope = ref(2);
 const scopeOptions = [
@@ -539,7 +543,7 @@ function warningTooltip(procsJson) {
     api-url="supervision-logs"
     :filter-fields="filterFields"
     :fields="formFields"
-    :extra-query="{ project_id: currentProjectId }"
+    :extra-query="extraQuery"
     :list-scope="listScope"
     :toolbar="{ create: false, refresh: true }"
     :inline-actions="['view', 'edit']"

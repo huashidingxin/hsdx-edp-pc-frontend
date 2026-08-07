@@ -8,7 +8,7 @@
 import { computed, onMounted, provide, ref, useSlots, watch } from 'vue';
 import { useRoute } from 'vue-router';
 
-import { cloneDeep } from 'lodash-es';
+import { cloneDeep, isEqual } from 'lodash-es';
 
 // Composables
 import { useCrudTableActions } from './composables/useCrudTableActions.js';
@@ -395,8 +395,13 @@ onMounted(() => {
 
 watch(
   () => props.extraQuery,
-  () => {
-    if (isListMode.value) dataApi.handlePageData();
+  (val, prev) => {
+    if (!isListMode.value) return;
+    // 调用方若传内联对象（如 :extra-query="{ project_id: x }"），每次渲染都会生成新引用，
+    // 深 watch 在引用变化时也会触发；此处比较实际内容，避免打开详情等普通重渲染误刷新列表。
+    if (!isEqual(val ?? null, prev ?? null)) {
+      dataApi.handlePageData();
+    }
   },
   { deep: true },
 );

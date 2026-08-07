@@ -10,6 +10,9 @@ import { useAppStore } from '#/store';
 // 全局选择的项目 ID（"所有项目"时为空），列表请求自动携带
 const currentProjectId = computed(() => useAppStore().defaultProject?.id || undefined);
 
+// 查询参数：computed 保持引用稳定，避免页面重渲染时生成新对象触发列表深 watch 刷新
+const extraQuery = computed(() => ({ project_id: currentProjectId.value }));
+
 // 查询范围：2=项目范围（最大权限，默认） 1=仅本人
 const listScope = ref(2);
 const scopeOptions = [
@@ -60,7 +63,7 @@ const gridColumns = ref([
     api-url="task-backfills"
     :filter-fields="filterFields"
     :fields="formFields"
-    :extra-query="{ project_id: currentProjectId }"
+    :extra-query="extraQuery"
     :list-scope="listScope"
     permission-name="task_backfill"
     :inline-actions="['view', 'audit']"
