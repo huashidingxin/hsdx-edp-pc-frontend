@@ -15,6 +15,7 @@ import {
   Radio,
   Select,
   Tag,
+  Tooltip,
 } from 'antdv-next';
 
 import Resource from '#/api/resource';
@@ -382,6 +383,12 @@ const gridColumns = computed(() => {
       width: 80,
       slots: { default: 'default_timeout' },
     },
+    {
+      field: 'has_warning',
+      title: '警告',
+      width: 100,
+      slots: { default: 'default_warning' },
+    },
   ];
   if (!currentProjectId.value) {
     columns.splice(3, 0, {
@@ -440,6 +447,18 @@ const filterFields = computed(() => [
       ],
     },
   },
+  {
+    field: 'has_warning',
+    label: '警告状态',
+    type: 'select',
+    span: 6,
+    attrs: {
+      options: [
+        { id: 1, name: '有警告' },
+        { id: 0, name: '无警告' },
+      ],
+    },
+  },
 ]);
 
 const formFields = ref([
@@ -475,6 +494,18 @@ function rowState(row) {
   const submission = row.submission;
   if (submission?.state != null) return Number(submission.state);
   return 0;
+}
+
+// P3-L03 警告列 tooltip：解析后端返回的 warning_procedures JSON 字符串
+function warningTooltip(procsJson) {
+  try {
+    const list = JSON.parse(procsJson || '[]');
+    return list
+      .map((p) => `${p.procedure_name}（关键字"${p.keyword}"）`)
+      .join('；');
+  } catch {
+    return '';
+  }
 }
 </script>
 
@@ -602,6 +633,20 @@ function rowState(row) {
       <Tag :color="row.submission_timeout ? 'error' : 'processing'">
         {{ row.submission_timeout ? '超时' : '正常' }}
       </Tag>
+    </template>
+    <template #default_warning="{ row }">
+      <template v-if="Number(row.has_warning) === 1">
+        <Tooltip :title="warningTooltip(row.warning_procedures)">
+          <Tag color="orange" class="cursor-pointer">
+            {{
+              Number(row.active_warning_count) > 1
+                ? `有警告(${row.active_warning_count})`
+                : '有警告'
+            }}
+          </Tag>
+        </Tooltip>
+      </template>
+      <span v-else>-</span>
     </template>
 
     <template #form-description>
