@@ -547,7 +547,7 @@ function warningTooltip(procsJson) {
       columns: gridColumns,
       showOverflow: false,
       columnConfig: { resizable: true },
-      checkboxConfig: { checkStrictly: true, highlight: true },
+      checkboxConfig: { highlight: true, showHeader: true },
     }"
     :open-mode="{ create: false, detail: 'drawer' }"
     :detail-props="{ width: 960 }"
