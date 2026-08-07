@@ -68,6 +68,12 @@ async function save() {
     message.error('请检查表单');
     return;
   }
+  // 当前版本仍待审核且内容未修改：不做真实提交，避免重复生成待审核版本
+  // （已退回/已通过版本允许再次提交进入审核队列，不受此拦截）
+  if (formData.changed === false && Number(editingItem.value.submission?.state) === 1) {
+    message.info('内容未修改，无需重复提交');
+    return;
+  }
   // P3-L03 提交前关键字预检测：命中工序关键字且当天无该工序任务时提醒，但不阻断提交
   try {
     const res = await new Resource(
@@ -82,6 +88,7 @@ async function save() {
     console.error('关键字预检测失败:', error);
   }
   try {
+    const prevSubmissionId = editingItem.value.submission?.id;
     const res = await new Resource('supervision-logs').update(
       editingItem.value.id,
       {
@@ -89,8 +96,22 @@ async function save() {
         values: formData.values,
       },
     );
-    message.success('提交成功');
+    // 后端按归一化内容判定未变化时不会新增版本（返回的仍是当前版本 id 相同），
+    // 此时提示未生成新版本，避免用户误以为产生了新提交
+    const createdNewVersion =
+      !prevSubmissionId || res?.data?.submission?.id !== prevSubmissionId;
+    if (createdNewVersion) {
+      message.success('提交成功');
+    } else {
+      message.info('内容未修改，未生成新版本');
+    }
     warnings.value = res?.data?.warnings || [];
+    // 提交成功后刷新基线，后续未修改重复提交可继续被识别为无变化
+    const savedValues = res?.data?.submission?.values;
+    if (Array.isArray(savedValues)) {
+      defaultValues.value = JSON.parse(JSON.stringify(savedValues));
+      editingItem.value._values = JSON.parse(JSON.stringify(savedValues));
+    }
     tableRef.value?.reload?.();
   } catch (error) {
     console.error(error);
@@ -483,6 +504,7 @@ const stateMap = {
   1: { text: '待审核', color: 'orange' },
   2: { text: '审核通过', color: 'green' },
   3: { text: '已退回', color: 'red' },
+  4: { text: '已作废', color: 'default' },
 };
 
 function stateLabel(state) {
@@ -772,7 +794,13 @@ function warningTooltip(procsJson) {
               <span v-if="item.audit.reason" class="text-gray-400">（{{ item.audit.reason }}）</span>
             </div>
             <div v-else class="text-xs text-gray-400">
-              {{ item.state === 1 ? '待审核' : '尚未审核' }}
+              {{
+                item.state === 1
+                  ? '待审核'
+                  : item.state === 4
+                    ? '已被新版本取代'
+                    : '尚未审核'
+              }}
             </div>
           </div>
         </div>

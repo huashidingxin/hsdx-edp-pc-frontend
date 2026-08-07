@@ -17,6 +17,8 @@
  */
 import { computed, ref, watch } from 'vue';
 
+import { cloneDeep, isEqual } from 'lodash-es';
+
 import { Button, Form, Select } from 'antdv-next';
 
 import Resource from '#/api/resource';
@@ -61,6 +63,10 @@ const listChildren = ref({}); // field_id -> 子字段配置数组（list 字段
 // ---- 表单数据模型 ----
 const formData = ref({}); // { _fieldId: scalar | array }
 const listRows = ref({}); // { _listFieldId: [ row, row, ... ] }
+
+// 初始值快照（setValues 每次载入时更新），用于检测“未修改即重复提交”
+const pristineFormData = ref({});
+const pristineListRows = ref({});
 
 // ---- base_rules 选中状态（按 rule_category 互斥）----
 const baseRuleSelected = ref({}); // { ruleCategoryId: rule_id }
@@ -324,6 +330,10 @@ function setValues(subFields) {
       listRows.value[listKey].push(row);
     }
   }
+
+  // 快照当前载入值作为初始基线：未做任何修改时提交应判定为无变化
+  pristineFormData.value = cloneDeep(formData.value);
+  pristineListRows.value = cloneDeep(listRows.value);
 }
 
 // 内容按字段类型反序列化（参考 TaskSubmissionController::show）
@@ -645,6 +655,10 @@ async function getFormData() {
     warnings: { ...warnings, ...listEval.warnings },
     errors: { ...errors, ...listEval.errors },
     validated,
+    // 相对初始基线是否有修改（用于无修改重复提交拦截）
+    changed:
+      !isEqual(formData.value, pristineFormData.value) ||
+      !isEqual(listRows.value, pristineListRows.value),
   };
 }
 
