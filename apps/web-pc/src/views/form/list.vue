@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
@@ -55,21 +55,98 @@ async function loadCategories() {
   }));
 }
 
-async function loadForms() {
-  const { data } = await new Resource('forms').list({ per_page: 'all' });
-  forms.value = (data || []).map((f) => ({
-    value: f.id,
-    label: f.name,
-    type_desc: f.type_desc || typeDescMap[f.type] || '通用',
-    _raw: f,
-  }));
+// 分页与筛选状态
+const perPage = 20;
+const currentPage = ref(0);
+const lastPage = ref(1);
+const total = ref(0);
+const loadingForms = ref(false);
+const filterOpen = ref(false);
+const filterType = ref(undefined);
+const filterCategory = ref(undefined);
+
+function buildFormParams(pageNo) {
+  const params = { page: pageNo, per_page: perPage };
+  const kw = keyword.value.trim();
+  if (kw) params.name = kw;
+  if (filterType.value !== undefined && filterType.value !== null) {
+    params.type = filterType.value;
+  }
+  if (filterCategory.value !== undefined && filterCategory.value !== null) {
+    params.project_category_id = filterCategory.value;
+  }
+  return params;
 }
 
-const filteredForms = computed(() => {
-  const kw = keyword.value.trim().toLowerCase();
-  if (!kw) return forms.value;
-  return forms.value.filter((f) => f.label.toLowerCase().includes(kw));
+async function loadForms(reset = false) {
+  if (loadingForms.value) return;
+  if (reset) {
+    forms.value = [];
+    currentPage.value = 0;
+    lastPage.value = 1;
+    total.value = 0;
+  }
+  if (currentPage.value >= lastPage.value) return;
+  const nextPage = currentPage.value + 1;
+  loadingForms.value = true;
+  try {
+    const res = await new Resource('forms').list(buildFormParams(nextPage));
+    const items = (res.data || []).map((f) => ({
+      value: f.id,
+      label: f.name,
+      type_desc: f.type_desc || typeDescMap[f.type] || '通用',
+      _raw: f,
+    }));
+    forms.value = reset ? items : [...forms.value, ...items];
+    total.value = res.total ?? 0;
+    lastPage.value = res.last_page ?? 1;
+    currentPage.value = res.current_page ?? nextPage;
+  } finally {
+    loadingForms.value = false;
+    // 内容未撑满容器（无滚动条）时继续补载，保证滚动分页始终可用
+    ensureFilled();
+  }
+}
+
+// 左栏列表滚动容器（用于检测是否已可滚动）
+const formListRef = ref(null);
+
+function ensureFilled() {
+  const el = formListRef.value;
+  if (!el || loadingForms.value || !hasMore.value) return;
+  if (el.scrollHeight <= el.clientHeight) {
+    loadForms(false);
+  }
+}
+
+const hasMore = computed(() => currentPage.value < lastPage.value);
+
+// 左栏滚动触底自动加载下一页
+function onListScroll(e) {
+  const el = e.target;
+  if (el.scrollHeight - el.scrollTop - el.clientHeight < 60 && hasMore.value) {
+    loadForms(false);
+  }
+}
+
+// 关键词防抖（服务端过滤）
+let keywordTimer = null;
+watch(keyword, () => {
+  clearTimeout(keywordTimer);
+  keywordTimer = setTimeout(() => loadForms(true), 300);
 });
+
+function applyFilter() {
+  filterOpen.value = false;
+  loadForms(true);
+}
+
+function resetFilter() {
+  filterType.value = undefined;
+  filterCategory.value = undefined;
+  filterOpen.value = false;
+  loadForms(true);
+}
 
 function selectForm(id) {
   // 仅本地切换，不路由跳转（避免 vben 标签页按 query 区分而新开页面）
@@ -539,11 +616,16 @@ onMounted(async () => {
             allow-clear
             class="flex-1"
           />
+          <Button @click="filterOpen = true">筛选</Button>
           <Button type="primary" @click="openFormCreate">+ 新增</Button>
         </div>
-        <div class="flex-1 overflow-y-auto">
+        <div
+          ref="formListRef"
+          class="flex-1 overflow-y-auto"
+          @scroll="onListScroll"
+        >
           <div
-            v-for="f in filteredForms"
+            v-for="f in forms"
             :key="f.value"
             class="flex cursor-pointer items-center border-b px-3 py-2 transition-colors hover:bg-gray-50"
             :class="formId === f.value ? 'bg-blue-50' : ''"
@@ -561,7 +643,13 @@ onMounted(async () => {
             </Button>
           </div>
           <div
-            v-if="!filteredForms.length"
+            v-if="loadingForms"
+            class="px-3 py-4 text-center text-sm text-gray-400"
+          >
+            加载中…
+          </div>
+          <div
+            v-else-if="!forms.length"
             class="px-3 py-6 text-center text-sm text-gray-400"
           >
             无匹配表单
@@ -655,6 +743,36 @@ onMounted(async () => {
         </template>
       </div>
     </div>
+
+    <!-- 筛选弹窗 -->
+    <Modal v-model:open="filterOpen" title="筛选表单" width="480px">
+      <div class="grid grid-cols-12 gap-4">
+        <div class="col-span-12">
+          <label class="config-label">表单类型</label>
+          <Select
+            v-model:value="filterType"
+            :options="formTypeOptions"
+            style="width: 100%"
+            allow-clear
+            placeholder="全部类型"
+          />
+        </div>
+        <div class="col-span-12">
+          <label class="config-label">项目分类</label>
+          <Select
+            v-model:value="filterCategory"
+            :options="categoryOptions"
+            style="width: 100%"
+            allow-clear
+            placeholder="全部分类"
+          />
+        </div>
+      </div>
+      <template #footer>
+        <Button @click="resetFilter">重置</Button>
+        <Button type="primary" @click="applyFilter">应用</Button>
+      </template>
+    </Modal>
 
     <!-- 表单新增/编辑弹窗 -->
     <Modal
@@ -829,7 +947,7 @@ onMounted(async () => {
       :title="`校验规则 - ${ruleField?.name || ''}`"
       ok-text="保存"
       cancel-text="关闭"
-      width="860px"
+      width="1120px"
       :confirm-loading="ruleSaving"
       @ok="saveRules"
     >
