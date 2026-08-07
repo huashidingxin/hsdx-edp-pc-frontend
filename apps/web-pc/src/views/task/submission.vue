@@ -682,7 +682,11 @@ watch(() => appStore.defaultProject?.id, refreshAll);
       <template #default_prereq_warning="{ row }">
         <template v-if="Number(row.has_prereq_warning) === 1">
           <Tooltip :title="prereqWarningTooltip(row.prereq_warning_procedures)">
-            <Tag color="orange" class="cursor-pointer">
+            <Tag
+              color="orange"
+              class="cursor-pointer"
+              @click="openPrereqWarnings(row)"
+            >
               {{
                 Number(row.active_prereq_warning_count) > 1
                   ? `有警告(${row.active_prereq_warning_count})`
@@ -702,9 +706,6 @@ watch(() => appStore.defaultProject?.id, refreshAll);
           @click="openAudit(row)"
         >
           审核
-        </Button>
-        <Button type="link" size="small" @click="openPrereqWarnings(row)">
-          前置警告
         </Button>
       </template>
     </AppCrudTable>
