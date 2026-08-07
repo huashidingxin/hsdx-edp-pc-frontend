@@ -9,20 +9,22 @@
  *   - rules 形如 { '_<fieldId>': rule_id | null | nested }（list 字段为嵌套 rules 数组，按行对应）
  *   - 文件字段值含 '?upload' 时，后端 saveFields 触发 UploadService.mapping 挂到 'submission_file'
  *
- * 校验契约（对齐 web-admin AppForm.formatRule）：
- *   - field.rules 来自 field 内置 required 等；field.base_rules 来自受控规范（按 rule_category 互斥取一个 rule_id 应用）
+ * 校验契约（P3-V01/V02 对齐后端 FormSchemaService 全量输出）：
+ *   - field.required → 必填；field.rules[]（含规范 base_rules）全量参与校验，不再依赖前端勾选 rule_id
  *   - rule level=1 → errors 阻止提交；level=2 → warnings 触发业务层不符合项弹窗
+ *   - ant Form.Item 接管失焦/变更实时校验（buildFieldValidation → toAntdRules）；提交前 evaluateAll 兜底
+ *   - 顶部"规范适用"选择区降级为追溯用途：仅决定提交 rules 里的 rule_id，不再控制校验是否生效
  *
  * 暴露接口（与 web-admin submission/edit.vue 对齐）：formRef / formFields / getFormData / setFormData / validate
  */
 import { computed, ref, watch } from 'vue';
 
-import { cloneDeep, isEqual } from 'lodash-es';
-
 import { Button, Form, Select } from 'antdv-next';
+import { cloneDeep, isEqual } from 'lodash-es';
 
 import Resource from '#/api/resource';
 import AppField from '#/components/AppField.vue';
+import { toAntdRules } from '#/composables/use-field-rules';
 
 const props = defineProps({
   // 已存在 submission 的字段值（后端 show 返回 submission_fields 数组，扁平 [{id, field_id, type, name, parent_id, content, rule_id, ...}]）
@@ -83,6 +85,22 @@ const listFieldRefs = ref({}); // `${listFieldId}_${rowIndex}_${subFieldId}` -> 
 
 const formRef = ref(null);
 
+// P3-V02：ant Form 的 model 需覆盖 list 子表行值（list 行存于 listRows，行内子字段的 ant Form.Item
+// 通过动态 name=subListKey 取校验值）；top-level 仍直读 formData
+const formModel = computed(() => {
+  const m = { ...formData.value };
+  for (const field of renderFields.value) {
+    if (field._renderType !== 'list') continue;
+    const rows = listRows.value[fkey(field)] || [];
+    for (let i = 0; i < rows.length; i++) {
+      for (const sub of field._subFields || []) {
+        m[subListKey(field.id, i, sub.id)] = rows[i][fkey(sub)];
+      }
+    }
+  }
+  return m;
+});
+
 // ---- 工具 ----
 function fkey(f) {
   return `_${f.id}`;
@@ -99,8 +117,9 @@ function mapType(field) {
   switch (type) {
     case 'construction':
     case 'multiselect':
-    case 'stakeholder':
+    case 'stakeholder': {
       return 'multiselect';
+    }
     case 'date':
     case 'datetime':
     case 'digit':
@@ -114,26 +133,32 @@ function mapType(field) {
     case 'textarea':
     case 'time':
     case 'video':
-    case 'videos':
+    case 'videos': {
       return type;
+    }
     case 'humidity':
     case 'temperature':
-    case 'wind':
+    case 'wind': {
       return 'number';
-    case 'list':
+    }
+    case 'list': {
       return 'list';
-    case 'unit_project':
+    }
+    case 'unit_project': {
       return 'select';
-    case 'unit_project_code':
+    }
+    case 'unit_project_code': {
       return 'text';
-    default:
+    }
+    default: {
       return 'text';
+    }
   }
 }
 
 function mapAttrs(field) {
   const type = field.type || 'text';
-  const attrs = { ...(field.attrs || {}) };
+  const attrs = { ...field.attrs };
   attrs.placeholder = field.placeholder || `请输入${field.name}`;
   if (field.hint) attrs.hint = field.hint;
   if (type === 'select' || type === 'multiselect') {
@@ -141,25 +166,52 @@ function mapAttrs(field) {
       if (typeof o === 'object') return o;
       return { value: o, label: o };
     });
-    if (type === 'multiselect' || (field.type === 'construction' && field.options?.length)) {
+    if (
+      type === 'multiselect' ||
+      (field.type === 'construction' && field.options?.length)
+    ) {
       attrs.mode = 'multiple';
     }
   } else if (type === 'unit_project') {
-    attrs.options = unitProjects.value.map((u) => ({ value: u.name, label: u.name }));
+    attrs.options = unitProjects.value.map((u) => ({
+      value: u.name,
+      label: u.name,
+    }));
   } else if (type === 'digit') {
     attrs.step = 0.01;
   } else if (type === 'image') {
     attrs.limit = 1;
     attrs.fileType = 'image';
-  } else if (type === 'file' || type === 'images' || type === 'video' || type === 'videos') {
+  } else if (
+    type === 'file' ||
+    type === 'images' ||
+    type === 'video' ||
+    type === 'videos'
+  ) {
     attrs.multiple = type !== 'image' && type !== 'video';
-    attrs.fileType = type === 'videos' || type === 'video' ? 'video' : (type === 'images' || type === 'image' ? 'image' : 'file');
+    attrs.fileType =
+      type === 'videos' || type === 'video'
+        ? 'video'
+        : type === 'images' || type === 'image'
+          ? 'image'
+          : 'file';
   }
   if (props.readonly) {
     attrs.disabled = true;
     attrs.readonly = true;
   }
   return attrs;
+}
+
+/**
+ * P3-V02：把后端 schema 输出的 field.required / field.rules 转换为 ant Form.Item 兼容规则，
+ * 透传到 AppField 的 props.field.required / props.field.rules，让 ant Form 接管失焦/变更即时校验。
+ * ant 失焦校验与提交按钮 getFormData() 内部 evaluateAll 互为兜底——任一命中即红字。
+ */
+function buildFieldValidation(field) {
+  const required = !!field.required && !props.readonly;
+  const rules = props.readonly ? [] : toAntdRules(field, field.rules || []);
+  return { required, rules };
 }
 
 // 初始化 base_rules（按 rule_category 互斥取一个 rule_id）
@@ -170,7 +222,11 @@ function initBaseRules() {
     for (const r of baseRules) {
       const catId = r.rule_category_id;
       if (!categories[catId]) {
-        categories[catId] = { id: catId, name: r.rule_category_name, rules: [] };
+        categories[catId] = {
+          id: catId,
+          name: r.rule_category_name,
+          rules: [],
+        };
       }
       const exists = categories[catId].rules.find((x) => x.id === r.rule_id);
       if (!exists) {
@@ -188,7 +244,9 @@ function initBaseRules() {
     const list = categories[catId].rules;
     baseRuleSelected.value[catId] = list[0].id;
     for (const fieldKey in props.rules) {
-      const matched = list.find((r) => r.id == props.rules[fieldKey]);
+      const matched = list.find(
+        (r) => String(r.id) === String(props.rules[fieldKey]),
+      );
       if (matched) {
         baseRuleSelected.value[catId] = matched.id;
         break;
@@ -202,7 +260,7 @@ function initBaseRules() {
 function recomputeFieldBaseRule() {
   for (const field of formFields.value) {
     const baseRules = field.rules?.filter((r) => r.rule_id > 0) || [];
-    if (!baseRules.length) {
+    if (baseRules.length === 0) {
       fieldBaseRule.value[fkey(field)] = null;
       continue;
     }
@@ -229,7 +287,10 @@ async function loadForm() {
   for (const f of formFields.value) {
     if (f.parent_id) {
       childrenOf[f.parent_id] = childrenOf[f.parent_id] || [];
-      childrenOf[f.parent_id].push(f);
+      childrenOf[f.parent_id].push({
+        ...f,
+        _validation: buildFieldValidation(f),
+      });
     }
   }
   for (const f of formFields.value) {
@@ -240,7 +301,10 @@ async function loadForm() {
   }
   // 顶层字段（排除 list 的子字段）
   for (const f of formFields.value) {
-    if (f.parent_id && formFields.value.some((p) => p.id === f.parent_id && p.type === 'list')) {
+    if (
+      f.parent_id &&
+      formFields.value.some((p) => p.id === f.parent_id && p.type === 'list')
+    ) {
       continue;
     }
     topLevel.push(f);
@@ -251,6 +315,7 @@ async function loadForm() {
     _renderType: mapType(f),
     _attrs: mapAttrs(f),
     _key: fkey(f),
+    _validation: buildFieldValidation(f),
   }));
 
   // 单位工程字段联动记录
@@ -278,7 +343,10 @@ async function loadUnitProjects() {
   unitProjects.value = data || [];
   for (const f of renderFields.value) {
     if (f.type === 'unit_project') {
-      f._attrs.options = unitProjects.value.map((u) => ({ value: u.name, label: u.name }));
+      f._attrs.options = unitProjects.value.map((u) => ({
+        value: u.name,
+        label: u.name,
+      }));
     }
   }
 }
@@ -321,7 +389,9 @@ function setValues(subFields) {
       const row = {};
       const children = subFields.filter((sf) => sf.parent_id === entry.id);
       for (const c of children) {
-        const subConfig = (config._subFields || []).find((sf) => sf.id === c.field_id);
+        const subConfig = (config._subFields || []).find(
+          (sf) => sf.id === c.field_id,
+        );
         if (!subConfig) continue;
         row[fkey(subConfig)] = coerceContent(subConfig, c.content);
         // 子字段 rule_id
@@ -340,7 +410,13 @@ function setValues(subFields) {
 function coerceContent(config, content) {
   const type = config.type;
   if (content === null || content === undefined) {
-    if (type === 'multiselect' || type === 'images' || type === 'file' || type === 'videos') return [];
+    if (
+      type === 'multiselect' ||
+      type === 'images' ||
+      type === 'file' ||
+      type === 'videos'
+    )
+      return [];
     if (type === 'switch') return 0;
     if (type === 'list') return [];
     return '';
@@ -368,7 +444,13 @@ function coerceContent(config, content) {
   if (type === 'switch') {
     return Number(!!Number(content) || content === true || content === 'true');
   }
-  if (type === 'number' || type === 'digit' || type === 'temperature' || type === 'humidity' || type === 'wind') {
+  if (
+    type === 'number' ||
+    type === 'digit' ||
+    type === 'temperature' ||
+    type === 'humidity' ||
+    type === 'wind'
+  ) {
     const n = Number(content);
     return Number.isNaN(n) ? '' : n;
   }
@@ -390,7 +472,8 @@ function onFieldUpdate(field, value) {
 function onListFieldUpdate(listField, rowIndex, subField, value) {
   const listKey = fkey(listField);
   if (!listRows.value[listKey]) listRows.value[listKey] = [];
-  if (!listRows.value[listKey][rowIndex]) listRows.value[listKey][rowIndex] = {};
+  if (!listRows.value[listKey][rowIndex])
+    listRows.value[listKey][rowIndex] = {};
   listRows.value[listKey][rowIndex][fkey(subField)] = value;
 }
 
@@ -420,59 +503,82 @@ function defaultForType(type) {
 // ---- ref 收集 ----
 function setFieldRef(field, el) {
   if (el) fieldRefs.value[fkey(field)] = el;
-  else delete fieldRefs.value[fkey(field)];
+  else Reflect.deleteProperty(fieldRefs.value, fkey(field));
 }
 
 function setListFieldRef(listField, rowIndex, subField, el) {
   const key = subListKey(listField.id, rowIndex, subField.id);
   if (el) listFieldRefs.value[key] = el;
-  else delete listFieldRefs.value[key];
+  else Reflect.deleteProperty(listFieldRefs.value, key);
 }
 
 // ---- 校验引擎 ----
-// 普通字段：内置规则（required）+ base_rules（按选中 rule_id 过滤）+ level 区分
+// 普通字段：内置规则（required）+ schema 全量 rules + level 区分
 function formatRule(rule, fieldType) {
   const type = rule.type;
-  const isNumeric = ['digit', 'humidity', 'number', 'temperature', 'wind'].includes(fieldType);
+  const isNumeric = [
+    'digit',
+    'humidity',
+    'number',
+    'temperature',
+    'wind',
+  ].includes(fieldType);
   const errMsg = rule.message || '格式有误';
   switch (type) {
-    case 'eq':
-      return (v) => v == rule.value || errMsg;
+    case 'eq': {
+      return (v) => String(v) === String(rule.value) || errMsg;
+    }
     case 'max':
-    case 'maxLength':
-      if (isNumeric) return (v) => v <= parseFloat(rule.value) || errMsg;
+    case 'maxLength': {
+      if (isNumeric) return (v) => v <= Number.parseFloat(rule.value) || errMsg;
       return (v) => (!!v && String(v).length <= Number(rule.value)) || errMsg;
+    }
     case 'min':
-    case 'minLength':
-      if (isNumeric) return (v) => v >= parseFloat(rule.value) || errMsg;
+    case 'minLength': {
+      if (isNumeric) return (v) => v >= Number.parseFloat(rule.value) || errMsg;
       return (v) => (!!v && String(v).length >= Number(rule.value)) || errMsg;
+    }
     case 'range': {
-      const range = Array.isArray(rule.value) ? rule.value : String(rule.value).split('-');
-      const lo = parseFloat(range[0]);
-      const hi = parseFloat(range[1]);
+      const range = Array.isArray(rule.value)
+        ? rule.value
+        : String(rule.value).split('-');
+      const lo = Number.parseFloat(range[0]);
+      const hi = Number.parseFloat(range[1]);
       return (v) => (v >= lo && v <= hi) || errMsg;
     }
-    case 'required':
+    case 'required': {
       if (fieldType !== 'switch' && !isNumeric) {
         return (v) => {
-          if (v == null) return errMsg;
+          if (v === null || v === undefined) return errMsg;
           if (Array.isArray(v)) return v.length > 0 || errMsg;
           if (typeof v === 'string') return v.trim().length > 0 || errMsg;
           return !!v || errMsg;
         };
       }
-      return (v) => v !== undefined && v !== null || errMsg;
-    default:
-      return (v) => v == rule.value || errMsg;
+      return (v) => (v !== undefined && v !== null) || errMsg;
+    }
+    default: {
+      return (v) => String(v) === String(rule.value) || errMsg;
+    }
   }
 }
 
 function getFieldRules(field) {
   const list = { errors: [], warnings: [] };
-  const builtin = field.required ? [{ type: 'required', message: (field.name.length < 10 ? field.name : '该字段') + '必填', level: 1 }] : [];
-  const baseRules = (field.rules || []).filter((r) => r.rule_id > 0 && r.rule_id === fieldBaseRule.value[fkey(field)]);
-  const all = builtin.concat(baseRules);
+  const builtin = field.required
+    ? [
+        {
+          type: 'required',
+          message: `${field.name.length < 10 ? field.name : '该字段'}必填`,
+          level: 1,
+        },
+      ]
+    : [];
+  // P3-V01/V02：base_rules 不再按 rule_id 过滤——FormSchemaService 已全量输出，前端全量校验
+  const baseRules = field.rules || [];
+  const all = [...builtin, ...baseRules];
   for (const r of all) {
+    if (r.type === 'required') continue; // required 已由 builtin 注入，避免重复
     const fn = formatRule(r, field.type);
     if (r.level === 2) list.warnings.push({ rule: r, fn });
     else list.errors.push({ rule: r, fn });
@@ -502,7 +608,7 @@ function evaluateAll() {
           ws.push({ rule: item.rule, value: v, message: r });
         }
       }
-      if (ws.length) warnings[fkey(field)] = ws;
+      if (ws.length > 0) warnings[fkey(field)] = ws;
     }
   }
   return { errors, warnings };
@@ -516,10 +622,9 @@ function evaluateList(listField, rowIndex) {
     const builtin = sub.required
       ? [{ type: 'required', message: `${sub.name}必填`, level: 1 }]
       : [];
-    const baseRules = (sub.rules || []).filter(
-      (r) => r.rule_id > 0 && r.rule_id === fieldBaseRule.value[fkey(sub)],
-    );
-    const all = builtin.concat(baseRules);
+    // P3-V01/V02：base_rules 不再按 rule_id 过滤——FormSchemaService 已全量输出，前端全量校验
+    const baseRules = sub.rules || [];
+    const all = [...builtin, ...baseRules];
     const v = row[fkey(sub)];
     for (const r of all) {
       const fn = formatRule(r, sub.type);
@@ -528,7 +633,10 @@ function evaluateList(listField, rowIndex) {
         if (r.level === 2) {
           warnings.push({ rule: r, value: v, message: res });
         } else {
-          errors[subListKey(listField.id, rowIndex, sub.id)] = { rule: r, message: res };
+          errors[subListKey(listField.id, rowIndex, sub.id)] = {
+            rule: r,
+            message: res,
+          };
         }
       }
     }
@@ -545,8 +653,11 @@ function evaluateAllList() {
     for (let i = 0; i < rows.length; i++) {
       const r = evaluateList(field, i);
       Object.assign(errors, r.errors);
-      if (r.warnings.length) {
-        warnings[fkey(field)] = (warnings[fkey(field)] || []).concat(r.warnings);
+      if (r.warnings.length > 0) {
+        warnings[fkey(field)] = [
+          ...(warnings[fkey(field)] || []),
+          ...r.warnings,
+        ];
       }
     }
   }
@@ -557,7 +668,7 @@ async function validate() {
   const { errors } = evaluateAll();
   const listEval = evaluateAllList();
   const allErrors = { ...errors, ...listEval.errors };
-  // ant Form 校验已内置 required 字段，但 base_rules 需手动校验
+  // ant Form 已接管 required+base_rules 实时校验；此处与 evaluateAll 互为兜底
   let antValid = true;
   if (formRef.value) {
     try {
@@ -574,7 +685,12 @@ async function uploadPendingFiles() {
   // 常规字段
   const tasks = [];
   for (const field of renderFields.value) {
-    if (!['file', 'image', 'images', 'video', 'videos'].includes(field._renderType)) continue;
+    if (
+      !['file', 'image', 'images', 'video', 'videos'].includes(
+        field._renderType,
+      )
+    )
+      continue;
     const ref = fieldRefs.value[fkey(field)];
     if (ref?.fieldRef?.upload) {
       tasks.push(ref.fieldRef.upload());
@@ -586,7 +702,10 @@ async function uploadPendingFiles() {
     const rows = listRows.value[fkey(field)] || [];
     for (let i = 0; i < rows.length; i++) {
       for (const sub of field._subFields || []) {
-        if (!['file', 'image', 'images', 'video', 'videos'].includes(mapType(sub))) continue;
+        if (
+          !['file', 'image', 'images', 'video', 'videos'].includes(mapType(sub))
+        )
+          continue;
         const ref = listFieldRefs.value[subListKey(field.id, i, sub.id)];
         if (ref?.fieldRef?.upload) tasks.push(ref.fieldRef.upload());
       }
@@ -619,10 +738,16 @@ function buildValues() {
 
 function serializeValue(field, value) {
   const type = field.type;
-  if (type === 'multiselect' || type === 'images' || type === 'videos' || type === 'file' || type === 'construction') {
+  if (
+    type === 'multiselect' ||
+    type === 'images' ||
+    type === 'videos' ||
+    type === 'file' ||
+    type === 'construction'
+  ) {
     // 数组：后端 json_encode 存储；含 ?upload 的字符串后端会 mapping 单值
     if (Array.isArray(value)) {
-      return value.filter((v) => v != null && v !== '');
+      return value.filter((v) => v !== null && v !== undefined && v !== '');
     }
     return value;
   }
@@ -692,9 +817,9 @@ const baseRuleGroups = computed(() => {
     for (const f of formFields.value) {
       const baseRules = f.rules?.filter((r) => r.rule_id > 0) || [];
       for (const r of baseRules) {
-        if (r.rule_category_id == catId) {
+        if (String(r.rule_category_id) === String(catId)) {
           cat.name = r.rule_category_name;
-          if (!cat.rules.find((x) => x.id === r.rule_id)) {
+          if (!cat.rules.some((x) => x.id === r.rule_id)) {
             cat.rules.push({ id: r.rule_id, name: r.rule_name });
           }
         }
@@ -709,7 +834,7 @@ const baseRuleGroups = computed(() => {
 watch(
   () => props.values,
   (v) => {
-    if (formFields.value.length) setValues(v || []);
+    if (formFields.value.length > 0) setValues(v || []);
   },
   { deep: true },
 );
@@ -725,7 +850,7 @@ watch(
 watch(
   () => props.rules,
   () => {
-    if (formFields.value.length) initBaseRules();
+    if (formFields.value.length > 0) initBaseRules();
   },
   { deep: true },
 );
@@ -742,7 +867,11 @@ loadForm();
     >
       <div class="mb-2 text-sm font-semibold text-gray-600">规范适用</div>
       <div class="flex flex-wrap gap-4">
-        <div v-for="(cat, catId) in baseRuleGroups" :key="catId" class="flex items-center gap-2">
+        <div
+          v-for="(cat, catId) in baseRuleGroups"
+          :key="catId"
+          class="flex items-center gap-2"
+        >
           <span class="text-sm text-gray-500">{{ cat.name }}</span>
           <Select
             :value="baseRuleSelected[catId]"
@@ -758,15 +887,24 @@ loadForm();
       </div>
     </div>
 
-    <Form ref="formRef" :model="formData" layout="vertical">
+    <Form ref="formRef" :model="formModel" layout="vertical">
       <template v-for="field in renderFields" :key="field._key">
         <!-- list 字段：嵌套子表 -->
-        <div v-if="field._renderType === 'list'" class="mb-4 rounded border p-3">
+        <div
+          v-if="field._renderType === 'list'"
+          class="mb-4 rounded border p-3"
+        >
           <div class="mb-2 flex items-center justify-between">
             <div class="text-sm font-semibold text-gray-600">
-              {{ field.name }}<span v-if="field.required" class="text-red-500">*</span>
+              {{ field.name
+              }}<span v-if="field.required" class="text-red-500">*</span>
             </div>
-            <Button v-if="!readonly" size="small" type="dashed" @click="addListRow(field)">
+            <Button
+              v-if="!readonly"
+              size="small"
+              type="dashed"
+              @click="addListRow(field)"
+            >
               + 新增行
             </Button>
           </div>
@@ -787,16 +925,25 @@ loadForm();
                     type: mapType(sub),
                     label: `${sub.name}${sub.required ? '*' : ''}`,
                     attrs: mapAttrs(sub),
+                    required: sub._validation.required,
+                    rules: sub._validation.rules,
                   }"
                   :model-value="row[fkey(sub)]"
                   :with-form-item="true"
                   :ref="(el) => setListFieldRef(field, rowIndex, sub, el)"
-                  @update:model-value="(v) => onListFieldUpdate(field, rowIndex, sub, v)"
+                  @update:model-value="
+                    (v) => onListFieldUpdate(field, rowIndex, sub, v)
+                  "
                 />
               </div>
             </div>
             <div v-if="!readonly" class="mt-2 text-right">
-              <Button type="link" danger size="small" @click="removeListRow(field, rowIndex)">
+              <Button
+                type="link"
+                danger
+                size="small"
+                @click="removeListRow(field, rowIndex)"
+              >
                 删除本行
               </Button>
             </div>
@@ -817,6 +964,8 @@ loadForm();
             type: field._renderType,
             label: field.name,
             attrs: field._attrs,
+            required: field._validation.required,
+            rules: field._validation.rules,
           }"
           :model-value="formData[field._key]"
           :with-form-item="true"
