@@ -98,9 +98,9 @@ async function loadForms(reset = false) {
       _raw: f,
     }));
     forms.value = reset ? items : [...forms.value, ...items];
-    total.value = res.total ?? 0;
-    lastPage.value = res.last_page ?? 1;
-    currentPage.value = res.current_page ?? nextPage;
+    total.value = res.meta?.total ?? 0;
+    lastPage.value = res.meta?.last_page ?? 1;
+    currentPage.value = res.meta?.current_page ?? nextPage;
   } finally {
     loadingForms.value = false;
     // 内容未撑满容器（无滚动条）时继续补载，保证滚动分页始终可用
