@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRoute } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
 
@@ -29,7 +29,6 @@ import FormTemplateList from './form-template-list.vue';
 // 布局：Page 包裹、左右两栏均铺满高度。
 
 const route = useRoute();
-const router = useRouter();
 
 // ================= 左栏：表单列表 =================
 const forms = ref([]);
@@ -73,8 +72,8 @@ const filteredForms = computed(() => {
 });
 
 function selectForm(id) {
+  // 仅本地切换，不路由跳转（避免 vben 标签页按 query 区分而新开页面）
   formId.value = id;
-  router.replace({ query: { form_id: id } });
   loadFields();
 }
 
