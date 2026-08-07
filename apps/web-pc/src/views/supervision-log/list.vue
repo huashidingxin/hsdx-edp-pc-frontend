@@ -734,7 +734,7 @@ function warningTooltip(procsJson) {
             :key="w.id"
             class="flex items-start gap-2 rounded border border-orange-200 bg-orange-50 p-2"
           >
-            <Tag color="orange" class="mt-0.5 shrink-0">待补充任务</Tag>
+            <Tag class="mt-0.5 shrink-0 !border-orange-400 !bg-orange-50 !text-orange-700">待补充任务</Tag>
             <div class="min-w-0 flex-1 text-sm">
               <div>
                 日志描述了
