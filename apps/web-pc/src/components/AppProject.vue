@@ -139,6 +139,83 @@ function getAvatarColor(id?: number | string): string {
   return colors[h % colors.length] || '#1677ff';
 }
 
+// 统计相关
+interface StatItem {
+  label: string;
+  value: number;
+  color: string;
+}
+
+interface StatType {
+  key: string;
+  title: string;
+  icon: string;
+  dataPath: string;
+  items: { key: string; label: string; color: string }[];
+}
+
+const statTypes: StatType[] = [
+  {
+    key: 'supervision_log',
+    title: '日志',
+    icon: 'lucide:file-text',
+    dataPath: 'supervision_log_stats',
+    items: [
+      { key: 'team_submitted', label: '已提交', color: '#52c41a' },
+      { key: 'team_tobe_submit', label: '待提交', color: '#faad14' },
+      { key: 'team_timeout', label: '逾期', color: '#ff4d4f' },
+    ],
+  },
+  {
+    key: 'task',
+    title: '任务',
+    icon: 'lucide:check-circle',
+    dataPath: 'task_log_stats',
+    items: [
+      { key: 'team_submitted', label: '已提交', color: '#52c41a' },
+      { key: 'team_tobe_submit', label: '待提交', color: '#faad14' },
+      { key: 'team_timeout', label: '逾期', color: '#ff4d4f' },
+    ],
+  },
+];
+
+function getNestedValue(obj: any, path: string): any {
+  let cur = obj;
+  for (const key of path.split('.')) cur = cur?.[key];
+  return cur;
+}
+
+function getProjectStats(project: any): StatType[] {
+  return statTypes
+    .map((type) => {
+      const data = getNestedValue(project, type.dataPath);
+      if (!data) return null;
+      const items = type.items
+        .map((item) => ({
+          ...item,
+          value: getNestedValue(project, `${type.dataPath}.${item.key}`) || 0,
+        }))
+        .filter((item) => item.value > 0);
+      if (items.length === 0) return null;
+      return { ...type, items };
+    })
+    .filter(Boolean) as StatType[];
+}
+
+function getPersonalPendingCount(typeData: Record<string, any>) {
+  let count = 0;
+  const keys = [
+    'task_log_stats.personal_tobe_submit',
+    'supervision_log_stats.personal_tobe_submit',
+    'submission_stats.team_task_log_pending_audit',
+    'submission_stats.team_supervision_log_pending_audit',
+  ];
+  keys.forEach((key) => {
+    count += getNestedValue(typeData, key) || 0;
+  });
+  return count;
+}
+
 const projectName = computed(() => {
   const name = appStore.defaultProject?.name;
   if (name && name !== '所有项目') return name;
@@ -206,19 +283,23 @@ async function setDefault(project: ProjectItem) {
           <Spin :spinning="loading" size="small" class="popover-list">
             <div class="project-list">
               <div v-if="displayList.length" class="project-list-inner">
+                <!-- 所有项目 -->
                 <div
                   v-if="showAllCard"
                   class="project-item"
                   :class="{ 'is-current': !currentProjectId }"
                   @click="setDefault(allProject)"
                 >
-                  <Icon icon="lucide:layout-grid" class="item-icon" />
+                  <div class="item-avatar item-avatar--all">
+                    <Icon icon="lucide:layout-grid" />
+                  </div>
                   <div class="item-content">
                     <span class="item-name">所有项目</span>
                     <span class="item-desc">全部项目统计概览</span>
                   </div>
                 </div>
 
+                <!-- 项目列表 -->
                 <div
                   v-for="item in pageList"
                   :key="String(item.id)"
@@ -233,7 +314,14 @@ async function setDefault(project: ProjectItem) {
                     {{ item.name?.[0] || 'P' }}
                   </div>
                   <div class="item-content">
-                    <span class="item-name">{{ item.name }}</span>
+                    <div class="item-header">
+                      <span class="item-name">{{ item.name }}</span>
+                      <Icon
+                        v-if="currentProjectId === item.id"
+                        icon="lucide:check"
+                        class="item-check"
+                      />
+                    </div>
                     <div class="item-meta">
                       <span v-if="item.code" class="item-code">{{
                         item.code
@@ -243,12 +331,30 @@ async function setDefault(project: ProjectItem) {
                         class="item-role"
                       >{{ roleText(item.roles[0]) }}</span>
                     </div>
+                    <!-- 统计 -->
+                    <div
+                      v-if="getProjectStats(item).length"
+                      class="item-stats"
+                    >
+                      <template
+                        v-for="stat in getProjectStats(item)"
+                        :key="stat.key"
+                      >
+                        <div
+                          v-for="d in stat.items"
+                          :key="d.key"
+                          class="stat-chip"
+                        >
+                          <span
+                            class="stat-dot"
+                            :style="{ background: d.color }"
+                          />
+                          <span class="stat-value">{{ d.value }}</span>
+                          <span class="stat-label">{{ d.label }}</span>
+                        </div>
+                      </template>
+                    </div>
                   </div>
-                  <Icon
-                    v-if="currentProjectId === item.id"
-                    icon="lucide:check"
-                    class="item-check"
-                  />
                 </div>
               </div>
 
@@ -327,7 +433,7 @@ async function setDefault(project: ProjectItem) {
 
 <style>
 .project-popover {
-  width: 320px;
+  width: 360px;
   max-width: calc(100vw - 32px);
 }
 
@@ -342,12 +448,12 @@ async function setDefault(project: ProjectItem) {
 }
 
 .popover-list {
-  max-height: 320px;
+  max-height: 400px;
   overflow-y: auto;
 }
 
 .project-list {
-  padding: 4px 0;
+  padding: 6px 0;
 }
 
 .project-list-inner {
@@ -358,7 +464,7 @@ async function setDefault(project: ProjectItem) {
 .project-item {
   position: relative;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   padding: 10px 12px;
   cursor: pointer;
@@ -370,7 +476,7 @@ async function setDefault(project: ProjectItem) {
 }
 
 .project-item.is-current {
-  background: rgba(22, 119, 255, 0.06);
+  background: rgba(22, 119, 255, 0.05);
 }
 
 .project-item.is-current::before {
@@ -384,16 +490,10 @@ async function setDefault(project: ProjectItem) {
   border-radius: 2px;
 }
 
-.item-icon {
-  font-size: 18px;
-  color: #1677ff;
-  flex-shrink: 0;
-}
-
 .item-avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -403,12 +503,22 @@ async function setDefault(project: ProjectItem) {
   flex-shrink: 0;
 }
 
+.item-avatar--all {
+  background: linear-gradient(135deg, #1677ff 0%, #69b1ff 100%);
+}
+
 .item-content {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+}
+
+.item-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .item-name {
@@ -436,7 +546,7 @@ async function setDefault(project: ProjectItem) {
   color: rgba(0, 0, 0, 0.45);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   background: rgba(0, 0, 0, 0.04);
-  padding: 1px 4px;
+  padding: 1px 5px;
   border-radius: 3px;
 }
 
@@ -446,9 +556,40 @@ async function setDefault(project: ProjectItem) {
 }
 
 .item-check {
-  font-size: 16px;
+  font-size: 14px;
   color: #1677ff;
   flex-shrink: 0;
+  margin-left: auto;
+}
+
+.item-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.stat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+}
+
+.stat-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.stat-value {
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.75);
+}
+
+.stat-label {
+  color: rgba(0, 0, 0, 0.45);
 }
 
 .empty-state {
