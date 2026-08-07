@@ -34,6 +34,7 @@ const props = defineProps({
   formAttrs: { type: Object, default: () => ({}) },
   saving: { type: Boolean, default: false },
   loading: { type: Boolean, default: false },
+  refreshing: { type: Boolean, default: false },
   validateMessages: { type: Object, default: () => ({}) },
   setFieldRef: { type: Function, default: null },
   detailError: { type: Object, default: null },
@@ -73,8 +74,33 @@ const detailTitle = computed(() => {
 });
 </script>
 
+<style scoped>
+/* 后台刷新进度条动画 */
+.refreshing-bar-inner {
+  width: 30%;
+  animation: refreshing-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes refreshing-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  50% {
+    transform: translateX(300%);
+  }
+  100% {
+    transform: translateX(-100%);
+  }
+}
+</style>
+
 <template>
-  <div class="crud-detail-view">
+  <div class="crud-detail-view relative">
+    <!-- 后台刷新中：非阻塞加载指示器（顶部进度条） -->
+    <div v-if="refreshing" class="refreshing-bar absolute left-0 right-0 top-0 z-10 h-0.5 overflow-hidden bg-blue-100">
+      <div class="refreshing-bar-inner h-full bg-blue-500"></div>
+    </div>
+
     <!-- 错误状态 -->
     <Result
       v-if="detailError"
@@ -87,7 +113,7 @@ const detailTitle = computed(() => {
       </template>
     </Result>
 
-    <!-- 加载中 -->
+    <!-- 加载中（阻塞：无行数据时等待首次加载） -->
     <div
       v-else-if="loading"
       class="detail-loading flex items-center justify-center py-8"
