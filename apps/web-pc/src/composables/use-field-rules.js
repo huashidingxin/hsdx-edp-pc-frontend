@@ -61,7 +61,7 @@ export function toAntdRules(field, rawRules = []) {
     });
   }
 
-  // base_rules（来自 FormSchemaService 输出，已全量；不再按 rule_id 过滤）
+  // 规则（已由调用方按所选规范过滤：自定义 rule_id=0 恒生效、规范规则随选择）
   for (const r of rawRules || []) {
     if (r.type === 'required') continue; // required 已由上段注入，避免重复
     const antRule = buildAntRule(r, fieldType, isNumeric);

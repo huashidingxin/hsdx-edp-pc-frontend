@@ -9,11 +9,13 @@
  *   - rules 形如 { '_<fieldId>': rule_id | null | nested }（list 字段为嵌套 rules 数组，按行对应）
  *   - 文件字段值含 '?upload' 时，后端 saveFields 触发 UploadService.mapping 挂到 'submission_file'
  *
- * 校验契约（P3-V01/V02 对齐后端 FormSchemaService 全量输出）：
- *   - field.required → 必填；field.rules[]（含规范 base_rules）全量参与校验，不再依赖前端勾选 rule_id
+ * 校验契约（P3-V01/V02 全量输出，P3-V06 恢复"规范选择驱动"）：
+ *   - field.required → 必填（恒生效）
+ *   - 自定义规则（rule_id=0）恒生效；规范规则（rule_id>0）仅当顶部"规范适用"所选规范匹配时生效
+ *     （getActiveRules 过滤；每个规范分类默认选中第一条）
  *   - rule level=1 → errors 阻止提交；level=2 → warnings 触发业务层不符合项弹窗
  *   - ant Form.Item 接管失焦/变更实时校验（buildFieldValidation → toAntdRules）；提交前 evaluateAll 兜底
- *   - 顶部"规范适用"选择区降级为追溯用途：仅决定提交 rules 里的 rule_id，不再控制校验是否生效
+ *   - 切换"规范适用"选择后重建各字段 ant 校验规则并清空旧提示；提交 rules 里的 rule_id 同时用于追溯
  *
  * 暴露接口（与 web-admin submission/edit.vue 对齐）：formRef / formFields / getFormData / setFormData / validate
  */
@@ -190,11 +192,9 @@ function mapAttrs(field) {
   ) {
     attrs.multiple = type !== 'image' && type !== 'video';
     attrs.fileType =
-      type === 'videos' || type === 'video'
-        ? 'video'
-        : type === 'images' || type === 'image'
-          ? 'image'
-          : 'file';
+      { video: 'video', videos: 'video', image: 'image', images: 'image' }[
+        type
+      ] || 'file';
   }
   if (props.readonly) {
     attrs.disabled = true;
@@ -208,9 +208,19 @@ function mapAttrs(field) {
  * 透传到 AppField 的 props.field.required / props.field.rules，让 ant Form 接管失焦/变更即时校验。
  * ant 失焦校验与提交按钮 getFormData() 内部 evaluateAll 互为兜底——任一命中即红字。
  */
+// P3-V06：按填表人所选规范过滤字段规则——自定义规则（rule_id=0）恒生效；
+// 规范规则（rule_id>0）仅当所选规范匹配时生效（默认选中每个分类的第一条）
+function getActiveRules(field) {
+  const selected = fieldBaseRule.value[fkey(field)];
+  return (field.rules || []).filter((r) => {
+    const rid = Number(r.rule_id || 0);
+    return rid === 0 || String(rid) === String(selected ?? '');
+  });
+}
+
 function buildFieldValidation(field) {
   const required = !!field.required && !props.readonly;
-  const rules = props.readonly ? [] : toAntdRules(field, field.rules || []);
+  const rules = props.readonly ? [] : toAntdRules(field, getActiveRules(field));
   return { required, rules };
 }
 
@@ -272,6 +282,16 @@ function recomputeFieldBaseRule() {
 function changeBaseRule(categoryId, ruleId) {
   baseRuleSelected.value[categoryId] = ruleId;
   recomputeFieldBaseRule();
+  // P3-V06：切换规范后重建各字段 ant 校验规则并清除旧提示（新规则于下次交互/提交生效）
+  for (const f of renderFields.value) {
+    f._validation = buildFieldValidation(f);
+  }
+  for (const listId in listChildren.value) {
+    for (const sub of listChildren.value[listId]) {
+      sub._validation = buildFieldValidation(sub);
+    }
+  }
+  formRef.value?.clearValidate?.();
 }
 
 // ---- 加载 form.fields ----
@@ -574,8 +594,8 @@ function getFieldRules(field) {
         },
       ]
     : [];
-  // P3-V01/V02：base_rules 不再按 rule_id 过滤——FormSchemaService 已全量输出，前端全量校验
-  const baseRules = field.rules || [];
+  // P3-V06：按所选规范过滤——自定义规则（rule_id=0）恒生效，规范规则随选择
+  const baseRules = getActiveRules(field);
   const all = [...builtin, ...baseRules];
   for (const r of all) {
     if (r.type === 'required') continue; // required 已由 builtin 注入，避免重复
@@ -622,8 +642,8 @@ function evaluateList(listField, rowIndex) {
     const builtin = sub.required
       ? [{ type: 'required', message: `${sub.name}必填`, level: 1 }]
       : [];
-    // P3-V01/V02：base_rules 不再按 rule_id 过滤——FormSchemaService 已全量输出，前端全量校验
-    const baseRules = sub.rules || [];
+    // P3-V06：按所选规范过滤——自定义规则（rule_id=0）恒生效，规范规则随选择
+    const baseRules = getActiveRules(sub);
     const all = [...builtin, ...baseRules];
     const v = row[fkey(sub)];
     for (const r of all) {
