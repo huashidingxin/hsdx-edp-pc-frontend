@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 
 import { message, Switch, Tag } from 'antdv-next';
 import { useUserStore } from '@vben/stores';
@@ -19,6 +19,18 @@ const currentProjectId = computed(
   () => appStore.defaultProject?.id || undefined,
 );
 const extraQuery = computed(() => ({ project_id: currentProjectId.value }));
+
+// P3-V12：新建时默认归属当前项目（管理员可清除=通用）
+watch(
+  currentProjectId,
+  (v) => {
+    const f = formFields.value.find((x) => x.field === 'project_id');
+    if (f) f.default = v ?? null;
+    const fc = filterFields.value.find((x) => x.field === 'project_id');
+    if (fc && !fc.attrs) fc.attrs = {};
+  },
+  { immediate: true },
+);
 
 // 规则分类（categories?type=rule）
 const categoryOptions = ref([]);

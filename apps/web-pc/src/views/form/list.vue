@@ -669,8 +669,20 @@ const ruleModal = ref({
   name: '',
   category_id: undefined,
   formId: undefined,
+  // P3-V12：默认归属当前项目；仅管理员可清除（=通用）
+  project_id: undefined,
   saving: false,
 });
+
+// 新建规范可选项目（管理员可清空选「通用」）
+const ruleProjectOptions = ref([]);
+async function loadRuleProjectOptions() {
+  const { data } = await new Resource('projects').list({ per_page: 'all' });
+  ruleProjectOptions.value = (data || []).map((p) => ({
+    value: p.id,
+    label: p.name,
+  }));
+}
 
 function openRuleCreate(sourceFormId) {
   ruleModal.value = {
@@ -679,6 +691,7 @@ function openRuleCreate(sourceFormId) {
     name: '',
     category_id: undefined,
     formId: sourceFormId,
+    project_id: appStore.defaultProject?.id ?? null,
     saving: false,
   };
 }
@@ -690,6 +703,7 @@ function openRuleEdit(r, sourceFormId) {
     name: r.name || '',
     category_id: r.category_id,
     formId: sourceFormId,
+    project_id: r.project_id ?? null,
     saving: false,
   };
 }
@@ -698,6 +712,11 @@ async function saveRule() {
   const m = ruleModal.value;
   if (!m.name.trim()) {
     message.error('请填写规范名称');
+    return;
+  }
+  // P3-V12：非管理员不可创建通用规范——无当前项目时直接拒绝
+  if (!isAdmin.value && !m.project_id && !appStore.defaultProject?.id) {
+    message.error('未找到当前项目，无法创建规范');
     return;
   }
   if (!m.formId) {
@@ -712,13 +731,13 @@ async function saveRule() {
       category_id: m.category_id,
       form_id: m.formId,
     };
-    // P3-V09：非管理员创建规范必须归属项目（默认当前项目）
-    if (!isAdmin.value) {
-      payload.project_id = m.projectId || appStore.defaultProject?.id || null;
-      if (!payload.project_id) {
-        message.error('未找到当前项目，无法创建规范');
-        return;
-      }
+    // P3-V12：默认归属当前项目；管理员可清空（=通用），非管理员强制当前项目
+    if (m.project_id) {
+      payload.project_id = m.project_id;
+    } else if (isAdmin.value) {
+      payload.project_id = null; // 通用（仅管理员）
+    } else {
+      payload.project_id = appStore.defaultProject?.id || null;
     }
     if (m.id) {
       await api.update(m.id, payload);
@@ -952,7 +971,12 @@ async function saveRules() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadCategories(), loadForms(), loadRuleCategories()]);
+  await Promise.all([
+    loadCategories(),
+    loadForms(),
+    loadRuleCategories(),
+    loadRuleProjectOptions(),
+  ]);
   const q = Number(route.query.form_id);
   if (q) {
     formId.value = q;
@@ -1380,6 +1404,24 @@ onMounted(async () => {
             allow-clear
             placeholder="未分类"
           />
+        </div>
+        <div class="col-span-12">
+          <label class="config-label">所属项目</label>
+          <Select
+            v-model:value="ruleModal.project_id"
+            :options="ruleProjectOptions"
+            style="width: 100%"
+            :allow-clear="isAdmin"
+            :disabled="!isAdmin && !ruleModal.project_id"
+            placeholder="选择项目"
+          />
+          <div class="mt-1 text-xs text-gray-400">
+            {{
+              isAdmin
+                ? '留空 = 通用规范（所有项目可见，仅管理员可创建）'
+                : '默认归属当前项目；通用规范仅管理员可创建'
+            }}
+          </div>
         </div>
       </div>
     </Modal>
