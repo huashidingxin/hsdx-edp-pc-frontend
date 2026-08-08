@@ -174,11 +174,11 @@ const formFields = ref([
     attrs: { options: severityOptions },
   },
   {
-    field: 'source',
-    type: 'select',
+    field: 'source_label',
+    type: 'text',
     label: '发现来源',
     span: 12,
-    attrs: { options: sourceOptions },
+    displayOnly: true,
   },
   {
     field: 'milepost_id',
@@ -279,6 +279,12 @@ const gridColumns = ref([
     slots: { default: 'default_severity' },
   },
   {
+    field: 'source',
+    title: '发现来源',
+    width: 100,
+    slots: { default: 'default_source' },
+  },
+  {
     field: 'state',
     title: '审核状态',
     width: 100,
@@ -305,8 +311,9 @@ function saveFormat(payload) {
   delete p.state;
   delete p.review_result;
   p.project_id = p.project_id || currentProjectId.value;
-  // source 默认手工录入（独立登记页创建时）
-  if (p.source === undefined || p.source === null) p.source = 7;
+  // source 按填写途径自动判定，客户端不可选：PC 手工录入固定为 7（后端 update 白名单已排除 source）
+  p.source = 7;
+  delete p.source_label;
   return p;
 }
 
@@ -671,6 +678,9 @@ watch(milepostOptions, (opts) => {
       <Tag :color="severityColors[row.severity] || 'default'">
         {{ severityLabel[row.severity] || '-' }}
       </Tag>
+    </template>
+    <template #default_source="{ row }">
+      <Tag color="cyan">{{ row.source_label || '-' }}</Tag>
     </template>
 
     <template #filter_stakeholder_id="{ modelValue, update }">
