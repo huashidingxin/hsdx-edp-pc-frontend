@@ -104,7 +104,7 @@ function reject(row) {
     onOk: async () => {
       if (!reason.trim()) {
         message.warning('请填写退回原因');
-        throw undefined;
+        throw new Error('请填写退回原因');
       }
       await new Resource('project-closures').create(
         `project-closures/${row.id}/audit`,
@@ -132,7 +132,7 @@ async function startArchive(row) {
         reloadKey.value++;
       } catch (error) {
         message.error(error?.response?.data?.message || '归档失败');
-        return Promise.reject();
+        throw new Error('归档失败', { cause: error });
       }
     },
   });

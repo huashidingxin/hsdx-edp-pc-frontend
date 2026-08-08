@@ -15,7 +15,7 @@
  * @returns {{ columns: Array, columnSlots: Record<string, string> }}
  */
 export function buildColumns(sourceColumns, ctx = {}) {
-  const { showActions = true, columnFormat = null, idKey = 'id' } = ctx;
+  const { showActions = true, columnFormat = null } = ctx;
   const columns = (sourceColumns || []).map((col) => {
     const c = { ...col };
 
@@ -26,21 +26,20 @@ export function buildColumns(sourceColumns, ctx = {}) {
 
     // 2. customRender → cellRender 映射（保留已写好的 cellRender 不被覆盖）
     if (c.customRender && !c.cellRender) {
-      if (c.customRender.type === 'image') {
-        c.cellRender = {
-          name: 'CellImage',
-          props: {
-            width: 36,
-            height: 36,
-            ...(c.customRender.props || {}),
-          },
-        };
-      } else {
-        c.cellRender = {
-          name: 'CellRender',
-          customRender: c.customRender,
-        };
-      }
+      c.cellRender =
+        c.customRender.type === 'image'
+          ? {
+              name: 'CellImage',
+              props: {
+                width: 36,
+                height: 36,
+                ...c.customRender.props,
+              },
+            }
+          : {
+              name: 'CellRender',
+              customRender: c.customRender,
+            };
     }
 
     return c;

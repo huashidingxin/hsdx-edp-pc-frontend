@@ -183,8 +183,8 @@ async function loadRoles() {
     const api = new Resource('roles');
     const { data } = await api.list({ per_page: 'all' });
     formFields.value[6].attrs.options = data;
-  } catch (error) {
-    console.log(error);
+  } catch {
+    // 角色加载失败时字段选项留空
   }
 }
 

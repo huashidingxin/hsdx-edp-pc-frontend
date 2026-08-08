@@ -86,14 +86,7 @@ export function useCrudTableDetail(props, ctx, callbacks) {
   // 详情错误状态（page 模式）
   const detailError = ref(null);
 
-  const {
-    formApi,
-    routeApi,
-    permissionApi,
-    refresh: refreshList,
-    reload: reloadList,
-    modelValue,
-  } = callbacks;
+  const { formApi, routeApi, reload: reloadList, modelValue } = callbacks;
 
   /**
    * 打开详情
@@ -117,12 +110,12 @@ export function useCrudTableDetail(props, ctx, callbacks) {
     });
     openType.value = resolved;
 
-    editing.value = isEdit || id == null; // 新增时默认编辑
+    editing.value = isEdit || id === null; // 新增时默认编辑
     detailError.value = null;
 
     ctx.emit('showDetail', editing.value);
 
-    if (id == null) {
+    if (id === null) {
       // 新增：构建默认值
       modelValue.value = buildDefaultItem();
     } else if (rowData) {
@@ -296,8 +289,7 @@ export function useCrudTableDetail(props, ctx, callbacks) {
       );
       const resource = new Resource(url);
 
-      let savedData;
-      savedData = await (isEdit
+      const savedData = await (isEdit
         ? resource.update(modelValue.value[props.idKey || 'id'], payload)
         : resource.store(payload));
 

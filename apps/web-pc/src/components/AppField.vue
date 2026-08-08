@@ -92,7 +92,7 @@ const attrItems = ref([]);
 let formatter = (e) => e;
 
 // 选择类组件列表
-const selectComponents = [Select, AutoComplete, TreeSelect];
+const selectComponents = new Set([Select, AutoComplete, TreeSelect]);
 
 // 动态计算 allowClear：仅在有值时显示清除按钮
 const computedAllowClear = computed(() => {
@@ -446,7 +446,7 @@ function initComponent() {
   attrs.value = { ...defaultAttrs.value, ...props.field.attrs };
 
   // Select/AutoComplete/TreeSelect 组件：动态覆盖 allowClear
-  if (selectComponents.includes(component.value)) {
+  if (selectComponents.has(component.value)) {
     attrs.value.allowClear = computedAllowClear.value;
   }
 
@@ -587,7 +587,7 @@ watch(
 watch(
   componentValue,
   () => {
-    if (selectComponents.includes(component.value) && attrs.value) {
+    if (selectComponents.has(component.value) && attrs.value) {
       attrs.value.allowClear = computedAllowClear.value;
     }
   },
@@ -606,7 +606,7 @@ function getLunarDate(date) {
     const solar = Solar.fromYmd(date.year(), date.month() + 1, date.date());
     const lunar = solar.getLunar();
     const dayInChinese = lunar.getDayInChinese();
-    return dayInChinese == '初一'
+    return dayInChinese === '初一'
       ? `${lunar.getMonthInChinese()}月`
       : dayInChinese;
   } catch {

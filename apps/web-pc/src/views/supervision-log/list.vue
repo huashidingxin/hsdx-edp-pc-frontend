@@ -81,7 +81,7 @@ async function save() {
     ).store({ content: buildContentText(formData.values) });
     const hits = res?.data || [];
     const missing = hits.filter((h) => !h.has_task);
-    if (missing.length && !(await confirmMissingTaskWarnings(missing))) {
+    if (missing.length > 0 && !(await confirmMissingTaskWarnings(missing))) {
       return;
     }
   } catch (error) {
@@ -127,9 +127,12 @@ function buildContentText(values) {
   const parts = [];
   const walk = (v) => {
     if (Array.isArray(v)) {
-      v.forEach(walk);
-    } else if (typeof v === 'string' || typeof v === 'number') {
-      if (String(v).trim() !== '') parts.push(String(v));
+      for (const item of v) walk(item);
+    } else if (
+      (typeof v === 'string' || typeof v === 'number')
+      && String(v).trim() !== ''
+    ) {
+      parts.push(String(v));
     }
   };
   for (const key in values || {}) walk(values[key]);
@@ -186,9 +189,8 @@ function batchIds() {
 
 async function batchExport() {
   const ids = batchIds();
-  if (!ids.length) {
+  if (ids.length === 0) {
     message.error('请至少选择一条已提交的记录');
-    return;
   }
   try {
     const { data } = await new Resource('submission').get('batch', {
@@ -211,9 +213,8 @@ async function batchExport() {
 
 async function batchPrint() {
   const ids = batchIds();
-  if (!ids.length) {
+  if (ids.length === 0) {
     message.error('请至少选择一条已提交的记录');
-    return;
   }
   try {
     const { data } = await new Resource('submission').get('batch', {
@@ -504,7 +505,9 @@ function stateLabel(state) {
 // 列表行状态：已提交取 submission.state（1待审/2通过/3退回），未提交为 0
 function rowState(row) {
   const submission = row.submission;
-  if (submission?.state != null) return Number(submission.state);
+  if (submission?.state !== null && submission?.state !== undefined) {
+    return Number(submission.state);
+  }
   return 0;
 }
 

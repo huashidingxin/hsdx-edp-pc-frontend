@@ -36,7 +36,7 @@ export function expandDotKeys(data) {
   for (const dotKey of dotKeys) {
     const value = result[dotKey];
     set(result, dotKey, value);
-    delete result[dotKey];
+    unset(result, dotKey);
   }
   return result;
 }

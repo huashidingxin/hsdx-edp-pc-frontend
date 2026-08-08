@@ -22,7 +22,7 @@ import { useRoute, useRouter } from 'vue-router';
  *   isNested: boolean,
  * }}
  */
-export function useCrudTableRoute(props, ctx) {
+export function useCrudTableRoute(props, _ctx) {
   const route = useRoute();
   const router = useRouter();
 
@@ -108,7 +108,7 @@ export function useCrudTableRoute(props, ctx) {
   async function navigateToDetail(id, isEdit) {
     const basePath = listRoutePath.value;
 
-    if (id == null) {
+    if (id === null) {
       // 新增
       await router.push(`${basePath}/new`);
     } else if (isEdit) {

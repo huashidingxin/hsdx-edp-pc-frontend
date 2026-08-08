@@ -22,14 +22,7 @@ export const BUILTIN_ACTION_KEYS = [
  * @returns {Array<ActionDef>}
  */
 export function buildBuiltinActionDefs({ props, callbacks }) {
-  const {
-    openDetail,
-    deleteItem,
-    openAuditDialog,
-    audit,
-    refresh,
-    reload,
-  } = callbacks;
+  const { openDetail, deleteItem, openAuditDialog, audit } = callbacks;
 
   return [
     {
