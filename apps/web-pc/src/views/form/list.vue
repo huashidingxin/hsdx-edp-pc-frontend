@@ -322,6 +322,31 @@ const rows = ref([]);
 const loading = ref(false);
 const schemaByField = ref({});
 
+// 展示用扁平行：顶层字段 + 列表字段的子字段（缩进紧随其后）
+const tableRows = computed(() => {
+  const childMap = {};
+  for (const f of rows.value) {
+    if (!f.parent_id) continue;
+    childMap[f.parent_id] = childMap[f.parent_id] || [];
+    childMap[f.parent_id].push(f);
+  }
+  const flat = [];
+  for (const f of rows.value) {
+    if (f.parent_id) continue;
+    flat.push({ ...f, _indent: 0, _isChild: false });
+    if (f.type === 'list' && childMap[f.id]?.length) {
+      for (const c of childMap[f.id]) {
+        flat.push({ ...c, _indent: 1, _isChild: true });
+      }
+    }
+  }
+  return flat;
+});
+
+// parentId -> 子字段列表（子字段管理弹窗用）
+const childFieldsOf = (parentId) =>
+  rows.value.filter((f) => String(f.parent_id) === String(parentId));
+
 const columns = [
   { title: '名称', dataIndex: 'name', key: 'name', minWidth: 180 },
   { title: '类型', dataIndex: 'type', key: 'type', width: 130 },
@@ -385,10 +410,11 @@ const fieldModal = ref({
   failed_proof: false,
   hint: '',
   placeholder: '',
+  parent_id: null,
   saving: false,
 });
 
-function openFieldCreate() {
+function openFieldCreate(parentId = null) {
   fieldModal.value = {
     open: true,
     id: null,
@@ -400,6 +426,7 @@ function openFieldCreate() {
     failed_proof: false,
     hint: '',
     placeholder: '',
+    parent_id: parentId,
     saving: false,
   };
 }
@@ -416,8 +443,116 @@ function openFieldEdit(row) {
     failed_proof: !!row.failed_proof,
     hint: row.hint || '',
     placeholder: row.placeholder || '',
+    parent_id: row.parent_id || null,
     saving: false,
   };
+}
+
+// ================= 列表字段子字段管理弹窗（P3-V10：可视化维护，替代填上级 ID） =================
+const subFieldModal = ref({
+  open: false,
+  parentId: null,
+  parentName: '',
+  rows: [],
+  saving: false,
+});
+
+const subFieldListFields = ref([
+  {
+    field: 'options',
+    type: 'combobox',
+    label: '选项列表',
+    span: 10,
+    attrs: { multiple: true, placeholder: '输入选项后按回车新增' },
+  },
+  { field: 'sort', type: 'number', label: '排序', span: 4 },
+  { field: 'required', type: 'switch', label: '必填', span: 4 },
+]);
+
+const subFieldColumns = ref([
+  {
+    field: 'name',
+    title: '名称',
+    minWidth: 140,
+    slots: { default: 'default_name' },
+  },
+  {
+    field: 'type',
+    title: '类型',
+    width: 110,
+    slots: { default: 'default_type' },
+  },
+  { field: 'options', title: '选项', minWidth: 160 },
+  { field: 'sort', title: '排序', width: 70 },
+  { field: 'required', title: '必填', width: 70 },
+]);
+
+function openSubFieldDialog(listField) {
+  subFieldModal.value = {
+    open: true,
+    parentId: listField.id,
+    parentName: listField.name,
+    rows: childFieldsOf(listField.id).map((c) => ({
+      ...c,
+      options: Array.isArray(c.options) ? [...c.options] : [],
+    })),
+    saving: false,
+  };
+}
+
+function addSubFieldRow() {
+  subFieldModal.value.rows.push({
+    type: 'text',
+    required: true,
+    sort: subFieldModal.value.rows.length + 1,
+    options: [],
+  });
+}
+
+async function saveSubFields() {
+  const m = subFieldModal.value;
+  if (m.saving) return;
+  for (const row of m.rows) {
+    if (!row.name || !row.type) {
+      message.error('每行需填写名称和字段类型');
+      return;
+    }
+  }
+  m.saving = true;
+  try {
+    const api = new Resource('fields');
+    const currentIds = new Set(m.rows.map((r) => r.id).filter(Boolean));
+    const removedIds = childFieldsOf(m.parentId)
+      .map((c) => c.id)
+      .filter((id) => !currentIds.has(id));
+    const jobs = [];
+    for (const id of removedIds) jobs.push(api.destroy(id));
+    for (const row of m.rows) {
+      const payload = {
+        name: row.name,
+        type: row.type,
+        hint: row.hint,
+        placeholder: row.placeholder,
+        options: row.options,
+        sort: row.sort || 0,
+        required: row.required ? 1 : 0,
+        failed_proof: row.failed_proof ? 1 : 0,
+        parent_id: m.parentId,
+        form_id: formId.value,
+      };
+      if (row.id) jobs.push(api.update(row.id, payload));
+      else jobs.push(api.store(payload));
+    }
+    await Promise.all(jobs);
+    message.success('子字段已保存');
+    subFieldModal.value.open = false;
+    await loadFields();
+  } catch (error) {
+    const msg = error?.response?.data?.message || error?.message;
+    message.error(typeof msg === 'string' && msg ? msg : '子字段保存失败');
+  } finally {
+    m.saving = false;
+  }
 }
 
 async function saveField() {
@@ -446,6 +581,7 @@ async function saveField() {
       sort: m.sort || 0,
       required: m.required ? 1 : 0,
       failed_proof: m.failed_proof ? 1 : 0,
+      parent_id: m.parent_id,
     };
     if (m.id) {
       await api.update(m.id, payload);
@@ -466,6 +602,16 @@ async function saveField() {
 
 async function removeField(row) {
   try {
+    // 列表字段：先删其子字段（避免孤儿），再删自身
+    if (row.type === 'list') {
+      const children = childFieldsOf(row.id);
+      for (const c of children) {
+        await new Resource('fields').destroy(c.id);
+      }
+      if (children.length > 0) {
+        message.info(`已一并删除 ${children.length} 个子字段`);
+      }
+    }
     await new Resource('fields').destroy(row.id);
     message.success(`字段「${row.name}」已删除（含其校验规则）`);
     await loadFields();
@@ -901,7 +1047,7 @@ onMounted(async () => {
           <div class="flex-1 overflow-auto">
             <Table
               :columns="columns"
-              :data-source="rows"
+              :data-source="tableRows"
               :loading="loading"
               :pagination="false"
               row-key="id"
@@ -909,7 +1055,20 @@ onMounted(async () => {
               :scroll="{ y: '100%' }"
             >
               <template #bodyCell="{ column, record }">
-                <template v-if="column.key === 'type'">
+                <template v-if="column.key === 'name'">
+                  <span
+                    v-if="record._isChild"
+                    class="inline-flex items-center gap-1 text-gray-500"
+                  >
+                    <span class="text-gray-300">└─</span>
+                    <span class="inline-block text-xs text-gray-400"
+                      >子字段</span
+                    >
+                    {{ record.name }}
+                  </span>
+                  <span v-else>{{ record.name }}</span>
+                </template>
+                <template v-else-if="column.key === 'type'">
                   <span>{{ fieldTypeLabel(record.type) }}</span>
                 </template>
                 <template v-else-if="column.key === 'required'">
@@ -932,6 +1091,19 @@ onMounted(async () => {
                       编辑
                     </Button>
                     <Button
+                      v-if="record.type === 'list' && !record._isChild"
+                      type="link"
+                      size="small"
+                      class="p-0"
+                      @click="openSubFieldDialog(record)"
+                    >
+                      子字段<span
+                        v-if="childFieldsOf(record.id).length"
+                        class="text-gray-400"
+                        >({{ childFieldsOf(record.id).length }})</span
+                      >
+                    </Button>
+                    <Button
                       type="link"
                       size="small"
                       class="p-0"
@@ -941,7 +1113,11 @@ onMounted(async () => {
                     </Button>
                     <Popconfirm
                       :title="`确定删除字段「${record.name}」？`"
-                      description="其校验规则将一并删除"
+                      :description="
+                        record.type === 'list' && !record._isChild
+                          ? `将一并删除其 ${childFieldsOf(record.id).length} 个子字段及校验规则`
+                          : '其校验规则将一并删除'
+                      "
                       ok-text="删除"
                       cancel-text="取消"
                       @confirm="removeField(record)"
@@ -1174,6 +1350,12 @@ onMounted(async () => {
             :options="fieldTypeOptions"
             style="width: 100%"
           />
+          <div
+            v-if="fieldModal.type === 'list'"
+            class="mt-1 text-xs text-gray-400"
+          >
+            保存后可在字段列表中点击「子字段」添加列表内字段
+          </div>
         </div>
         <div class="col-span-3">
           <label class="config-label">排序</label>
@@ -1217,6 +1399,55 @@ onMounted(async () => {
           />
         </div>
       </div>
+    </Modal>
+
+    <!-- 列表字段子字段管理弹窗（P3-V10：可视化维护子字段，替代填上级 ID） -->
+    <Modal
+      v-model:open="subFieldModal.open"
+      :title="`子字段 - ${subFieldModal.parentName}（列表）`"
+      ok-text="保存子字段"
+      cancel-text="关闭"
+      width="860px"
+      :confirm-loading="subFieldModal.saving"
+      @ok="saveSubFields"
+    >
+      <Alert
+        type="info"
+        show-icon
+        class="mb-3"
+        message="列表字段的子字段"
+        description="填表时每个列表行将按下方字段展开填写。直接在此维护子字段，无需填写上级 ID。"
+      />
+      <div class="mb-2 flex justify-end">
+        <Button size="small" type="dashed" @click="addSubFieldRow">
+          + 新增子字段
+        </Button>
+      </div>
+      <AppList
+        v-model="subFieldModal.rows"
+        :options="{ columns: subFieldColumns, showFooter: false }"
+        :fields="subFieldListFields"
+        :show-delete="true"
+        :show-edit="false"
+        row-key="id"
+        height="320"
+      >
+        <template #default_name="{ row }">
+          <input
+            v-model="row.name"
+            placeholder="字段名称"
+            class="w-full rounded border border-gray-300 px-2 py-1 text-sm"
+          />
+        </template>
+        <template #default_type="{ row }">
+          <Select
+            v-model:value="row.type"
+            :options="fieldTypeOptions"
+            size="small"
+            style="width: 100%"
+          />
+        </template>
+      </AppList>
     </Modal>
 
     <!-- 校验规则弹窗 -->
