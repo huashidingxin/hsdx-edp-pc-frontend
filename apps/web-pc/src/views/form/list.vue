@@ -65,6 +65,7 @@ const loadingForms = ref(false);
 const filterOpen = ref(false);
 const filterType = ref(undefined);
 const filterCategory = ref(undefined);
+const filterHasRules = ref(undefined);
 
 function buildFormParams(pageNo) {
   const params = { page: pageNo, per_page: perPage };
@@ -75,6 +76,9 @@ function buildFormParams(pageNo) {
   }
   if (filterCategory.value !== undefined && filterCategory.value !== null) {
     params.project_category_id = filterCategory.value;
+  }
+  if (filterHasRules.value !== undefined && filterHasRules.value !== null) {
+    params.has_rules = filterHasRules.value;
   }
   return params;
 }
@@ -143,12 +147,16 @@ function applyFilter() {
 }
 
 const filterActive = computed(
-  () => filterType.value !== undefined || filterCategory.value !== undefined,
+  () =>
+    filterType.value !== undefined ||
+    filterCategory.value !== undefined ||
+    filterHasRules.value !== undefined,
 );
 
 function resetFilter() {
   filterType.value = undefined;
   filterCategory.value = undefined;
+  filterHasRules.value = undefined;
   filterOpen.value = false;
   loadForms(true);
 }
@@ -157,6 +165,7 @@ function selectForm(id) {
   // 仅本地切换，不路由跳转（避免 vben 标签页按 query 区分而新开页面）
   formId.value = id;
   loadFields();
+  loadFormRules();
 }
 
 // ================= 表单新增/编辑弹窗 =================
@@ -311,9 +320,9 @@ const columns = [
   { title: '类型', dataIndex: 'type', key: 'type', width: 130 },
   { title: '必填', dataIndex: 'required', key: 'required', width: 70 },
   {
-    title: '全局规则',
-    dataIndex: 'globalCount',
-    key: 'globalCount',
+    title: '规则数',
+    dataIndex: 'ruleCount',
+    key: 'ruleCount',
     width: 90,
   },
   { title: '排序', dataIndex: 'sort', key: 'sort', width: 70 },
@@ -341,16 +350,20 @@ async function loadFields() {
         schemaByField.value[s.field_id] = [];
       schemaByField.value[s.field_id].push(s);
     }
-    rows.value = (fres.data || []).map((f) => ({
-      ...f,
-      globalCount:
-        (schemaByField.value[f.id] || []).find(
-          (s) => s.applicable_scope === 'global',
-        )?.rule_payload?.length || 0,
-    }));
+    rows.value = fres.data || [];
   } finally {
     loading.value = false;
   }
+}
+
+// 当前所选规范（或自定义）下该字段的条目数
+function ruleCount(field) {
+  const global = (schemaByField.value[field.id] || []).find(
+    (s) => s.applicable_scope === 'global',
+  );
+  return (global?.rule_payload || []).filter(
+    (r) => (r.rule_id ?? 0) === activeRuleId.value,
+  ).length;
 }
 
 // 字段新增/编辑弹窗
@@ -455,7 +468,157 @@ async function removeField(row) {
   }
 }
 
-// 校验规则弹窗（读写 field-schemas）
+// ================= 校验规范（P3-V08：表单拥有规范，右栏集中配置） =================
+// activeRuleId：0 = 自定义规则（恒生效），>0 = 本表单的规范
+const activeRuleId = ref(0);
+const formRules = ref([]);
+const ruleCategoryOptions = ref([]);
+
+async function loadRuleCategories() {
+  const { data } = await new Resource('categories').list({
+    per_page: 'all',
+    type: 'rule',
+  });
+  ruleCategoryOptions.value = (data || []).map((c) => ({
+    value: c.id,
+    label: c.name,
+  }));
+}
+
+async function loadFormRules() {
+  if (!formId.value) {
+    formRules.value = [];
+    activeRuleId.value = 0;
+    return;
+  }
+  const { data } = await new Resource('rules').list({
+    per_page: 'all',
+    form_id: formId.value,
+  });
+  formRules.value = data || [];
+  if (!formRules.value.some((r) => r.id === activeRuleId.value)) {
+    activeRuleId.value = 0; // 规范被删除或切换表单后回到自定义
+  }
+}
+
+const ruleSelectOptions = computed(() => [
+  { value: 0, label: '自定义规则（恒生效）' },
+  ...formRules.value.map((r) => ({
+    value: r.id,
+    label: r.status ? r.name : `${r.name}（已停用）`,
+  })),
+]);
+
+// 规范新增/编辑弹窗（右栏新建 + 表单弹窗 Tab 共用；formId 来源不同）
+const ruleModal = ref({
+  open: false,
+  id: null,
+  name: '',
+  category_id: undefined,
+  formId: undefined,
+  saving: false,
+});
+
+function openRuleCreate(sourceFormId) {
+  ruleModal.value = {
+    open: true,
+    id: null,
+    name: '',
+    category_id: undefined,
+    formId: sourceFormId,
+    saving: false,
+  };
+}
+
+function openRuleEdit(r, sourceFormId) {
+  ruleModal.value = {
+    open: true,
+    id: r.id,
+    name: r.name || '',
+    category_id: r.category_id,
+    formId: sourceFormId,
+    saving: false,
+  };
+}
+
+async function saveRule() {
+  const m = ruleModal.value;
+  if (!m.name.trim()) {
+    message.error('请填写规范名称');
+    return;
+  }
+  if (!m.formId) {
+    message.error('请先保存表单再创建规范');
+    return;
+  }
+  m.saving = true;
+  try {
+    const api = new Resource('rules');
+    const payload = {
+      name: m.name.trim(),
+      category_id: m.category_id,
+      form_id: m.formId,
+    };
+    if (m.id) {
+      await api.update(m.id, payload);
+      message.success('规范已保存');
+    } else {
+      const res = await api.store(payload);
+      m.id = res?.data?.id || res?.id || m.id;
+      message.success('规范已创建');
+    }
+    ruleModal.value.open = false;
+    if (m.formId === formId.value) {
+      await loadFormRules();
+      if (m.id) activeRuleId.value = m.id;
+      await loadFields();
+    } else {
+      await loadModalRules(m.formId);
+    }
+  } catch (error) {
+    const msg = error?.response?.data?.message || error?.message;
+    message.error(typeof msg === 'string' && msg ? msg : '规范保存失败');
+  } finally {
+    m.saving = false;
+  }
+}
+
+async function removeRule(r, sourceFormId) {
+  try {
+    await new Resource('rules').destroy(r.id);
+    message.success(`规范「${r.name}」已删除，其字段规则条目同步清理`);
+    if (sourceFormId === formId.value) {
+      if (activeRuleId.value === r.id) activeRuleId.value = 0;
+      await loadFormRules();
+      await loadFields();
+    } else {
+      await loadModalRules(sourceFormId);
+    }
+  } catch (error) {
+    const msg = error?.response?.data?.message || error?.message;
+    message.error(typeof msg === 'string' && msg ? msg : '规范删除失败');
+  }
+}
+
+// 表单编辑弹窗「校验规范」Tab：按 formModal.id 加载
+const modalRules = ref([]);
+async function loadModalRules(fid) {
+  if (!fid) {
+    modalRules.value = [];
+    return;
+  }
+  const { data } = await new Resource('rules').list({
+    per_page: 'all',
+    form_id: fid,
+  });
+  modalRules.value = data || [];
+}
+watch(
+  () => formModal.value.id,
+  (id) => loadModalRules(id),
+);
+
+// 校验规则弹窗（读写 field-schemas；条目归属 activeRuleId）
 const ruleDialog = ref(false);
 const ruleField = ref(null);
 const ruleRows = ref([]);
@@ -510,39 +673,18 @@ const ruleColumns = ref([
 
 async function openRuleDialog(row) {
   ruleField.value = row;
-  const scopes = schemaByField.value[row.id] || [];
-  const global = scopes.find((s) => s.applicable_scope === 'global');
-  ruleRows.value = (global?.rule_payload || []).map((r) => ({ ...r }));
+  const global = (schemaByField.value[row.id] || []).find(
+    (s) => s.applicable_scope === 'global',
+  );
+  const payload = global?.rule_payload || [];
+  ruleRows.value = payload
+    .filter((r) => (r.rule_id ?? 0) === activeRuleId.value)
+    .map((r) => ({ ...r }));
   ruleDialog.value = true;
 }
 
 function addRuleRow() {
   ruleRows.value.push({ type: 'min', level: 1, failed_proof: false });
-}
-
-// 从已绑定该规范的字段复制 rule_payload（跨表单复制）
-const standardOptions = ref([]);
-async function loadStandards() {
-  const { data } = await new Resource('rules').list({ per_page: 'all' });
-  standardOptions.value = (data || []).map((r) => ({
-    value: r.id,
-    label: `${r.name}${r.project?.name ? `（${r.project.name}）` : ''}`,
-  }));
-}
-
-async function applyStandard(ruleId) {
-  if (!ruleId) return;
-  const { data } = await new Resource('field-schemas').list({
-    per_page: 'all',
-    standard_binding_id: ruleId,
-  });
-  const src = data?.[0];
-  if (!src?.rule_payload?.length) {
-    message.warning('该规范暂无已配置字段，无可复制内容');
-    return;
-  }
-  ruleRows.value = src.rule_payload.map((r) => ({ ...r }));
-  message.success('已从规范规则复制，保存后生效');
 }
 
 async function saveRules() {
@@ -559,19 +701,27 @@ async function saveRules() {
   }
   ruleSaving.value = true;
   try {
+    const fid = ruleField.value.id;
+    const ruleId = activeRuleId.value;
+    const scopes = schemaByField.value[fid] || [];
+    const global = scopes.find((s) => s.applicable_scope === 'global');
+    // 合并：只替换当前规范（或自定义）的条目，保留其他规范归属的条目
+    const oldPayload = global?.rule_payload || [];
+    const merged = [
+      ...oldPayload.filter((r) => (r.rule_id ?? 0) !== ruleId),
+      ...ruleRows.value.map((r) => ({ ...r, rule_id: ruleId })),
+    ];
     const api = new Resource('field-schemas');
     const payload = {
-      rule_payload: ruleRows.value,
+      rule_payload: merged,
       applicable_scope: 'global',
     };
-    const scopes = schemaByField.value[ruleField.value.id] || [];
-    const global = scopes.find((s) => s.applicable_scope === 'global');
     const saveOp = global
       ? api.update(global.id, payload)
       : api.store({
           ...payload,
           form_id: formId.value,
-          field_id: ruleField.value.id,
+          field_id: fid,
         });
     await saveOp;
     message.success('校验规则已保存');
@@ -585,11 +735,12 @@ async function saveRules() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadCategories(), loadForms(), loadStandards()]);
+  await Promise.all([loadCategories(), loadForms(), loadRuleCategories()]);
   const q = Number(route.query.form_id);
   if (q) {
     formId.value = q;
     await loadFields();
+    await loadFormRules();
   }
 });
 </script>
@@ -635,6 +786,19 @@ onMounted(async () => {
                     style="width: 100%"
                     allow-clear
                     placeholder="全部分类"
+                  />
+                </div>
+                <div class="mb-3">
+                  <div class="config-label">规范状态</div>
+                  <Select
+                    v-model:value="filterHasRules"
+                    :options="[
+                      { value: 1, label: '有规范' },
+                      { value: 0, label: '无规范' },
+                    ]"
+                    style="width: 100%"
+                    allow-clear
+                    placeholder="全部"
                   />
                 </div>
                 <div class="flex justify-end gap-2">
@@ -698,9 +862,22 @@ onMounted(async () => {
         </div>
 
         <template v-else>
-          <div class="flex items-center justify-between border-b px-3 py-2">
-            <div class="text-sm font-semibold text-gray-500">
-              字段列表（{{ rows.length }}）
+          <div
+            class="flex items-center justify-between gap-2 border-b px-3 py-2"
+          >
+            <div class="flex min-w-0 items-center gap-2">
+              <span class="shrink-0 text-sm font-semibold text-gray-500">
+                字段列表（{{ rows.length }}）
+              </span>
+              <Select
+                v-model:value="activeRuleId"
+                :options="ruleSelectOptions"
+                style="width: 240px"
+                class="shrink-0"
+              />
+              <Button size="small" @click="openRuleCreate(formId)">
+                + 新建规范
+              </Button>
             </div>
             <Button type="primary" size="small" @click="openFieldCreate">
               + 新增字段
@@ -723,9 +900,9 @@ onMounted(async () => {
                 <template v-else-if="column.key === 'required'">
                   <span>{{ record.required ? '是' : '否' }}</span>
                 </template>
-                <template v-else-if="column.key === 'globalCount'">
-                  <Tag v-if="record.globalCount" color="blue">
-                    {{ record.globalCount }} 条
+                <template v-else-if="column.key === 'ruleCount'">
+                  <Tag v-if="ruleCount(record)" color="blue">
+                    {{ ruleCount(record) }} 条
                   </Tag>
                   <span v-else class="text-gray-400">无</span>
                 </template>
@@ -864,7 +1041,100 @@ onMounted(async () => {
             :type="formModal.type"
           />
         </TabPane>
+        <TabPane key="rules" tab="校验规范" :disabled="!formModal.id">
+          <Alert
+            v-if="!formModal.id"
+            type="info"
+            show-icon
+            class="mb-2"
+            message="保存表单后可创建校验规范"
+          />
+          <template v-else>
+            <div class="mb-2 flex items-center justify-between">
+              <div class="text-sm font-semibold text-gray-500">
+                本表单的校验规范（{{ modalRules.length }}）
+              </div>
+              <Button
+                type="primary"
+                size="small"
+                @click="openRuleCreate(formModal.id)"
+              >
+                + 新建规范
+              </Button>
+            </div>
+            <div v-if="!modalRules.length" class="text-sm text-gray-400">
+              暂无规范，创建后右侧字段可配置规则条目
+            </div>
+            <div
+              v-for="r in modalRules"
+              :key="r.id"
+              class="mb-1 flex items-center justify-between rounded border px-2 py-1 text-sm"
+            >
+              <span>
+                <Tag :color="r.status ? 'blue' : 'red'" class="mr-2">
+                  {{ r.status ? '正常' : '已停用' }}
+                </Tag>
+                {{ r.name }}
+                <span v-if="r.category" class="ml-2 text-xs text-gray-400">
+                  {{ r.category.name }}
+                </span>
+              </span>
+              <div class="flex items-center gap-1">
+                <Button
+                  type="link"
+                  size="small"
+                  class="p-0"
+                  @click="openRuleEdit(r, formModal.id)"
+                >
+                  编辑
+                </Button>
+                <Popconfirm
+                  :title="`确定删除规范「${r.name}」？`"
+                  description="其已配置的字段规则条目将同步清理"
+                  ok-text="删除"
+                  cancel-text="取消"
+                  @confirm="removeRule(r, formModal.id)"
+                >
+                  <Button type="link" size="small" danger class="p-0">
+                    删除
+                  </Button>
+                </Popconfirm>
+              </div>
+            </div>
+          </template>
+        </TabPane>
       </Tabs>
+    </Modal>
+
+    <!-- 校验规范新增/编辑弹窗 -->
+    <Modal
+      v-model:open="ruleModal.open"
+      :title="ruleModal.id ? `编辑规范 - ${ruleModal.name}` : '新建校验规范'"
+      ok-text="保存"
+      cancel-text="取消"
+      width="480px"
+      :confirm-loading="ruleModal.saving"
+      @ok="saveRule"
+    >
+      <div class="grid grid-cols-12 gap-4">
+        <div class="col-span-12">
+          <label class="config-label">规范名称 *</label>
+          <Input
+            v-model:value="ruleModal.name"
+            placeholder="如：焊接工艺规程"
+          />
+        </div>
+        <div class="col-span-12">
+          <label class="config-label">分类</label>
+          <Select
+            v-model:value="ruleModal.category_id"
+            :options="ruleCategoryOptions"
+            style="width: 100%"
+            allow-clear
+            placeholder="未分类"
+          />
+        </div>
+      </div>
     </Modal>
 
     <!-- 字段新增/编辑弹窗 -->
@@ -937,7 +1207,11 @@ onMounted(async () => {
     <!-- 校验规则弹窗 -->
     <Modal
       v-model:open="ruleDialog"
-      :title="`校验规则 - ${ruleField?.name || ''}`"
+      :title="`校验规则 - ${ruleField?.name || ''}（${
+        activeRuleId
+          ? formRules.find((r) => r.id === activeRuleId)?.name || '规范'
+          : '自定义规则'
+      }）`"
       ok-text="保存"
       cancel-text="关闭"
       width="1120px"
@@ -945,17 +1219,12 @@ onMounted(async () => {
       @ok="saveRules"
     >
       <div class="mb-2 flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <span class="text-sm text-gray-500">从规范规则复制：</span>
-          <Select
-            :options="standardOptions"
-            placeholder="选择规范规则"
-            style="width: 260px"
-            show-search
-            option-filter-prop="label"
-            allow-clear
-            @change="applyStandard"
-          />
+        <div class="text-xs text-gray-500">
+          {{
+            activeRuleId
+              ? `以下规则归属「${formRules.find((r) => r.id === activeRuleId)?.name || ''}」，填表时选择该规范后生效`
+              : '自定义规则恒生效（不依赖填表时选择规范）'
+          }}
         </div>
         <Button size="small" @click="addRuleRow">+ 新增规则</Button>
       </div>

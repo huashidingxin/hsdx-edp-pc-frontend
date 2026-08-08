@@ -21,7 +21,7 @@
  */
 import { computed, ref, watch } from 'vue';
 
-import { Button, Form, Select } from 'antdv-next';
+import { Button, Checkbox, Form } from 'antdv-next';
 import { cloneDeep, isEqual } from 'lodash-es';
 
 import Resource from '#/api/resource';
@@ -72,8 +72,8 @@ const listRows = ref({}); // { _listFieldId: [ row, row, ... ] }
 const pristineFormData = ref({});
 const pristineListRows = ref({});
 
-// ---- base_rules 选中状态（按 rule_category 互斥）----
-const baseRuleSelected = ref({}); // { ruleCategoryId: rule_id }
+// ---- base_rules 选中状态（P3-V08：规范独立勾选，不再按分类互斥）----
+const baseRuleSelected = ref({}); // { ruleId: true/false }
 const fieldBaseRule = ref({}); // { _fieldId: 当前应用的 rule_id }
 
 // ---- 单位工程字段联动 ----
@@ -209,7 +209,7 @@ function mapAttrs(field) {
  * ant 失焦校验与提交按钮 getFormData() 内部 evaluateAll 互为兜底——任一命中即红字。
  */
 // P3-V06：按填表人所选规范过滤字段规则——自定义规则（rule_id=0）恒生效；
-// 规范规则（rule_id>0）仅当所选规范匹配时生效（默认选中每个分类的第一条）
+// P3-V08：规范独立勾选（baseRuleSelected），字段规则取勾选规范中该字段配置的条目
 function getActiveRules(field) {
   const selected = fieldBaseRule.value[fkey(field)];
   return (field.rules || []).filter((r) => {
@@ -224,45 +224,31 @@ function buildFieldValidation(field) {
   return { required, rules };
 }
 
-// 初始化 base_rules（按 rule_category 互斥取一个 rule_id）
+// 初始化 base_rules（P3-V08：全部规范默认勾选；外部 rules 已指定时仅勾选匹配的）
 function initBaseRules() {
-  const categories = {};
+  const ruleList = {};
   for (const field of formFields.value) {
     const baseRules = field.rules?.filter((r) => r.rule_id > 0) || [];
     for (const r of baseRules) {
-      const catId = r.rule_category_id;
-      if (!categories[catId]) {
-        categories[catId] = {
-          id: catId,
-          name: r.rule_category_name,
-          rules: [],
-        };
-      }
-      const exists = categories[catId].rules.find((x) => x.id === r.rule_id);
-      if (!exists) {
-        categories[catId].rules.push({
+      if (!ruleList[r.rule_id]) {
+        ruleList[r.rule_id] = {
           id: r.rule_id,
-          category_id: catId,
+          category_id: r.rule_category_id,
+          category_name: r.rule_category_name,
           name: r.rule_name,
           _initial: r, // 保留原始 base_rule（便于附加 level/message/type/value）
-        });
+        };
       }
     }
   }
-  // 默认选每个分类的第一条；若外部 rules 已指定，则取其匹配
-  for (const catId in categories) {
-    const list = categories[catId].rules;
-    baseRuleSelected.value[catId] = list[0].id;
-    for (const fieldKey in props.rules) {
-      const matched = list.find(
-        (r) => String(r.id) === String(props.rules[fieldKey]),
-      );
-      if (matched) {
-        baseRuleSelected.value[catId] = matched.id;
-        break;
-      }
-    }
+  const hasExternal = Object.keys(props.rules || {}).length > 0;
+  const selectedIds = new Set(Object.values(props.rules || {}).map(String));
+  const newSelected = {};
+  for (const id in ruleList) {
+    newSelected[id] =
+      !hasExternal || selectedIds.has(String(id)) || selectedIds.has(id);
   }
+  baseRuleSelected.value = newSelected;
   // 为每个字段计算其当前应用的 base_rule rule_id
   recomputeFieldBaseRule();
 }
@@ -274,13 +260,14 @@ function recomputeFieldBaseRule() {
       fieldBaseRule.value[fkey(field)] = null;
       continue;
     }
-    const catId = baseRules[0].rule_category_id;
-    fieldBaseRule.value[fkey(field)] = baseRuleSelected.value[catId] ?? null;
+    const picked =
+      baseRules.find((r) => baseRuleSelected.value[r.rule_id]) || baseRules[0];
+    fieldBaseRule.value[fkey(field)] = picked.rule_id;
   }
 }
 
-function changeBaseRule(categoryId, ruleId) {
-  baseRuleSelected.value[categoryId] = ruleId;
+function changeBaseRule(ruleId, checked) {
+  baseRuleSelected.value[ruleId] = checked;
   recomputeFieldBaseRule();
   // P3-V06：切换规范后重建各字段 ant 校验规则并清除旧提示（新规则于下次交互/提交生效）
   for (const f of renderFields.value) {
@@ -830,24 +817,23 @@ defineExpose({
   uploadPendingFiles,
 });
 
-const baseRuleGroups = computed(() => {
-  const groups = {};
-  for (const catId in baseRuleSelected.value) {
-    const cat = { id: catId, name: '', rules: [] };
-    for (const f of formFields.value) {
-      const baseRules = f.rules?.filter((r) => r.rule_id > 0) || [];
-      for (const r of baseRules) {
-        if (String(r.rule_category_id) === String(catId)) {
-          cat.name = r.rule_category_name;
-          if (!cat.rules.some((x) => x.id === r.rule_id)) {
-            cat.rules.push({ id: r.rule_id, name: r.rule_name });
-          }
-        }
-      }
+// P3-V08：规范列表（独立勾选，按分类分组展示，分类仅作标签）
+const baseRuleList = computed(() => {
+  const rules = [];
+  const seen = {};
+  for (const f of formFields.value) {
+    const baseRules = f.rules?.filter((r) => r.rule_id > 0) || [];
+    for (const r of baseRules) {
+      if (seen[r.rule_id]) continue;
+      seen[r.rule_id] = true;
+      rules.push({
+        id: r.rule_id,
+        name: r.rule_name,
+        category_name: r.rule_category_name,
+      });
     }
-    groups[catId] = cat;
   }
-  return groups;
+  return rules;
 });
 
 // 监听 values 外部变化（如切换编辑行）
@@ -880,30 +866,26 @@ loadForm();
 
 <template>
   <div class="submission-edit">
-    <!-- base_rules 顶部选择区（按 rule_category 互斥）-->
+    <!-- base_rules 顶部选择区（P3-V08：规范独立勾选，不再按分类互斥）-->
     <div
-      v-if="Object.keys(baseRuleGroups).length"
+      v-if="baseRuleList.length"
       class="mb-4 rounded border border-gray-200 bg-gray-50 p-3"
     >
-      <div class="mb-2 text-sm font-semibold text-gray-600">规范适用</div>
-      <div class="flex flex-wrap gap-4">
-        <div
-          v-for="(cat, catId) in baseRuleGroups"
-          :key="catId"
-          class="flex items-center gap-2"
+      <div class="mb-2 text-sm font-semibold text-gray-600">
+        规范适用<span class="ml-1 text-xs font-normal text-gray-400"
+          >（勾选的规范参与校验，可按需取消）</span
         >
-          <span class="text-sm text-gray-500">{{ cat.name }}</span>
-          <Select
-            :value="baseRuleSelected[catId]"
-            style="width: 160px"
-            size="small"
-            @change="(v) => changeBaseRule(catId, v)"
-          >
-            <Select.Option v-for="r in cat.rules" :key="r.id" :value="r.id">
-              {{ r.name }}
-            </Select.Option>
-          </Select>
-        </div>
+      </div>
+      <div class="flex flex-wrap gap-x-5 gap-y-2">
+        <Checkbox
+          v-for="r in baseRuleList"
+          :key="r.id"
+          :checked="!!baseRuleSelected[r.id]"
+          @change="(e) => changeBaseRule(r.id, !!e.target.checked)"
+        >
+          {{ r.name }}
+          <span v-if="r.category_name" class="ml-1 text-xs text-gray-400">{{ r.category_name }}</span>
+        </Checkbox>
       </div>
     </div>
 

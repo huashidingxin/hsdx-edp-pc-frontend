@@ -46,6 +46,20 @@ async function loadProjects() {
   if (f) f.attrs.options = projectOptions.value;
 }
 
+// P3-V08：所属表单（规范归属表单，1:n；空 = 未归属的历史标准库）
+const formOptions = ref([]);
+async function loadFormOptions() {
+  const { data } = await new Resource('forms').list({ per_page: 'all' });
+  formOptions.value = (data || []).map((p) => ({
+    value: p.id,
+    label: p.name,
+  }));
+  const f = formFields.value.find((x) => x.field === 'form_id');
+  if (f) f.attrs.options = formOptions.value;
+  const fc = filterFields.value.find((x) => x.field === 'form_id');
+  if (fc) fc.attrs.options = formOptions.value;
+}
+
 const filterFields = ref([
   { field: 'name', label: '名称', type: 'text', span: 8 },
   {
@@ -54,6 +68,13 @@ const filterFields = ref([
     type: 'select',
     span: 8,
     attrs: { options: [] },
+  },
+  {
+    field: 'form_id',
+    label: '所属表单',
+    type: 'select',
+    span: 8,
+    attrs: { options: [], allowClear: true },
   },
 ]);
 
@@ -67,6 +88,17 @@ const formFields = ref([
     attrs: { options: [] },
   },
   { field: 'name', type: 'text', label: '名称', span: 12, required: true },
+  {
+    field: 'form_id',
+    type: 'select',
+    label: '所属表单',
+    span: 12,
+    attrs: {
+      options: [],
+      allowClear: true,
+      placeholder: '未归属（历史标准库）',
+    },
+  },
   {
     field: 'project_id',
     type: 'select',
@@ -83,6 +115,12 @@ const formFields = ref([
 const gridColumns = ref([
   { field: 'name', title: '名称', minWidth: 200 },
   { field: 'category.name', title: '分类', minWidth: 140 },
+  {
+    field: 'form.name',
+    title: '所属表单',
+    minWidth: 160,
+    slots: { default: 'default_form' },
+  },
   {
     field: 'project.name',
     title: '项目',
@@ -114,7 +152,7 @@ watch(
 );
 
 onMounted(async () => {
-  await Promise.all([loadCategories(), loadProjects()]);
+  await Promise.all([loadCategories(), loadProjects(), loadFormOptions()]);
 });
 </script>
 
@@ -139,6 +177,9 @@ onMounted(async () => {
     title="规范规则"
     class="p-4"
   >
+    <template #default_form="{ row }">
+      {{ row.form?.name || '未归属' }}
+    </template>
     <template #default_project="{ row }">
       {{ row.project?.name || '通用' }}
     </template>
