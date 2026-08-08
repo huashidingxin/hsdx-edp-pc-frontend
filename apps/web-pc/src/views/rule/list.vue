@@ -1,8 +1,9 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue';
 
-import { message, Switch, Tag } from 'antdv-next';
 import { useUserStore } from '@vben/stores';
+
+import { message, Switch, Tag } from 'antdv-next';
 
 import Resource from '#/api/resource';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
@@ -49,19 +50,38 @@ async function loadCategories() {
   if (fc) fc.attrs.options = categoryOptions.value;
 }
 
-// 所属项目（可选，空 = 通用规范）
-const projectOptions = ref([]);
-async function loadProjects() {
-  const { data } = await new Resource('projects').list({ per_page: 'all' });
-  projectOptions.value = (data || []).map((p) => ({
-    value: p.id,
-    label: p.name,
-  }));
+// P3-V13：项目控件改「是否通用」——管理员用 Switch（开=通用 null / 关=当前项目），
+// 普通用户只读显示当前项目名；值直接落 project_id（null=通用）
+const projectField = computed(() => {
+  if (isAdmin.value) {
+    return {
+      field: 'project_id',
+      type: 'slot',
+      label: '通用规范',
+      span: 12,
+      required: false,
+      attrs: {},
+    };
+  }
+  return {
+    field: 'project_id',
+    type: 'slot',
+    label: '所属项目',
+    span: 12,
+    required: false,
+    attrs: {},
+  };
+});
+watch([projectField, currentProjectId], () => {
+  const idx = formFields.value.findIndex((x) => x.field === 'project_id');
+  if (idx !== -1) formFields.value.splice(idx, 1, projectField.value);
+  // 新建默认归属当前项目（管理员不动开关时也落当前项目）
   const f = formFields.value.find((x) => x.field === 'project_id');
-  if (f) f.attrs.options = projectOptions.value;
-}
+  if (f) f.default = appStore.defaultProject?.id ?? null;
+}, { immediate: true });
 
-// P3-V08：所属表单（规范归属表单，1:n；空 = 未归属的历史标准库）
+// P3-V13：所属项目控件已由「是否通用」Switch / 当前项目只读文本替代，不再需要项目下拉
+// 所属表单（P3-V08：规范归属表单，1:n；空 = 未归属的历史标准库）
 const formOptions = ref([]);
 async function loadFormOptions() {
   const { data } = await new Resource('forms').list({ per_page: 'all' });
@@ -116,17 +136,11 @@ const formFields = ref([
   },
   {
     field: 'project_id',
-    type: 'select',
-    label: '所属项目',
+    type: 'slot',
+    label: '通用规范',
     span: 12,
-    required: !isAdmin.value,
-    attrs: {
-      options: [],
-      allowClear: isAdmin.value,
-      placeholder: isAdmin.value
-        ? '通用（不指定项目，仅管理员）'
-        : '请选择项目（通用规范仅管理员可创建）',
-    },
+    required: false,
+    attrs: {},
   },
 ]);
 
@@ -154,10 +168,12 @@ const gridColumns = ref([
   { field: 'created_at', title: '创建时间', minWidth: 180 },
 ]);
 
-// 保存时注入所属项目；留空则落 null（通用）
+// 保存时归一 project_id：管理员 slot 已落值（null=通用 / pid=当前项目）；普通用户固定当前项目
 function saveFormat(payload) {
   const p = { ...payload };
-  p.project_id = p.project_id || null;
+  if (!isAdmin.value) {
+    p.project_id = appStore.defaultProject?.id ?? null;
+  }
   return p;
 }
 
@@ -191,7 +207,7 @@ async function toggleStatus(row, checked) {
 }
 
 onMounted(async () => {
-  await Promise.all([loadCategories(), loadProjects(), loadFormOptions()]);
+  await Promise.all([loadCategories(), loadFormOptions()]);
 });
 </script>
 
@@ -217,6 +233,21 @@ onMounted(async () => {
     title="规范规则"
     class="p-4"
   >
+    <template #field_project_id="scope">
+      <template v-if="isAdmin">
+        <Switch
+          :checked="scope['model-value'] === null"
+          @change="(v) => scope.update(v ? null : appStore.defaultProject?.id ?? null)"
+        />
+        <div class="mt-1 text-xs text-gray-400">
+          {{ scope['model-value'] === null ? '通用（所有项目可见，仅管理员可管理）' : `当前项目：${appStore.defaultProject?.name || '-'}` }}
+        </div>
+      </template>
+      <div v-else class="text-sm text-gray-600">
+        {{ appStore.defaultProject?.name || '未设置当前项目' }}
+      </div>
+    </template>
+
     <template #default_form="{ row }">
       {{ row.form?.name || '未归属' }}
     </template>

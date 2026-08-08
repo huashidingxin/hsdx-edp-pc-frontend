@@ -669,20 +669,10 @@ const ruleModal = ref({
   name: '',
   category_id: undefined,
   formId: undefined,
-  // P3-V12：默认归属当前项目；仅管理员可清除（=通用）
-  project_id: undefined,
+  // P3-V13：project_id 直接存值——null=通用（仅管理员），数字=所属项目；新建默认当前项目
+  project_id: null,
   saving: false,
 });
-
-// 新建规范可选项目（管理员可清空选「通用」）
-const ruleProjectOptions = ref([]);
-async function loadRuleProjectOptions() {
-  const { data } = await new Resource('projects').list({ per_page: 'all' });
-  ruleProjectOptions.value = (data || []).map((p) => ({
-    value: p.id,
-    label: p.name,
-  }));
-}
 
 function openRuleCreate(sourceFormId) {
   ruleModal.value = {
@@ -714,7 +704,7 @@ async function saveRule() {
     message.error('请填写规范名称');
     return;
   }
-  // P3-V12：非管理员不可创建通用规范——无当前项目时直接拒绝
+  // P3-V13：非管理员不可创建通用规范——无当前项目时直接拒绝
   if (!isAdmin.value && !m.project_id && !appStore.defaultProject?.id) {
     message.error('未找到当前项目，无法创建规范');
     return;
@@ -731,14 +721,11 @@ async function saveRule() {
       category_id: m.category_id,
       form_id: m.formId,
     };
-    // P3-V12：默认归属当前项目；管理员可清空（=通用），非管理员强制当前项目
-    if (m.project_id) {
-      payload.project_id = m.project_id;
-    } else if (isAdmin.value) {
-      payload.project_id = null; // 通用（仅管理员）
-    } else {
-      payload.project_id = appStore.defaultProject?.id || null;
-    }
+    // P3-V13：project_id 由弹窗控件直接落值——null=通用（仅管理员），数字=所属项目；
+    // 非管理员强制当前项目（后端 403 兜底）
+    payload.project_id = isAdmin.value
+      ? (m.project_id ?? null)
+      : (appStore.defaultProject?.id || null);
     if (m.id) {
       await api.update(m.id, payload);
       message.success('规范已保存');
@@ -807,7 +794,7 @@ const ruleSaving = ref(false);
 // P3-V11：规则类型语义化——按字段类型只给可用的类型，文案贴近业务
 const ruleTypeOptions = computed(() => {
   const t = ruleField.value?.type;
-  if (['number', 'digit', 'temperature', 'humidity', 'wind'].includes(t)) {
+  if (['digit', 'humidity', 'number', 'temperature', 'wind'].includes(t)) {
     return [
       { value: 'range', label: '区间（最小 ~ 最大）' },
       { value: 'min', label: '最小值（不低于）' },
@@ -815,7 +802,7 @@ const ruleTypeOptions = computed(() => {
       { value: 'eq', label: '等于指定值' },
     ];
   }
-  if (['select', 'multiselect', 'stakeholder', 'construction'].includes(t)) {
+  if (['construction', 'multiselect', 'select', 'stakeholder'].includes(t)) {
     return [{ value: 'eq', label: '等于指定值' }];
   }
   // 文本/文本域/长文本等：min/max 按字符长度校验
@@ -832,10 +819,10 @@ const ruleTypeLabel = (t) =>
 const ruleValueField = computed(() => {
   const t = ruleField.value?.type;
   const numeric = [
-    'number',
     'digit',
-    'temperature',
     'humidity',
+    'number',
+    'temperature',
     'wind',
   ].includes(t);
   if (!numeric) {
@@ -975,7 +962,6 @@ onMounted(async () => {
     loadCategories(),
     loadForms(),
     loadRuleCategories(),
-    loadRuleProjectOptions(),
   ]);
   const q = Number(route.query.form_id);
   if (q) {
@@ -1141,9 +1127,7 @@ onMounted(async () => {
                     class="inline-flex items-center gap-1 text-gray-500"
                   >
                     <span class="text-gray-300">└─</span>
-                    <span class="inline-block text-xs text-gray-400"
-                      >子字段</span
-                    >
+                    <span class="inline-block text-xs text-gray-400">子字段</span>
                     {{ record.name }}
                   </span>
                   <span v-else>{{ record.name }}</span>
@@ -1180,8 +1164,7 @@ onMounted(async () => {
                       子字段<span
                         v-if="childFieldsOf(record.id).length"
                         class="text-gray-400"
-                        >({{ childFieldsOf(record.id).length }})</span
-                      >
+                        >({{ childFieldsOf(record.id).length }})</span>
                     </Button>
                     <Button
                       type="link"
@@ -1406,21 +1389,27 @@ onMounted(async () => {
           />
         </div>
         <div class="col-span-12">
-          <label class="config-label">所属项目</label>
-          <Select
-            v-model:value="ruleModal.project_id"
-            :options="ruleProjectOptions"
-            style="width: 100%"
-            :allow-clear="isAdmin"
-            :disabled="!isAdmin && !ruleModal.project_id"
-            placeholder="选择项目"
-          />
-          <div class="mt-1 text-xs text-gray-400">
-            {{
-              isAdmin
-                ? '留空 = 通用规范（所有项目可见，仅管理员可创建）'
-                : '默认归属当前项目；通用规范仅管理员可创建'
-            }}
+          <label class="config-label">通用规范（P3-V13）</label>
+          <template v-if="isAdmin">
+            <Switch
+              :checked="ruleModal.project_id === null"
+              @change="
+                (v) =>
+                  (ruleModal.project_id = v
+                    ? null
+                    : appStore.defaultProject?.id ?? null)
+              "
+            />
+            <div class="mt-1 text-xs text-gray-400">
+              {{
+                ruleModal.project_id === null
+                  ? '通用（所有项目可见，仅管理员可管理）'
+                  : `当前项目：${appStore.defaultProject?.name || '-'}`
+              }}
+            </div>
+          </template>
+          <div v-else class="text-sm text-gray-600">
+            {{ appStore.defaultProject?.name || '未设置当前项目' }}
           </div>
         </div>
       </div>
