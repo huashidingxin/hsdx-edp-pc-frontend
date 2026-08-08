@@ -785,27 +785,67 @@ const ruleField = ref(null);
 const ruleRows = ref([]);
 const ruleSaving = ref(false);
 
-const ruleTypeOptions = [
-  { value: 'range', label: '范围' },
-  { value: 'min', label: '最小值' },
-  { value: 'max', label: '最大值' },
-  { value: 'eq', label: '等于' },
-];
+// P3-V11：规则类型语义化——按字段类型只给可用的类型，文案贴近业务
+const ruleTypeOptions = computed(() => {
+  const t = ruleField.value?.type;
+  if (['number', 'digit', 'temperature', 'humidity', 'wind'].includes(t)) {
+    return [
+      { value: 'range', label: '区间（最小 ~ 最大）' },
+      { value: 'min', label: '最小值（不低于）' },
+      { value: 'max', label: '最大值（不高于）' },
+      { value: 'eq', label: '等于指定值' },
+    ];
+  }
+  if (['select', 'multiselect', 'stakeholder', 'construction'].includes(t)) {
+    return [{ value: 'eq', label: '等于指定值' }];
+  }
+  // 文本/文本域/长文本等：min/max 按字符长度校验
+  return [
+    { value: 'min', label: '最短长度（字符）' },
+    { value: 'max', label: '最长长度（字符）' },
+    { value: 'eq', label: '等于指定值' },
+  ];
+});
+const ruleTypeLabel = (t) =>
+  ruleTypeOptions.value.find((o) => o.value === t)?.label || t || '-';
+
+// 值输入框 label/占位随规则类型联动
+const ruleValueField = computed(() => {
+  const t = ruleField.value?.type;
+  const numeric = [
+    'number',
+    'digit',
+    'temperature',
+    'humidity',
+    'wind',
+  ].includes(t);
+  if (!numeric) {
+    return { label: '长度（字符数）', placeholder: '如 50' };
+  }
+  return { label: '值', placeholder: '输入数值，区间填 最小-最大（如 0-100）' };
+});
 const levelOptions = [
   { value: 1, label: '错误' },
   { value: 2, label: '警告' },
 ];
 
-const ruleListFields = ref([
+const ruleListFields = computed(() => [
   {
     field: 'type',
     type: 'select',
     label: '类型',
     span: 5,
     required: true,
-    attrs: { options: ruleTypeOptions },
+    attrs: { options: ruleTypeOptions.value },
   },
-  { field: 'value', type: 'text', label: '比对值', span: 5, required: true },
+  {
+    field: 'value',
+    type: 'text',
+    label: ruleValueField.value.label,
+    span: 5,
+    required: true,
+    attrs: { placeholder: ruleValueField.value.placeholder },
+  },
   {
     field: 'level',
     type: 'select',
@@ -825,8 +865,13 @@ const ruleListFields = ref([
 ]);
 
 const ruleColumns = ref([
-  { field: 'type', title: '类型', width: 90 },
-  { field: 'value', title: '比对值', width: 90 },
+  {
+    field: 'type',
+    title: '类型',
+    width: 140,
+    slots: { default: 'default_rule_type' },
+  },
+  { field: 'value', title: '值', width: 110 },
   { field: 'level', title: '级别', width: 70 },
   { field: 'failed_proof', title: '需证明', width: 80 },
   { field: 'message', title: '不通过提示', minWidth: 160 },
@@ -845,7 +890,11 @@ async function openRuleDialog(row) {
 }
 
 function addRuleRow() {
-  ruleRows.value.push({ type: 'min', level: 1, failed_proof: false });
+  ruleRows.value.push({
+    type: ruleTypeOptions.value[0]?.value || 'min',
+    level: 1,
+    failed_proof: false,
+  });
 }
 
 async function saveRules() {
@@ -856,7 +905,14 @@ async function saveRules() {
       return;
     }
     if (!r.value && r.value !== 0) {
-      message.error('比对值不能为空');
+      message.error('值不能为空');
+      return;
+    }
+    if (
+      r.type === 'range' &&
+      !/^-?\d+(\.\d+)?\s*-\s*-?\d+(\.\d+)?$/.test(String(r.value))
+    ) {
+      message.error('区间类型的值需填写「最小-最大」（如 0-100）');
       return;
     }
   }
@@ -1482,7 +1538,11 @@ onMounted(async () => {
         :show-edit="false"
         row-key="id"
         height="240"
-      />
+      >
+        <template #default_rule_type="{ row }">
+          {{ ruleTypeLabel(row.type) }}
+        </template>
+      </AppList>
       <div class="mt-2 text-xs text-gray-400">
         警告（级别 2）可以提交，错误（级别
         1）无法提交；「需证明」的规则命中时要求上传现场证明。

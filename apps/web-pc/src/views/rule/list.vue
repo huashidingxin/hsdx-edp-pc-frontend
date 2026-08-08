@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 
 import { message, Switch, Tag } from 'antdv-next';
 import { useUserStore } from '@vben/stores';
@@ -7,8 +7,6 @@ import { useUserStore } from '@vben/stores';
 import Resource from '#/api/resource';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
 import { useAppStore } from '#/store';
-
-import RuleFieldList from './field-list.vue';
 
 const appStore = useAppStore();
 const userStore = useUserStore();
@@ -180,14 +178,6 @@ async function toggleStatus(row, checked) {
   }
 }
 
-const fieldListKey = ref(0);
-watch(
-  () => editingItem.value?.id,
-  (id) => {
-    if (id) fieldListKey.value += 1;
-  },
-);
-
 onMounted(async () => {
   await Promise.all([loadCategories(), loadProjects(), loadFormOptions()]);
 });
@@ -231,24 +221,6 @@ onMounted(async () => {
         <Tag :color="row.status ? 'green' : 'red'">
           {{ row.status ? '正常' : '已停用' }}
         </Tag>
-      </div>
-    </template>
-
-    <template #form-default>
-      <div v-if="editingItem.id" class="mt-2">
-        <Alert
-          type="info"
-          show-icon
-          class="mb-3"
-          message="关联字段（历史记录）"
-          description="字段的校验规则请到「表单管理 → 字段规则」配置。下方仅列出本规范在旧链路中绑定的字段，供追溯。"
-        />
-        <RuleFieldList
-          :key="fieldListKey"
-          :rule-category-id="editingItem.category_id"
-          :rule-id="editingItem.id"
-          readonly
-        />
       </div>
     </template>
   </AppCrudTable>
