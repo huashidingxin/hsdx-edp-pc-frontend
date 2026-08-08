@@ -1,7 +1,8 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue';
 
-import { Alert, Tag } from 'antdv-next';
+import { message, Switch, Tag } from 'antdv-next';
+import { useUserStore } from '@vben/stores';
 
 import Resource from '#/api/resource';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
@@ -10,7 +11,11 @@ import { useAppStore } from '#/store';
 import RuleFieldList from './field-list.vue';
 
 const appStore = useAppStore();
+const userStore = useUserStore();
 const editingItem = ref({});
+
+// P3-V09：通用规范（project_id 为空）仅管理员可创建/编辑/删除
+const isAdmin = computed(() => !!userStore.userInfo?.is_admin);
 
 const currentProjectId = computed(
   () => appStore.defaultProject?.id || undefined,
@@ -104,10 +109,13 @@ const formFields = ref([
     type: 'select',
     label: '所属项目',
     span: 12,
+    required: !isAdmin.value,
     attrs: {
       options: [],
-      allowClear: true,
-      placeholder: '通用（不指定项目）',
+      allowClear: isAdmin.value,
+      placeholder: isAdmin.value
+        ? '通用（不指定项目，仅管理员）'
+        : '请选择项目（通用规范仅管理员可创建）',
     },
   },
 ]);
@@ -143,6 +151,35 @@ function saveFormat(payload) {
   return p;
 }
 
+// P3-V09：非管理员不可编辑/删除通用规范（后端 403 兜底）
+const actionsConfig = computed(() => [
+  {
+    key: 'edit',
+    disabled: (row) => !isAdmin.value && !row.project_id,
+  },
+  {
+    key: 'delete',
+    disabled: (row) => !isAdmin.value && !row.project_id,
+  },
+]);
+
+// P3-V09：状态列即时启停切换
+async function toggleStatus(row, checked) {
+  try {
+    await new Resource('rules').update(row.id, {
+      category_id: row.category_id,
+      name: row.name,
+      form_id: row.form_id,
+      status: checked ? 1 : 0,
+    });
+    row.status = checked ? 1 : 0;
+    message.success(checked ? '规范已启用' : '规范已停用');
+  } catch (error) {
+    const msg = error?.response?.data?.message || error?.message;
+    message.error(typeof msg === 'string' && msg ? msg : '状态切换失败');
+  }
+}
+
 const fieldListKey = ref(0);
 watch(
   () => editingItem.value?.id,
@@ -164,6 +201,7 @@ onMounted(async () => {
     :fields="formFields"
     :extra-query="extraQuery"
     permission-name="rule"
+    :actions-config="actionsConfig"
     :inline-actions="['view', 'edit', 'delete']"
     :toolbar="{ filter: true, create: true, refresh: true, more: false }"
     :grid-options="{
@@ -184,9 +222,16 @@ onMounted(async () => {
       {{ row.project?.name || '通用' }}
     </template>
     <template #default_status="{ row }">
-      <Tag :color="row.status ? 'green' : 'red'">
-        {{ row.status ? '正常' : '已停用' }}
-      </Tag>
+      <div class="flex items-center gap-2">
+        <Switch
+          size="small"
+          :checked="!!row.status"
+          @change="(v) => toggleStatus(row, v)"
+        />
+        <Tag :color="row.status ? 'green' : 'red'">
+          {{ row.status ? '正常' : '已停用' }}
+        </Tag>
+      </div>
     </template>
 
     <template #form-default>

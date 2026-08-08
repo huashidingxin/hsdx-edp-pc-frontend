@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 
 import { Page } from '@vben/common-ui';
+import { useUserStore } from '@vben/stores';
 
 import {
   Alert,
@@ -23,6 +24,7 @@ import {
 
 import Resource from '#/api/resource';
 import AppList from '#/components/AppList.vue';
+import { useAppStore } from '#/store';
 
 import FormTemplateList from './form-template-list.vue';
 
@@ -30,6 +32,11 @@ import FormTemplateList from './form-template-list.vue';
 // 布局：Page 包裹、左右两栏均铺满高度。
 
 const route = useRoute();
+const userStore = useUserStore();
+const appStore = useAppStore();
+
+// P3-V09：通用规范（不指定项目）仅管理员可创建；非管理员新建规范强制归属当前项目
+const isAdmin = computed(() => !!userStore.userInfo?.is_admin);
 
 // ================= 左栏：表单列表 =================
 const forms = ref([]);
@@ -559,6 +566,14 @@ async function saveRule() {
       category_id: m.category_id,
       form_id: m.formId,
     };
+    // P3-V09：非管理员创建规范必须归属项目（默认当前项目）
+    if (!isAdmin.value) {
+      payload.project_id = m.projectId || appStore.defaultProject?.id || null;
+      if (!payload.project_id) {
+        message.error('未找到当前项目，无法创建规范');
+        return;
+      }
+    }
     if (m.id) {
       await api.update(m.id, payload);
       message.success('规范已保存');
