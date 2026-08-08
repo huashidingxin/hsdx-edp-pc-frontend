@@ -316,7 +316,6 @@ const columns = [
     key: 'globalCount',
     width: 90,
   },
-  { title: '项目覆盖', dataIndex: 'scopeCount', key: 'scopeCount', width: 100 },
   { title: '排序', dataIndex: 'sort', key: 'sort', width: 70 },
   { title: '操作', key: 'action', width: 190 },
 ];
@@ -348,9 +347,6 @@ async function loadFields() {
         (schemaByField.value[f.id] || []).find(
           (s) => s.applicable_scope === 'global',
         )?.rule_payload?.length || 0,
-      scopeCount: (schemaByField.value[f.id] || []).filter(
-        (s) => s.applicable_scope !== 'global',
-      ).length,
     }));
   } finally {
     loading.value = false;
@@ -463,7 +459,6 @@ async function removeField(row) {
 const ruleDialog = ref(false);
 const ruleField = ref(null);
 const ruleRows = ref([]);
-const ruleScopeRows = ref([]);
 const ruleSaving = ref(false);
 
 const ruleTypeOptions = [
@@ -518,7 +513,6 @@ async function openRuleDialog(row) {
   const scopes = schemaByField.value[row.id] || [];
   const global = scopes.find((s) => s.applicable_scope === 'global');
   ruleRows.value = (global?.rule_payload || []).map((r) => ({ ...r }));
-  ruleScopeRows.value = scopes.filter((s) => s.applicable_scope !== 'global');
   ruleDialog.value = true;
 }
 
@@ -588,13 +582,6 @@ async function saveRules() {
   } finally {
     ruleSaving.value = false;
   }
-}
-
-async function removeScope(row) {
-  await new Resource('field-schemas').destroy(row.id);
-  message.success('已移除项目覆盖，全局规则恢复生效');
-  ruleScopeRows.value = ruleScopeRows.value.filter((s) => s.id !== row.id);
-  await loadFields();
 }
 
 onMounted(async () => {
@@ -742,12 +729,6 @@ onMounted(async () => {
                   </Tag>
                   <span v-else class="text-gray-400">无</span>
                 </template>
-                <template v-else-if="column.key === 'scopeCount'">
-                  <Tag v-if="record.scopeCount" color="orange">
-                    {{ record.scopeCount }} 项
-                  </Tag>
-                  <span v-else class="text-gray-400">无</span>
-                </template>
                 <template v-else-if="column.key === 'action'">
                   <div class="flex items-center gap-1">
                     <Button
@@ -768,7 +749,7 @@ onMounted(async () => {
                     </Button>
                     <Popconfirm
                       :title="`确定删除字段「${record.name}」？`"
-                      description="其校验规则（含项目覆盖）将一并删除"
+                      description="其校验规则将一并删除"
                       ok-text="删除"
                       cancel-text="取消"
                       @confirm="removeField(record)"
@@ -987,29 +968,6 @@ onMounted(async () => {
         row-key="id"
         height="240"
       />
-      <div v-if="ruleScopeRows.length" class="mt-2">
-        <div class="mb-1 text-xs font-semibold text-gray-500">
-          项目级覆盖（优先级高于全局，运行期对指定项目生效）
-        </div>
-        <div
-          v-for="s in ruleScopeRows"
-          :key="s.id"
-          class="mb-1 flex items-center justify-between rounded border px-2 py-1 text-xs"
-        >
-          <span>
-            <Tag color="orange">{{ s.applicable_scope }}</Tag>
-            {{ s.rule_payload?.length || 0 }} 条规则
-          </span>
-          <Button
-            type="link"
-            size="small"
-            class="p-0 text-red-500"
-            @click="removeScope(s)"
-          >
-            移除覆盖
-          </Button>
-        </div>
-      </div>
       <div class="mt-2 text-xs text-gray-400">
         警告（级别 2）可以提交，错误（级别
         1）无法提交；「需证明」的规则命中时要求上传现场证明。
