@@ -124,6 +124,20 @@ const formFields = ref([
     attrs: { options: stateOptions },
   },
   {
+    field: 'work_start',
+    type: 'text',
+    span: 12,
+    label: '工作时段开始',
+    attrs: { placeholder: '如 08:00，留空使用系统默认' },
+  },
+  {
+    field: 'work_end',
+    type: 'text',
+    span: 12,
+    label: '工作时段结束',
+    attrs: { placeholder: '如 18:00，留空使用系统默认' },
+  },
+  {
     field: 'company_id',
     type: 'select',
     span: 12,
