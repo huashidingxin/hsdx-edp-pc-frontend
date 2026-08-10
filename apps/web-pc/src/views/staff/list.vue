@@ -297,7 +297,7 @@ async function pollSyncStatus() {
   const jobId = syncJob.value?.id;
   if (!jobId) return;
   try {
-    const result = await new Resource(`staff/dingtalk-sync/${jobId}`).get();
+    const result = await new Resource(`staff/dingtalk-sync/${jobId}`).list();
     syncJob.value = unwrapSyncJob(result);
     if (syncDone.value) {
       stopSyncPolling();
