@@ -8,7 +8,15 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
 import { useAccess } from '@vben/access';
 
-import { Button, DatePicker, Empty, message, Radio, Select, Tag } from 'antdv-next';
+import {
+  Button,
+  DatePicker,
+  Empty,
+  message,
+  Radio,
+  Select,
+  Tag,
+} from 'antdv-next';
 import Feature from 'ol/Feature.js';
 import LineString from 'ol/geom/LineString.js';
 import Point from 'ol/geom/Point.js';
@@ -34,7 +42,9 @@ const canHistory = computed(() => hasAccessByCodes(['location.history']));
 
 // 项目：跟随全局项目
 const projectId = computed(() => appStore.defaultProject?.id || undefined);
-const projectLabel = computed(() => appStore.defaultProject?.name || '所有项目');
+const projectLabel = computed(
+  () => appStore.defaultProject?.name || '所有项目',
+);
 
 // 成员选项
 const memberOptions = ref([]);
@@ -47,8 +57,9 @@ async function loadMembers() {
     memberOptions.value = (data || []).map((m) => ({
       value: m.user_id,
       label: m.user?.name || `#${m.user_id}`,
+      avatar: m.user?.avatar,
     }));
-  } catch (error) {
+  } catch {
     memberOptions.value = [];
   }
 }
@@ -63,8 +74,8 @@ const trackDate = ref(null);
 // 点坐标一律 fromLonLat([lng, lat]) 转换。
 const mapEl = ref(null);
 let map = null;
-let pointSource = new VectorSource();
-let trackSource = new VectorSource();
+const pointSource = new VectorSource();
+const trackSource = new VectorSource();
 let pointLayer = null;
 let trackLayer = null;
 let baseLayer = null;
@@ -77,7 +88,10 @@ const BASE_MAPS = {
   'world-sat': { label: '卫星·全球', layers: ['esri'] },
   'world-vec': { label: '矢量·全球', layers: ['osm'] },
 };
-const baseMap = ref('cn-sat');
+// 区域 × 类型分开设置，组合成底图 key
+const baseRegion = ref('cn');
+const baseType = ref('sat');
+const baseMap = computed(() => `${baseRegion.value}-${baseType.value}`);
 
 function tiandiLayer(type) {
   const key = import.meta.env.VITE_TIANDI_KEY;
@@ -125,9 +139,13 @@ function switchBaseLayer(base) {
   baseLayer.forEach((l) => map.addLayer(l));
 }
 
-function onBaseMapChange(v) {
-  baseMap.value = v;
-  switchBaseLayer(v);
+function onBaseMapPartChange(part, v) {
+  if (part === 'region') {
+    baseRegion.value = v;
+  } else {
+    baseType.value = v;
+  }
+  switchBaseLayer(baseMap.value);
 }
 
 // 项目经纬度中心：优先当前项目 address
@@ -199,7 +217,7 @@ async function loadLive() {
 
 function renderLive() {
   pointSource.clear();
-  if (!map || !liveData.value.length) return;
+  if (!map || liveData.value.length === 0) return;
 
   const features = liveData.value.map((p) => {
     const online = Number(p.online) === 1;
@@ -227,8 +245,10 @@ function renderLive() {
   pointSource.addFeatures(features);
 
   const extent = pointSource.getExtent();
-  if (extent && liveData.value.length) {
-    map.getView().fit(extent, { padding: [60, 60, 60, 60], maxZoom: 16, duration: 500 });
+  if (extent && liveData.value.length > 0) {
+    map
+      .getView()
+      .fit(extent, { padding: [60, 60, 60, 60], maxZoom: 16, duration: 500 });
   }
 }
 
@@ -255,7 +275,7 @@ async function loadHistory() {
       date: trackDate.value,
     });
     trackPoints.value = Array.isArray(data) ? data : [];
-    if (!trackPoints.value.length) {
+    if (trackPoints.value.length === 0) {
       message.info('该日无轨迹数据');
       pointSource.clear();
       trackSource.clear();
@@ -273,7 +293,7 @@ async function loadHistory() {
 function renderTrack() {
   pointSource.clear();
   trackSource.clear();
-  if (!map || !trackPoints.value.length) return;
+  if (!map || trackPoints.value.length === 0) return;
 
   const coords = trackPoints.value.map((p) =>
     fromLonLat([Number(p.lng), Number(p.lat)]),
@@ -309,12 +329,14 @@ function renderTrack() {
 
   const extent = trackSource.getExtent();
   if (extent) {
-    map.getView().fit(extent, { padding: [60, 60, 60, 60], maxZoom: 16, duration: 400 });
+    map
+      .getView()
+      .fit(extent, { padding: [60, 60, 60, 60], maxZoom: 16, duration: 400 });
   }
 }
 
 function play() {
-  if (playing.value || !trackPoints.value.length) return;
+  if (playing.value || trackPoints.value.length === 0) return;
   playing.value = true;
   const step = () => {
     if (playIndex.value >= trackPoints.value.length - 1) {
@@ -338,7 +360,9 @@ function pausePlay() {
 function updatePlayMarker() {
   const p = trackPoints.value[playIndex.value];
   if (!p || !playMarkerFeature || !map) return;
-  playMarkerFeature.setGeometry(new Point(fromLonLat([Number(p.lng), Number(p.lat)])));
+  playMarkerFeature.setGeometry(
+    new Point(fromLonLat([Number(p.lng), Number(p.lat)])),
+  );
   playMarkerFeature.setStyle(
     new Style({
       image: new CircleStyle({
@@ -393,7 +417,7 @@ onMounted(() => {
     loadLive();
     liveTimer = setInterval(() => {
       if (mode.value === 'live') loadLive();
-    }, 30000);
+    }, 30_000);
   }
 });
 
@@ -421,16 +445,11 @@ onBeforeUnmount(() => {
       />
       <span class="text-sm text-gray-500">项目：{{ projectLabel }}</span>
 
-      <Select
-        v-model:value="baseMap"
-        class="w-40"
-        :options="Object.entries(BASE_MAPS).map(([value, m]) => ({ value, label: m.label }))"
-        @change="onBaseMapChange"
-      />
-
       <template v-if="mode === 'live'">
         <Tag color="green">实时定位（近30分钟）</Tag>
-        <Button size="small" :loading="liveLoading" @click="loadLive">刷新</Button>
+        <Button size="small" :loading="liveLoading" @click="loadLive">
+刷新
+</Button>
       </template>
 
       <template v-else>
@@ -440,8 +459,27 @@ onBeforeUnmount(() => {
           placeholder="选择成员"
           show-search
           option-filter-prop="label"
+          option-label-prop="label"
           class="w-48"
-        />
+        >
+          <template #optionRender="{ option }">
+            <div class="flex items-center gap-2">
+              <img
+                v-if="option?.data?.avatar"
+                :src="option.data.avatar"
+                class="h-6 w-6 flex-shrink-0 rounded-full object-cover"
+                alt=""
+              />
+              <div
+                v-else
+                class="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-400 to-blue-600 text-xs font-medium text-white"
+              >
+                {{ option?.data?.label?.charAt(0) || '?' }}
+              </div>
+              <span class="truncate">{{ option?.data?.label }}</span>
+            </div>
+          </template>
+        </Select>
         <DatePicker
           v-model:value="trackDate"
           value-format="YYYY-MM-DD"
@@ -467,8 +505,53 @@ onBeforeUnmount(() => {
       <Empty description="无查看实时定位权限（需 location.realtime）" />
     </div>
 
-    <div class="relative min-h-0 flex-1 overflow-hidden rounded-lg border bg-white">
+    <div
+      class="relative min-h-0 flex-1 overflow-hidden rounded-lg border bg-white"
+    >
       <div ref="mapEl" class="h-full w-full"></div>
+
+      <!-- 底图切换（左上，缩放控件下方，风格与 OL 控件一致） -->
+      <div
+        class="absolute left-3 top-16 z-10 overflow-hidden rounded-lg border border-gray-200 bg-white/95 shadow"
+      >
+        <div class="flex">
+          <button
+            v-for="opt in [
+              { label: '中国', value: 'cn' },
+              { label: '全球', value: 'world' },
+            ]"
+            :key="opt.value"
+            class="px-2.5 py-1.5 text-xs transition-colors"
+            :class="
+              baseRegion === opt.value
+                ? 'bg-blue-500 font-medium text-white'
+                : 'text-gray-600 hover:bg-gray-100'
+            "
+            @click="onBaseMapPartChange('region', opt.value)"
+          >
+            {{ opt.label }}
+          </button>
+        </div>
+        <div class="h-px bg-gray-200"></div>
+        <div class="flex">
+          <button
+            v-for="opt in [
+              { label: '卫星', value: 'sat' },
+              { label: '矢量', value: 'vec' },
+            ]"
+            :key="opt.value"
+            class="px-2.5 py-1.5 text-xs transition-colors"
+            :class="
+              baseType === opt.value
+                ? 'bg-blue-500 font-medium text-white'
+                : 'text-gray-600 hover:bg-gray-100'
+            "
+            @click="onBaseMapPartChange('type', opt.value)"
+          >
+            {{ opt.label }}
+          </button>
+        </div>
+      </div>
 
       <!-- 实时图例（右上，避免遮挡左上缩放控件） -->
       <div
@@ -476,7 +559,8 @@ onBeforeUnmount(() => {
         class="absolute right-3 top-3 z-10 rounded bg-white/90 p-2 text-xs shadow"
       >
         <div class="flex items-center gap-1">
-          <span class="h-2.5 w-2.5 rounded-full bg-green-500"></span> 在线（10分钟内）
+          <span class="h-2.5 w-2.5 rounded-full bg-green-500"></span>
+          在线（10分钟内）
         </div>
         <div class="mt-1 flex items-center gap-1">
           <span class="h-2.5 w-2.5 rounded-full bg-gray-300"></span> 离线
