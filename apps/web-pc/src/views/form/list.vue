@@ -51,6 +51,18 @@ const formTypeOptions = [
   { value: 4, label: '文档' },
 ];
 
+// 表单类型专属配色（blade 色标）
+const typeBladeMap = {
+  1: { bg: '#1677ff' }, // 通用 · 蓝
+  2: { bg: '#fa8c16' }, // 任务 · 橙
+  3: { bg: '#52c41a' }, // 日志 · 绿
+  4: { bg: '#722ed1' }, // 文档 · 紫
+};
+function typeBladeStyle(type) {
+  const t = typeBladeMap[type] ? type : 1;
+  return { background: typeBladeMap[t].bg };
+}
+
 const categoryOptions = ref([]);
 async function loadCategories() {
   const { data } = await new Resource('categories').list({
@@ -106,6 +118,7 @@ async function loadForms(reset = false) {
     const items = (res.data || []).map((f) => ({
       value: f.id,
       label: f.name,
+      type: f.type,
       type_desc: f.type_desc || typeDescMap[f.type] || '通用',
       _raw: f,
     }));
@@ -132,6 +145,13 @@ function ensureFilled() {
 }
 
 const hasMore = computed(() => currentPage.value < lastPage.value);
+
+// 当前选中表单名（右栏头部展示）
+const currentForm = computed(
+  () => forms.value.find((f) => f.value === formId.value) || null,
+);
+const currentFormName = computed(() => currentForm.value?.label || '');
+const currentFormType = computed(() => currentForm.value?.type);
 
 // 左栏滚动触底自动加载下一页
 function onListScroll(e) {
@@ -348,17 +368,17 @@ const childFieldsOf = (parentId) =>
   rows.value.filter((f) => String(f.parent_id) === String(parentId));
 
 const columns = [
-  { title: '名称', dataIndex: 'name', key: 'name', minWidth: 180 },
-  { title: '类型', dataIndex: 'type', key: 'type', width: 130 },
+  { title: '名称', dataIndex: 'name', key: 'name', width: 200 },
+  { title: '类型', dataIndex: 'type', key: 'type', width: 120 },
   { title: '必填', dataIndex: 'required', key: 'required', width: 70 },
   {
     title: '规则数',
     dataIndex: 'ruleCount',
     key: 'ruleCount',
-    width: 90,
+    width: 80,
   },
-  { title: '排序', dataIndex: 'sort', key: 'sort', width: 70 },
-  { title: '操作', key: 'action', width: 190 },
+  { title: '排序', dataIndex: 'sort', key: 'sort', width: 60 },
+  { title: '操作', key: 'action', width: 250 },
 ];
 
 async function loadFields() {
@@ -669,9 +689,23 @@ const ruleModal = ref({
   name: '',
   category_id: undefined,
   formId: undefined,
-  // P3-V13：project_id 直接存值——null=通用（仅管理员），数字=所属项目；新建默认当前项目
+  // 通用标识统一使用 1=是、0=否；project_id 保存项目专属规范的实际项目。
+  is_general: 0,
   project_id: null,
+  project_name: '',
   saving: false,
+});
+
+const ruleModalGeneral = computed({
+  get: () => Number(ruleModal.value.is_general) === 1,
+  set: (checked) => {
+    ruleModal.value.is_general = checked ? 1 : 0;
+    if (checked) {
+      ruleModal.value.project_id = null;
+    } else if (!ruleModal.value.project_id) {
+      ruleModal.value.project_id = appStore.defaultProject?.id ?? null;
+    }
+  },
 });
 
 function openRuleCreate(sourceFormId) {
@@ -681,7 +715,9 @@ function openRuleCreate(sourceFormId) {
     name: '',
     category_id: undefined,
     formId: sourceFormId,
+    is_general: 0,
     project_id: appStore.defaultProject?.id ?? null,
+    project_name: appStore.defaultProject?.name || '',
     saving: false,
   };
 }
@@ -693,7 +729,9 @@ function openRuleEdit(r, sourceFormId) {
     name: r.name || '',
     category_id: r.category_id,
     formId: sourceFormId,
+    is_general: Number(r.is_general) === 1 || r.project_id == null ? 1 : 0,
     project_id: r.project_id ?? null,
+    project_name: r.project?.name || '',
     saving: false,
   };
 }
@@ -704,8 +742,16 @@ async function saveRule() {
     message.error('请填写规范名称');
     return;
   }
-  // P3-V13：非管理员不可创建通用规范——无当前项目时直接拒绝
-  if (!isAdmin.value && !m.project_id && !appStore.defaultProject?.id) {
+  // P3-V13：非管理员不可创建/修改通用规范——统一按 1/0 判断。
+  if (!isAdmin.value && Number(m.is_general) === 1) {
+    message.error('通用规范仅管理员可管理');
+    return;
+  }
+  if (
+    Number(m.is_general) === 0 &&
+    !m.project_id &&
+    !appStore.defaultProject?.id
+  ) {
     message.error('未找到当前项目，无法创建规范');
     return;
   }
@@ -720,12 +766,15 @@ async function saveRule() {
       name: m.name.trim(),
       category_id: m.category_id,
       form_id: m.formId,
+      is_general: Number(m.is_general) === 1 ? 1 : 0,
     };
-    // P3-V13：project_id 由弹窗控件直接落值——null=通用（仅管理员），数字=所属项目；
-    // 非管理员强制当前项目（后端 403 兜底）
-    payload.project_id = isAdmin.value
-      ? (m.project_id ?? null)
-      : (appStore.defaultProject?.id || null);
+    // 通用=1 时不关联项目；项目专属=0 时保存实际项目 ID。
+    payload.project_id =
+      payload.is_general === 1
+        ? null
+        : isAdmin.value
+          ? (m.project_id ?? appStore.defaultProject?.id ?? null)
+          : (appStore.defaultProject?.id ?? null);
     if (m.id) {
       await api.update(m.id, payload);
       message.success('规范已保存');
@@ -874,13 +923,13 @@ const ruleColumns = ref([
   {
     field: 'type',
     title: '类型',
-    width: 140,
+    width: 260,
     slots: { default: 'default_rule_type' },
   },
-  { field: 'value', title: '值', width: 110 },
-  { field: 'level', title: '级别', width: 70 },
-  { field: 'failed_proof', title: '需证明', width: 80 },
-  { field: 'message', title: '不通过提示', minWidth: 160 },
+  { field: 'value', title: '值', width: 160 },
+  { field: 'level', title: '级别', width: 90 },
+  { field: 'failed_proof', title: '需证明', width: 100 },
+  { field: 'message', title: '不通过提示', minWidth: 280 },
 ]);
 
 async function openRuleDialog(row) {
@@ -958,11 +1007,7 @@ async function saveRules() {
 }
 
 onMounted(async () => {
-  await Promise.all([
-    loadCategories(),
-    loadForms(),
-    loadRuleCategories(),
-  ]);
+  await Promise.all([loadCategories(), loadForms(), loadRuleCategories()]);
   const q = Number(route.query.form_id);
   if (q) {
     formId.value = q;
@@ -977,7 +1022,7 @@ onMounted(async () => {
     <div class="flex h-full gap-3">
       <!-- 左栏：表单列表 -->
       <div
-        class="flex w-80 shrink-0 flex-col overflow-hidden rounded border bg-card"
+        class="flex w-96 shrink-0 flex-col overflow-hidden rounded border bg-card"
       >
         <div class="flex gap-2 border-b p-2">
           <Input
@@ -992,7 +1037,12 @@ onMounted(async () => {
             placement="bottomLeft"
             :destroy-on-hidden="true"
           >
-            <Button :type="filterActive ? 'primary' : 'default'">筛选</Button>
+            <Button :type="filterActive ? 'primary' : 'default'" class="h-8">
+              <template #icon>
+                <span class="mr-0.5">⚙</span>
+              </template>
+              筛选
+            </Button>
             <template #content>
               <div class="w-64">
                 <div class="mb-2">
@@ -1037,7 +1087,9 @@ onMounted(async () => {
               </div>
             </template>
           </Popover>
-          <Button type="primary" @click="openFormCreate">+ 新增</Button>
+          <Button type="primary" class="h-8" @click="openFormCreate">
+            + 新增
+          </Button>
         </div>
         <div
           ref="formListRef"
@@ -1047,16 +1099,40 @@ onMounted(async () => {
           <div
             v-for="f in forms"
             :key="f.value"
-            class="flex cursor-pointer items-center border-b px-3 py-2 transition-colors hover:bg-gray-50"
-            :class="formId === f.value ? 'bg-blue-50' : ''"
+            class="group relative flex cursor-pointer items-center gap-2 border-b px-3 py-2.5 transition-all duration-150"
+            :class="
+              formId === f.value
+                ? 'bg-blue-50/70 hover:bg-blue-50'
+                : 'hover:bg-gray-50'
+            "
             @click="selectForm(f.value)"
           >
-            <span class="min-w-0 flex-1 truncate text-sm">{{ f.label }}</span>
-            <Tag color="blue" class="shrink-0">{{ f.type_desc }}</Tag>
+            <!-- 选中态左侧色条 -->
+            <span
+              class="absolute left-0 top-1/2 h-7 w-1 -translate-y-1/2 rounded-r-full transition-all duration-150"
+              :class="
+                formId === f.value
+                  ? 'bg-blue-500 opacity-100'
+                  : 'bg-transparent opacity-0'
+              "
+            ></span>
+            <!-- 表单类型 blade -->
+            <span
+              class="form-type-blade shrink-0"
+              :style="typeBladeStyle(f.type)"
+            >
+              {{ f.type_desc }}
+            </span>
+            <span
+              class="min-w-0 flex-1 truncate text-sm"
+              :class="formId === f.value ? 'font-medium text-blue-700' : ''"
+            >
+              {{ f.label }}
+            </span>
             <Button
               type="link"
               size="small"
-              class="shrink-0 p-0 pl-1"
+              class="shrink-0 p-0 pl-1 opacity-50 transition-opacity duration-150 group-hover:opacity-100"
               @click.stop="openFormEdit(f)"
             >
               编辑
@@ -1070,10 +1146,18 @@ onMounted(async () => {
           </div>
           <div
             v-else-if="!forms.length"
-            class="px-3 py-6 text-center text-sm text-gray-400"
+            class="flex flex-col items-center gap-2 px-3 py-10 text-center text-sm text-gray-400"
           >
-            无匹配表单
+            <div class="text-4xl leading-none opacity-50">🗂️</div>
+            <div>{{ keyword || filterActive ? '无匹配表单' : '暂无表单' }}</div>
           </div>
+        </div>
+        <div
+          v-if="total"
+          class="flex items-center justify-between border-t px-3 py-1.5 text-xs text-gray-400"
+        >
+          <span>共 {{ total }} 个表单</span>
+          <span v-if="hasMore" class="text-gray-300">下拉加载更多</span>
         </div>
       </div>
 
@@ -1083,32 +1167,51 @@ onMounted(async () => {
       >
         <div
           v-if="!formId"
-          class="flex flex-1 items-center justify-center text-sm text-gray-400"
+          class="flex flex-1 flex-col items-center justify-center gap-2 text-sm text-gray-400"
         >
-          请先在左侧选择表单（或点击「+ 新增」创建）
+          <div class="text-4xl leading-none opacity-60">📋</div>
+          <div>请先在左侧选择表单（或点击「+ 新增」创建）</div>
+          <Button type="primary" ghost @click="openFormCreate">
++ 新建表单
+</Button>
         </div>
 
         <template v-else>
           <div
-            class="flex items-center justify-between gap-2 border-b px-3 py-2"
+            class="flex items-center justify-between gap-3 border-b px-4 py-3"
           >
-            <div class="flex min-w-0 items-center gap-2">
-              <span class="shrink-0 text-sm font-semibold text-gray-500">
-                字段列表（{{ rows.length }}）
+            <div class="flex min-w-0 items-center gap-3">
+              <span
+                class="form-type-blade shrink-0"
+                :style="typeBladeStyle(currentFormType)"
+              >
+                {{ currentForm?.type_desc || '表单' }}
               </span>
+              <div class="min-w-0">
+                <div
+                  class="max-w-64 truncate text-sm font-semibold text-gray-700"
+                >
+                  {{ currentFormName }}
+                </div>
+                <div class="text-xs text-gray-400">
+                  字段 {{ rows.length }} 个 · 规范 {{ formRules.length }} 条
+                </div>
+              </div>
               <Select
                 v-model:value="activeRuleId"
                 :options="ruleSelectOptions"
-                style="width: 240px"
+                style="width: 220px"
                 class="shrink-0"
               />
-              <Button size="small" @click="openRuleCreate(formId)">
+            </div>
+            <div class="flex shrink-0 items-center gap-2">
+              <Button class="h-9 px-4" @click="openRuleCreate(formId)">
                 + 新建规范
               </Button>
+              <Button type="primary" class="h-9 px-4" @click="openFieldCreate">
+                + 新增字段
+              </Button>
             </div>
-            <Button type="primary" size="small" @click="openFieldCreate">
-              + 新增字段
-            </Button>
           </div>
           <div class="flex-1 overflow-auto">
             <Table
@@ -1217,11 +1320,19 @@ onMounted(async () => {
             </div>
             <div class="col-span-6">
               <label class="config-label">表单类型 *</label>
-              <Select
-                v-model:value="formModal.type"
-                :options="formTypeOptions"
-                style="width: 100%"
-              />
+              <div class="flex items-center gap-2">
+                <Select
+                  v-model:value="formModal.type"
+                  :options="formTypeOptions"
+                  style="width: 100%"
+                />
+                <span
+                  class="form-type-blade shrink-0"
+                  :style="typeBladeStyle(formModal.type)"
+                >
+                  {{ typeDescMap[formModal.type] || '通用' }}
+                </span>
+              </div>
             </div>
             <div class="col-span-6">
               <label class="config-label">项目分类</label>
@@ -1310,7 +1421,7 @@ onMounted(async () => {
               </div>
               <Button
                 type="primary"
-                size="small"
+                class="h-9 px-4"
                 @click="openRuleCreate(formModal.id)"
               >
                 + 新建规范
@@ -1391,20 +1502,12 @@ onMounted(async () => {
         <div class="col-span-12">
           <label class="config-label">通用规范（P3-V13）</label>
           <template v-if="isAdmin">
-            <Switch
-              :checked="ruleModal.project_id === null"
-              @change="
-                (v) =>
-                  (ruleModal.project_id = v
-                    ? null
-                    : appStore.defaultProject?.id ?? null)
-              "
-            />
+            <Switch v-model:checked="ruleModalGeneral" />
             <div class="mt-1 text-xs text-gray-400">
               {{
-                ruleModal.project_id === null
+                ruleModalGeneral
                   ? '通用（所有项目可见，仅管理员可管理）'
-                  : `当前项目：${appStore.defaultProject?.name || '-'}`
+                  : `所属项目：${ruleModal.project_name || appStore.defaultProject?.name || '-'}`
               }}
             </div>
           </template>
@@ -1494,7 +1597,7 @@ onMounted(async () => {
       :title="`子字段 - ${subFieldModal.parentName}（列表）`"
       ok-text="保存子字段"
       cancel-text="关闭"
-      width="860px"
+      width="960px"
       :confirm-loading="subFieldModal.saving"
       @ok="saveSubFields"
     >
@@ -1512,7 +1615,19 @@ onMounted(async () => {
       </div>
       <AppList
         v-model="subFieldModal.rows"
-        :options="{ columns: subFieldColumns, showFooter: false }"
+        :options="{
+          columns: [
+            ...subFieldColumns,
+            {
+              field: '_action',
+              title: '操作',
+              width: 80,
+              fixed: 'right',
+              slots: { default: 'default_action' },
+            },
+          ],
+          showFooter: false,
+        }"
         :fields="subFieldListFields"
         :show-delete="true"
         :show-edit="false"
@@ -1547,9 +1662,10 @@ onMounted(async () => {
       }）`"
       ok-text="保存"
       cancel-text="关闭"
-      width="1120px"
+      width="1400px"
       :confirm-loading="ruleSaving"
       @ok="saveRules"
+      class="rule-dialog"
     >
       <div class="mb-2 flex items-center justify-between">
         <div class="text-xs text-gray-500">
@@ -1563,15 +1679,29 @@ onMounted(async () => {
       </div>
       <AppList
         v-model="ruleRows"
-        :options="{ columns: ruleColumns, showFooter: false }"
+        :options="{
+          columns: [
+            ...ruleColumns,
+            {
+              field: '_action',
+              title: '操作',
+              width: 80,
+              fixed: 'right',
+              slots: { default: 'default_action' },
+            },
+          ],
+          showFooter: false,
+        }"
         :fields="ruleListFields"
         :show-delete="true"
         :show-edit="false"
         row-key="id"
-        height="240"
+        height="400"
       >
         <template #default_rule_type="{ row }">
-          {{ ruleTypeLabel(row.type) }}
+          <span class="whitespace-nowrap px-2 py-1 text-sm">{{
+            ruleTypeLabel(row.type)
+          }}</span>
         </template>
       </AppList>
       <div class="mt-2 text-xs text-gray-400">
@@ -1588,5 +1718,93 @@ onMounted(async () => {
   margin-bottom: 4px;
   font-size: 14px;
   color: rgb(107 114 128);
+}
+
+/* 表单类型 blade：左尖角色标 */
+.form-type-blade {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 10px 0 14px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
+  color: #fff;
+  clip-path: polygon(0 50%, 10px 0, 100% 0, 100% 100%, 10px 100%);
+}
+
+/* 表格列宽优化 */
+:deep(.ant-table-thead > tr > th),
+:deep(.ant-table-tbody > tr > td) {
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+/* 操作列按钮紧凑排列 */
+:deep(.ant-table-tbody > tr > td:last-child) {
+  white-space: nowrap;
+}
+
+:deep(.ant-table-tbody > tr > td:last-child .ant-btn) {
+  height: 24px;
+  padding: 0 6px;
+  font-size: 12px;
+  line-height: 22px;
+}
+
+/* 确保列宽设置生效 */
+:deep(.ant-table) {
+  width: 100%;
+  table-layout: fixed;
+}
+
+/* 弹窗样式优化 */
+:deep(.ant-modal-content) {
+  overflow: hidden;
+  border-radius: 12px;
+}
+
+:deep(.ant-modal-header) {
+  padding: 16px 24px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+:deep(.ant-modal-body) {
+  padding: 24px;
+}
+
+:deep(.ant-modal-footer) {
+  padding: 16px 24px;
+  border-top: 1px solid #f0f0f0;
+}
+
+/* 按钮样式优化 */
+:deep(.ant-btn) {
+  font-weight: 500;
+  border-radius: 6px;
+}
+
+:deep(.ant-btn-primary) {
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 5%);
+}
+
+/* 输入框样式优化 */
+:deep(.ant-input),
+:deep(.ant-select-selector) {
+  border-radius: 6px;
+}
+
+/* 表格行悬停效果 */
+:deep(.ant-table-tbody > tr:hover > td) {
+  background-color: #fafafa;
+}
+
+/* 规则弹窗下拉框样式 */
+:deep(.rule-dialog .ant-select) {
+  min-width: 180px;
+}
+
+:deep(.rule-dialog .ant-select-dropdown) {
+  min-width: 200px !important;
 }
 </style>
