@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref } from 'vue';
+import { onBeforeUnmount, ref } from 'vue';
 
 import { Button, message, Modal, Tag } from 'antdv-next';
 
@@ -113,7 +113,9 @@ const gridColumns = ref([
 ]);
 
 function emptyText({ cellValue }) {
-  return cellValue == null || cellValue === '' ? '-' : cellValue;
+  return cellValue === null || cellValue === undefined || cellValue === ''
+    ? '-'
+    : cellValue;
 }
 function stateText(s) {
   return { 1: '在职', 2: '请假', 3: '离职', 4: '禁用' }[s] || '-';
@@ -254,11 +256,102 @@ async function saveBatch() {
   });
 }
 
-onMounted(loadPositions);
+/* ===================== 钉钉同步（异步任务 + 轮询进度） ===================== */
+const crudTableRef = ref(null);
+const syncOpen = ref(false);
+const syncLoading = ref(false);
+const syncJob = ref(null);
+let syncPollTimer = null;
+
+const syncRunning = computed(
+  () =>
+    Number(syncJob.value?.status) === 0 || Number(syncJob.value?.status) === 1,
+);
+const syncFailed = computed(() => Number(syncJob.value?.status) === 3);
+const syncDone = computed(() => Number(syncJob.value?.status) === 2);
+const syncPhaseText = computed(() => {
+  if (syncJob.value?.phase === '同步员工') return '正在同步员工档案...';
+  if (syncJob.value?.phase === '拉取钉钉通讯录') return '正在拉取钉钉通讯录...';
+  return '任务排队中...';
+});
+const syncPercent = computed(() => {
+  const total = Number(syncJob.value?.total) || 0;
+  const processed = Number(syncJob.value?.processed) || 0;
+  if (!total) return 0;
+  return Math.min(100, Math.round((processed / total) * 100));
+});
+
+function stopSyncPolling() {
+  if (syncPollTimer) {
+    clearInterval(syncPollTimer);
+    syncPollTimer = null;
+  }
+}
+
+function unwrapSyncJob(result) {
+  // Resource 使用 responseReturn=body，接口任务对象位于响应的 data 字段
+  return result?.data ?? result ?? {};
+}
+
+async function pollSyncStatus() {
+  const jobId = syncJob.value?.id;
+  if (!jobId) return;
+  try {
+    const result = await new Resource(`staff/dingtalk-sync/${jobId}`).get();
+    syncJob.value = unwrapSyncJob(result);
+    if (syncDone.value) {
+      stopSyncPolling();
+      message.success('同步完成');
+      crudTableRef.value?.refresh();
+    } else if (syncFailed.value) {
+      stopSyncPolling();
+      message.error(`同步失败：${syncJob.value.error_message || '未知错误'}`);
+    }
+  } catch {
+    stopSyncPolling();
+    message.error('查询同步进度失败');
+  }
+}
+
+async function openDingtalkSync() {
+  Modal.confirm({
+    title: '同步钉钉员工',
+    content:
+      '将从钉钉通讯录同步员工：按手机号匹配平台用户，未匹配则新建账号与员工档案，已存在则补齐信息。同步在后台异步执行，可关闭弹窗稍后查看。是否继续？',
+    okText: '开始同步',
+    onOk: async () => {
+      syncLoading.value = true;
+      try {
+        const result = await new Resource('staff/dingtalk-sync').store({});
+        syncJob.value = unwrapSyncJob(result);
+        syncOpen.value = true;
+        stopSyncPolling();
+        syncPollTimer = setInterval(pollSyncStatus, 1000);
+        pollSyncStatus();
+      } catch {
+        message.error('提交同步任务失败，请稍后重试');
+      } finally {
+        syncLoading.value = false;
+      }
+    },
+  });
+}
+
+function handleSyncClose() {
+  stopSyncPolling();
+  syncOpen.value = false;
+}
+
+onBeforeUnmount(stopSyncPolling);
+
+function syncStatText(value) {
+  return value === null || value === undefined ? '-' : value;
+}
 </script>
 
 <template>
   <AppCrudTable
+    ref="crudTableRef"
     api-url="staff"
     :filter-fields="filterFields"
     :fields="formFields"
@@ -276,6 +369,9 @@ onMounted(loadPositions);
   >
     <template #toolbar-append>
       <Button type="primary" @click="openBatch">批量离职</Button>
+      <Button :loading="syncLoading" @click="openDingtalkSync">
+同步钉钉员工
+</Button>
     </template>
     <template #default_avatar="{ row }">
       <img
@@ -394,6 +490,77 @@ onMounted(loadPositions);
           暂无数据
         </div>
       </div>
+    </div>
+  </Modal>
+
+  <Modal
+    :open="syncOpen"
+    :title="syncDone ? '同步钉钉员工结果' : '同步钉钉员工'"
+    :footer="null"
+    :closable="!syncRunning"
+    :mask-closable="!syncRunning"
+    @cancel="handleSyncClose"
+  >
+    <div v-if="syncJob" class="py-2">
+      <template v-if="syncRunning">
+        <div class="mb-3 text-sm text-gray-500">
+          {{ syncPhaseText }}（{{ syncStatText(syncJob.processed) }}/{{
+            syncStatText(syncJob.total)
+          }}）
+        </div>
+        <div class="h-2 w-full overflow-hidden rounded-full bg-gray-200">
+          <div
+            class="h-full rounded-full bg-blue-500 transition-all duration-300"
+            :style="{ width: `${syncPercent }%` }"
+          ></div>
+        </div>
+        <p class="mt-2 text-xs text-gray-400">
+          同步在后台执行，完成后将自动刷新员工列表，请勿关闭页面。
+        </p>
+      </template>
+      <template v-else-if="syncFailed">
+        <div class="mb-3 rounded-lg bg-red-50 p-4 text-sm text-red-600">
+          同步失败：{{ syncJob.error_message || '未知错误' }}
+        </div>
+        <div class="mt-4 flex justify-end">
+          <Button type="primary" @click="handleSyncClose">知道了</Button>
+        </div>
+      </template>
+      <template v-else>
+        <div class="mb-3 text-sm text-gray-500">
+          已从钉钉通讯录获取员工
+          {{ syncStatText(syncJob.total) }} 人，同步结果如下：
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div class="rounded-lg bg-blue-50 p-4">
+            <div class="text-2xl font-semibold text-blue-600">
+              {{ syncStatText(syncJob.created) }}
+            </div>
+            <div class="mt-1 text-sm text-gray-500">新建用户</div>
+          </div>
+          <div class="rounded-lg bg-green-50 p-4">
+            <div class="text-2xl font-semibold text-green-600">
+              {{ syncStatText(syncJob.updated) }}
+            </div>
+            <div class="mt-1 text-sm text-gray-500">已存在用户（补齐信息）</div>
+          </div>
+          <div class="rounded-lg bg-purple-50 p-4">
+            <div class="text-2xl font-semibold text-purple-600">
+              {{ syncStatText(syncJob.staff_created) }}
+            </div>
+            <div class="mt-1 text-sm text-gray-500">新建员工档案</div>
+          </div>
+          <div class="rounded-lg bg-orange-50 p-4">
+            <div class="text-2xl font-semibold text-orange-600">
+              {{ syncStatText(syncJob.skipped) }}
+            </div>
+            <div class="mt-1 text-sm text-gray-500">跳过（无手机号等）</div>
+          </div>
+        </div>
+        <div class="mt-4 flex justify-end">
+          <Button type="primary" @click="handleSyncClose">知道了</Button>
+        </div>
+      </template>
     </div>
   </Modal>
 </template>
