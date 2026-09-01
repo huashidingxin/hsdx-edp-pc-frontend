@@ -49,15 +49,7 @@ const formFields = ref([
       showSearch: true,
     },
   },
-  { field: 'name', type: 'text', label: '名称', span: 12, required: true },
-  { field: 'slug', type: 'text', label: 'Slug', span: 12 },
-  {
-    field: 'description',
-    type: 'textarea',
-    label: '描述',
-    span: 24,
-    attrs: { rows: 3 },
-  },
+  // 名称/Slug/描述为语种内容，由下方 LocaleManager 按语言维护（分类无顶层 name 字段）
   { field: 'sort', type: 'number', label: '排序', span: 12 },
   {
     field: 'status',
@@ -104,13 +96,16 @@ const localeOptions = ref([]);
 
 onMounted(async () => {
   try {
-    const { data } = await new Resource('admin/categories').list({ per_page: 100 });
-    parentOptions.value = data || [];
+    const { data } = await new Resource('categories').list({ per_page: 100 });
+    parentOptions.value = (data || []).map((c) => ({
+      id: c.id,
+      name: c.locales?.[0]?.name || `#${c.id}`,
+    }));
   } catch (error) {
     console.error(error);
   }
   try {
-    const { data } = await new Resource('admin/applications/locale-catalog').list({});
+    const { data } = await new Resource('applications/locale-catalog').list({});
     localeOptions.value = data || [];
   } catch (error) {
     console.error(error);
@@ -120,7 +115,7 @@ onMounted(async () => {
 
 <template>
   <AppCrudTable
-    api-url="admin/categories"
+    api-url="categories"
     v-model="formData"
     :filter-fields="filterFields"
     :fields="formFields"
@@ -146,11 +141,12 @@ onMounted(async () => {
       </Tag>
     </template>
 
-    <template #field_locale_manager="{ modelValue }">
+    <template #field_locale_manager="{ modelValue, formValue }">
       <LocaleManager
-        resource="admin/categories"
-        :row-id="modelValue?.id"
-        :locales="modelValue?.locales || []"
+        resource="categories"
+        :row-id="formValue?.id"
+        :locales="formValue?.locales || []"
+        @update:locales="(v) => { if (formValue) formValue.locales = v; }"
         :locales-pool="localeOptions"
         :fields="[
           { field: 'name', label: '名称', type: 'text' },

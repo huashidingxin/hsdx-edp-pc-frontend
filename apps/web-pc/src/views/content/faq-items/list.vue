@@ -56,13 +56,13 @@ const formData = ref(null);
 
 onMounted(async () => {
   try {
-    const { data } = await new Resource('admin/categories').list({ per_page: 100, type: 2 });
+    const { data } = await new Resource('categories').list({ per_page: 100, type: 2 });
     categories.value = data || [];
   } catch (error) {
     console.error(error);
   }
   try {
-    const { data } = await new Resource('admin/applications/locale-catalog').list({});
+    const { data } = await new Resource('applications/locale-catalog').list({});
     localeOptions.value = data || [];
   } catch (error) {
     console.error(error);
@@ -72,7 +72,7 @@ onMounted(async () => {
 
 <template>
   <AppCrudTable
-    api-url="admin/faq-items"
+    api-url="faq-items"
     v-model="formData"
     :filter-fields="filterFields"
     :fields="formFields"
@@ -91,11 +91,12 @@ onMounted(async () => {
       <Tag color="blue">{{ categories.find((c) => c.id === row.category_id)?.name || '-' }}</Tag>
     </template>
 
-    <template #field_locale_manager="{ modelValue }">
+    <template #field_locale_manager="{ modelValue, formValue }">
       <LocaleManager
-        resource="admin/faq-items"
-        :row-id="modelValue?.id"
-        :locales="modelValue?.locales || []"
+        resource="faq-items"
+        :row-id="formValue?.id"
+        :locales="formValue?.locales || []"
+        @update:locales="(v) => { if (formValue) formValue.locales = v; }"
         :locales-pool="localeOptions"
         :fields="[
           { field: 'question', label: '问题', type: 'text' },

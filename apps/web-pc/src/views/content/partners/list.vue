@@ -13,6 +13,12 @@ const statusColor = { 0: 'default', 1: 'green', 2: 'orange' };
 const categories = ref([]);
 const localeOptions = ref([]);
 
+const statusItems = [
+  { id: 0, name: '草稿' },
+  { id: 1, name: '已发布' },
+  { id: 2, name: '已归档' },
+];
+
 const filterFields = ref([
   { field: 'kind', label: '类型', type: 'text', span: 8 },
   { field: 'status', label: '状态', type: 'select', span: 8, attrs: { items: statusItems } },
@@ -24,12 +30,6 @@ const filterFields = ref([
     attrs: { items: categories, fieldNames: { label: 'name', value: 'id' }, showSearch: true },
   },
 ]);
-
-const statusItems = [
-  { id: 0, name: '草稿' },
-  { id: 1, name: '已发布' },
-  { id: 2, name: '已归档' },
-];
 
 const formFields = ref([
   { field: 'id', type: 'text', label: 'ID', span: 12, displayOnly: true },
@@ -84,13 +84,13 @@ function emptyText({ cellValue }) {
 
 onMounted(async () => {
   try {
-    const { data } = await new Resource('admin/categories').list({ per_page: 100, type: 2 });
+    const { data } = await new Resource('categories').list({ per_page: 100, type: 2 });
     categories.value = data || [];
   } catch (error) {
     console.error(error);
   }
   try {
-    const { data } = await new Resource('admin/applications/locale-catalog').list({});
+    const { data } = await new Resource('applications/locale-catalog').list({});
     localeOptions.value = data || [];
   } catch (error) {
     console.error(error);
@@ -100,7 +100,7 @@ onMounted(async () => {
 
 <template>
   <AppCrudTable
-    api-url="admin/partners"
+    api-url="partners"
     v-model="formData"
     :filter-fields="filterFields"
     :fields="formFields"
@@ -125,11 +125,12 @@ onMounted(async () => {
       <Tag :color="statusColor[row.status] || 'default'">{{ statusMap[row.status] || '-' }}</Tag>
     </template>
 
-    <template #field_locale_manager="{ modelValue }">
+    <template #field_locale_manager="{ modelValue, formValue }">
       <LocaleManager
-        resource="admin/partners"
-        :row-id="modelValue?.id"
-        :locales="modelValue?.locales || []"
+        resource="partners"
+        :row-id="formValue?.id"
+        :locales="formValue?.locales || []"
+        @update:locales="(v) => { if (formValue) formValue.locales = v; }"
         :locales-pool="localeOptions"
         :fields="[
           { field: 'name', label: '名称', type: 'text' },

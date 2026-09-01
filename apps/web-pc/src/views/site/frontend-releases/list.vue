@@ -56,7 +56,7 @@ const crudRef = ref(null);
 
 async function doActivate(row) {
   try {
-    await new Resource(`admin/frontend-releases/${row.id}/activate`).store({});
+    await new Resource(`frontend-releases/${row.id}/activate`).store({});
     message.success('已激活');
     crudRef.value?.refresh();
   } catch {
@@ -66,7 +66,7 @@ async function doActivate(row) {
 
 async function doRollback() {
   try {
-    await new Resource('admin/frontend-releases/rollback').store({});
+    await new Resource('frontend-releases/rollback').store({});
     message.success('已回滚到上一版本');
     crudRef.value?.refresh();
   } catch {
@@ -102,7 +102,7 @@ const actionsConfig = ref([
 <template>
   <AppCrudTable
     ref="crudRef"
-    api-url="admin/frontend-releases"
+    api-url="frontend-releases"
     v-model="formData"
     :filter-fields="filterFields"
     :fields="formFields"

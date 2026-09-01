@@ -121,7 +121,7 @@ const actionsConfig = ref([
 
 <template>
   <AppCrudTable
-    api-url="admin/pages"
+    api-url="pages"
     v-model="formData"
     :filter-fields="filterFields"
     :fields="formFields"

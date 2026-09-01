@@ -26,6 +26,16 @@
     "#/*": "./src/*"
   },
   "dependencies": {
+    "@tiptap/core": "catalog:",
+    "@tiptap/extension-highlight": "catalog:",
+    "@tiptap/extension-image": "catalog:",
+    "@tiptap/extension-link": "catalog:",
+    "@tiptap/extension-placeholder": "catalog:",
+    "@tiptap/extension-table": "catalog:",
+    "@tiptap/extension-text-align": "catalog:",
+    "@tiptap/extension-text-style": "catalog:",
+    "@tiptap/pm": "catalog:",
+    "@tiptap/starter-kit": "catalog:",
     "@vben/access": "workspace:*",
     "@vben/common-ui": "workspace:*",
     "@vben/constants": "workspace:*",
@@ -42,9 +52,15 @@
     "@vben/utils": "workspace:*",
     "@vueuse/core": "catalog:",
     "antdv-next": "catalog:",
+    "compressorjs": "^1.2.1",
+    "crypto-js": "^4.2.0",
     "dayjs": "catalog:",
+    "lunar-javascript": "^1.7.7",
     "pinia": "catalog:",
     "vue": "catalog:",
-    "vue-router": "catalog:"
+    "vue-cropper": "^1.1.4",
+    "vue-router": "catalog:",
+    "vxe-pc-ui": "catalog:",
+    "vxe-table": "catalog:"
   }
 }

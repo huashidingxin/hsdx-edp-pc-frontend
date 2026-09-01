@@ -1,4 +1,6 @@
-import { get, set, unset, cloneDeep } from 'lodash-es';
+import { cloneDeep, get, set } from '@vben/utils';
+
+import { unset } from '#/utils/lodash';
 
 /**
  * 将嵌套对象中声明的 dot 字段扁平化

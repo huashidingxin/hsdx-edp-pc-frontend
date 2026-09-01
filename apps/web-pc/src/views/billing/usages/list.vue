@@ -39,7 +39,7 @@ function emptyText({ cellValue }) {
 
 <template>
   <AppCrudTable
-    api-url="admin/usages"
+    api-url="usages"
     v-model="formData"
     :filter-fields="filterFields"
     :fields="formFields"

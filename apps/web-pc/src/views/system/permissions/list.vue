@@ -75,7 +75,7 @@ const allPermissions = ref([]);
 
 onMounted(async () => {
   try {
-    const { data } = await new Resource('admin/permissions').list({
+    const { data } = await new Resource('permissions').list({
       per_page: 'all',
     });
     allPermissions.value = data || [];
@@ -89,7 +89,7 @@ onMounted(async () => {
 
 <template>
   <AppCrudTable
-    api-url="admin/permissions"
+    api-url="permissions"
     :filter-fields="filterFields"
     :fields="formFields"
     :grid-options="{

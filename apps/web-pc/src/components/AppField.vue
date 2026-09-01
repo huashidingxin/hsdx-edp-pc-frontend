@@ -18,8 +18,12 @@ import {
   TimePicker,
   TreeSelect,
 } from 'antdv-next';
+import { useAccess } from '@vben/access';
+import { cloneDeep, isEqual } from '@vben/utils';
 import dayjs from 'dayjs';
-import { cloneDeep, debounce, isEqual } from 'lodash-es';
+import { useRouter } from 'vue-router';
+
+import { debounce } from '#/utils/lodash';
 import { Solar } from 'lunar-javascript';
 
 import Resource from '#/api/resource';
@@ -167,7 +171,11 @@ const displayOnlyText = computed(() => {
       props.field.type,
     )
   ) {
-    const options = props.field.options || props.field.attrs?.options || [];
+    const options =
+      props.field.options ||
+      props.field.attrs?.options ||
+      props.field.attrs?.items ||
+      [];
     const fieldNames = props.field.attrs?.fieldNames || {
       label: 'name',
       value: 'id',
@@ -270,12 +278,14 @@ function initComponent() {
     case 'file':
     case 'image':
     case 'video': {
+      // 约定：图片/文件字段 type 为 file，attrs.type 指定媒体类型（image/video/audio/file），
+      // attrs.multiple 控制单选/多选；image/video/audio 类型直接以类型作为 fileType。
       defaultAttrs.value = {
         fileType:
           props.field.type === 'file'
-            ? props.field.attrs?.fileType
+            ? props.field.attrs?.type || props.field.attrs?.fileType || 'file'
             : props.field.type,
-        maxCount: props.field.attrs?.multiple ? 10 : 1,
+        multiple: Boolean(props.field.attrs?.multiple),
       };
       component.value = AppUpload;
       break;
@@ -461,23 +471,42 @@ function initComponent() {
   }
 
   // select 选项归一化：{ id, name }（接口数据）→ { value, label }，
-  // 兼容页面直接写 { value, label } 的静态选项；显式声明 fieldNames 时不处理
-  if (component.value === Select && !props.field.attrs?.fieldNames) {
-    const rawOptions = props.field.attrs?.options ?? props.field.options;
-    attrs.value.options = Array.isArray(rawOptions)
-      ? rawOptions.map((opt) => {
-          if (!opt || typeof opt !== 'object') return opt;
-          if (opt.value !== undefined || opt.label !== undefined) return opt;
-          if (opt.id !== undefined) {
-            return {
-              ...opt,
-              value: opt.id,
-              label: opt.name === undefined ? String(opt.id) : opt.name,
-            };
-          }
-          return opt;
-        })
-      : rawOptions;
+  // 兼容页面直接写 { value, label } 的静态选项。
+  // items 是页面里最常用的选项写法（attrs: { items: [...] }），与 options 等价。
+  // 显式声明 fieldNames 时保留原始结构（{ id, name, children }），由 antd 按 fieldNames 取值。
+  if (component.value === Select) {
+    const rawOptions =
+      props.field.attrs?.options ?? props.field.options ?? props.field.attrs?.items;
+    attrs.value.options = props.field.attrs?.fieldNames
+      ? rawOptions
+      : Array.isArray(rawOptions)
+        ? rawOptions.map((opt) => {
+            if (!opt || typeof opt !== 'object') return opt;
+            if (opt.value !== undefined || opt.label !== undefined) return opt;
+            if (opt.id !== undefined) {
+              return {
+                ...opt,
+                value: opt.id,
+                label: opt.name === undefined ? String(opt.id) : opt.name,
+              };
+            }
+            return opt;
+          })
+        : rawOptions;
+  }
+
+  // items 仅作为选项源，不传给 antd Select（fieldNames 分支同样生效）
+  if (component.value === Select && attrs.value.items !== undefined) {
+    delete attrs.value.items;
+  }
+
+  // AppUpload：attrs.type 已映射为 fileType，maxCount 非其属性，避免透传
+  if (component.value === AppUpload) {
+    delete attrs.value.type;
+    delete attrs.value.maxCount;
+    if (attrs.value.items !== undefined) {
+      delete attrs.value.items;
+    }
   }
 
   // tree-select 选项归一化：antdv TreeSelect 使用 treeData 而非 options，

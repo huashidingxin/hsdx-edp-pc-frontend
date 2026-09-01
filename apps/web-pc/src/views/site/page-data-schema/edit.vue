@@ -35,7 +35,7 @@ function parseJson(text) {
 
 async function loadPages() {
   try {
-    const { data } = await new Resource('admin/pages').list({ per_page: 'all' });
+    const { data } = await new Resource('pages').list({ per_page: 'all' });
     pages.value = data || [];
     const fromRoute = route.params.pageId;
     if (fromRoute && pages.value.some((p) => String(p.id) === String(fromRoute))) {
@@ -50,7 +50,7 @@ async function loadPages() {
 
 async function loadCodeOptions() {
   try {
-    const res = await requestClient.get('/admin/pages/data-schema', {
+    const res = await requestClient.get('/pages/data-schema', {
       page_id: pageId.value,
     });
     const items = res?.items || res || [];
@@ -68,7 +68,7 @@ async function loadSchema() {
   loading.value = true;
   try {
     const data = await requestClient.get(
-      `/admin/pages/${pageId.value}/data-schema/${locale.value}/${code.value}`,
+      `/pages/${pageId.value}/data-schema/${locale.value}/${code.value}`,
     );
     schemaText.value = data?.schema
       ? JSON.stringify(data.schema, null, 2)
@@ -84,7 +84,7 @@ async function loadRevisions() {
   if (!hasLoaded.value) return;
   try {
     const res = await requestClient.get(
-      `/admin/pages/${pageId.value}/data-schema/${locale.value}/${code.value}/revisions`,
+      `/pages/${pageId.value}/data-schema/${locale.value}/${code.value}/revisions`,
     );
     revisions.value = res?.items || res || [];
   } catch {
@@ -98,7 +98,7 @@ async function saveDraft() {
   saving.value = true;
   try {
     await requestClient.put(
-      `/admin/pages/${pageId.value}/data-schema/${locale.value}/${code.value}`,
+      `/pages/${pageId.value}/data-schema/${locale.value}/${code.value}`,
       { schema },
     );
     message.success('草稿已保存');
@@ -116,7 +116,7 @@ async function publish() {
   publishing.value = true;
   try {
     await requestClient.post(
-      `/admin/pages/${pageId.value}/data-schema/${locale.value}/${code.value}/publish`,
+      `/pages/${pageId.value}/data-schema/${locale.value}/${code.value}/publish`,
       { schema },
     );
     message.success('已发布');
@@ -131,7 +131,7 @@ async function publish() {
 async function restore(revision) {
   try {
     await requestClient.post(
-      `/admin/pages/${pageId.value}/data-schema/${locale.value}/${code.value}/restore`,
+      `/pages/${pageId.value}/data-schema/${locale.value}/${code.value}/restore`,
       { revision_id: revision.id },
     );
     message.success('已恢复');

@@ -116,11 +116,11 @@ async function saveItem() {
     };
     if (itemEditing.value) {
       await requestClient.patch(
-        `/admin/menus/${itemsMenu.value.id}/items/${itemEditing.value.id}`,
+        `/menus/${itemsMenu.value.id}/items/${itemEditing.value.id}`,
         payload,
       );
     } else {
-      await requestClient.post(`/admin/menus/${itemsMenu.value.id}/items`, payload);
+      await requestClient.post(`/menus/${itemsMenu.value.id}/items`, payload);
     }
     message.success('菜单项已保存');
     refreshMenu();
@@ -132,7 +132,7 @@ async function saveItem() {
 async function deleteItem(item) {
   try {
     await requestClient.delete(
-      `/admin/menus/${itemsMenu.value.id}/items/${item.id}`,
+      `/menus/${itemsMenu.value.id}/items/${item.id}`,
     );
     message.success('已删除');
     refreshMenu();
@@ -147,7 +147,7 @@ function refreshMenu() {
 
 onMounted(async () => {
   try {
-    const { data } = await new Resource('admin/applications').list({ per_page: 100 });
+    const { data } = await new Resource('applications').list({ per_page: 100 });
     applications.value = data || [];
   } catch (error) {
     console.error(error);
@@ -159,7 +159,7 @@ onMounted(async () => {
   <div class="h-full">
     <AppCrudTable
       ref="crudRef"
-      api-url="admin/menus"
+      api-url="menus"
       v-model="formData"
       :extra-query="{ application_id: appId }"
       :filter-fields="filterFields"

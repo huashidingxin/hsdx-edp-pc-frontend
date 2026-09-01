@@ -22,7 +22,7 @@ async function load() {
   loading.value = true;
   try {
     allData.value = await requestClient.get(
-      `/admin/applications/${appIdNum.value}/ui-strings`,
+      `/applications/${appIdNum.value}/ui-strings`,
     );
     locales.value = Object.keys(allData.value?.locales || {});
     if (locales.value.length > 0 && !locales.value.includes(locale.value)) {
@@ -68,7 +68,7 @@ async function save() {
   try {
     const payload = { locales: { [locale.value]: map } };
     await requestClient.put(
-      `/admin/applications/${appIdNum.value}/ui-strings`,
+      `/applications/${appIdNum.value}/ui-strings`,
       payload,
     );
     message.success('UI 词条已保存');
@@ -87,7 +87,7 @@ const columns = [
 
 onMounted(async () => {
   try {
-    const { data } = await new Resource('admin/applications').list({ per_page: 100 });
+    const { data } = await new Resource('applications').list({ per_page: 100 });
     applications.value = data || [];
     appId.value =
       Number(localStorage.getItem('edp:current-application-id')) ||

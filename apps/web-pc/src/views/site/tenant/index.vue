@@ -17,7 +17,7 @@ const statusColor = { 0: 'orange', 1: 'green', 2: 'red' };
 async function load() {
   loading.value = true;
   try {
-    const data = await requestClient.get('/admin/tenant');
+    const data = await requestClient.get('/tenant');
     tenant.value = data;
     form.value = {
       name: data?.name || '',
@@ -33,7 +33,7 @@ async function load() {
 async function save() {
   saving.value = true;
   try {
-    await requestClient.patch('/admin/tenant', form.value);
+    await requestClient.patch('/tenant', form.value);
     message.success('已保存');
     editing.value = false;
     await load();

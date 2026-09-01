@@ -14,13 +14,6 @@ const employmentMap = { full: '全职', part: '兼职', intern: '实习' };
 const categories = ref([]);
 const localeOptions = ref([]);
 
-const filterFields = ref([
-  { field: 'department', label: '部门', type: 'text', span: 6 },
-  { field: 'location', label: '地点', type: 'text', span: 6 },
-  { field: 'employment_type', label: '类型', type: 'select', span: 6, attrs: { items: employmentOptions } },
-  { field: 'status', label: '状态', type: 'select', span: 6, attrs: { items: statusItems } },
-]);
-
 const employmentOptions = [
   { id: 'full', name: '全职' },
   { id: 'part', name: '兼职' },
@@ -32,6 +25,13 @@ const statusItems = [
   { id: 1, name: '已发布' },
   { id: 2, name: '已归档' },
 ];
+
+const filterFields = ref([
+  { field: 'department', label: '部门', type: 'text', span: 6 },
+  { field: 'location', label: '地点', type: 'text', span: 6 },
+  { field: 'employment_type', label: '类型', type: 'select', span: 6, attrs: { items: employmentOptions } },
+  { field: 'status', label: '状态', type: 'select', span: 6, attrs: { items: statusItems } },
+]);
 
 const formFields = ref([
   { field: 'id', type: 'text', label: 'ID', span: 12, displayOnly: true },
@@ -101,13 +101,13 @@ function emptyText({ cellValue }) {
 
 onMounted(async () => {
   try {
-    const { data } = await new Resource('admin/categories').list({ per_page: 100, type: 2 });
+    const { data } = await new Resource('categories').list({ per_page: 100, type: 2 });
     categories.value = data || [];
   } catch (error) {
     console.error(error);
   }
   try {
-    const { data } = await new Resource('admin/applications/locale-catalog').list({});
+    const { data } = await new Resource('applications/locale-catalog').list({});
     localeOptions.value = data || [];
   } catch (error) {
     console.error(error);
@@ -117,7 +117,7 @@ onMounted(async () => {
 
 <template>
   <AppCrudTable
-    api-url="admin/job-postings"
+    api-url="job-postings"
     v-model="formData"
     :filter-fields="filterFields"
     :fields="formFields"
@@ -139,11 +139,12 @@ onMounted(async () => {
       <Tag :color="statusColor[row.status] || 'default'">{{ statusMap[row.status] || '-' }}</Tag>
     </template>
 
-    <template #field_locale_manager="{ modelValue }">
+    <template #field_locale_manager="{ modelValue, formValue }">
       <LocaleManager
-        resource="admin/job-postings"
-        :row-id="modelValue?.id"
-        :locales="modelValue?.locales || []"
+        resource="job-postings"
+        :row-id="formValue?.id"
+        :locales="formValue?.locales || []"
+        @update:locales="(v) => { if (formValue) formValue.locales = v; }"
         :locales-pool="localeOptions"
         :fields="[
           { field: 'title', label: '职位', type: 'text' },

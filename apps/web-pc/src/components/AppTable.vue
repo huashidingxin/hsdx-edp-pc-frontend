@@ -14,7 +14,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useVbenDrawer, useVbenModal } from '@vben/common-ui';
 import { useTabs } from '@vben/hooks';
 
-import Resource from '@/api/resource';
+import Resource from '#/api/resource';
 import {
   Button,
   Card,
@@ -34,7 +34,7 @@ import {
   Space,
   Divider,
 } from 'antdv-next';
-import { cloneDeep, isEqual } from 'lodash-es';
+import { cloneDeep, isEqual } from '@vben/utils';
 import XEUtils from 'xe-utils';
 
 import { useVbenVxeGrid } from '#/adapter/vxe-table';

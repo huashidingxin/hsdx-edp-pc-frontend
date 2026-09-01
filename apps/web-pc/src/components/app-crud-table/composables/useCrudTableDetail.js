@@ -1,10 +1,11 @@
-import { nextTick, ref } from 'vue';
+import { computed, nextTick, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { useVbenDrawer, useVbenModal } from '@vben/common-ui';
 import { useTabs } from '@vben/hooks';
+import { cloneDeep, isEqual } from '@vben/utils';
 
-import { message } from 'antdv-next';
+import { message, Modal } from 'antdv-next';
 
 import Resource from '#/api/resource';
 
@@ -81,6 +82,17 @@ export function useCrudTableDetail(props, ctx, callbacks) {
   const saving = ref(false);
   const openType = ref('modal');
 
+  // 未保存修改追踪：快照详情加载后的表单，任何深比较差异即视为有未保存修改
+  const formSnapshot = ref(null);
+  const formDirty = computed(() => {
+    if (!editing.value || formSnapshot.value === null) return false;
+    return !isEqual(modelValue.value, formSnapshot.value);
+  });
+
+  function takeSnapshot() {
+    formSnapshot.value = cloneDeep(modelValue.value);
+  }
+
   // 审核相关
   const auditDialog = ref(false);
   const auditData = ref({ status: 1, reason: '' });
@@ -124,6 +136,7 @@ export function useCrudTableDetail(props, ctx, callbacks) {
       modelValue.value = buildDefaultItem(
         rowData ? formApi.flattenDotFieldValues(rowData) : null,
       );
+      takeSnapshot();
     } else if (rowData) {
       // 编辑/查看：优先用行数据填充，立即打开弹窗，后台加载详情更新
       modelValue.value = formApi.flattenDotFieldValues(rowData);
@@ -169,6 +182,28 @@ export function useCrudTableDetail(props, ctx, callbacks) {
    * @param {'cancel'|'saved'} [reason]
    */
   async function closeDetail(reason = 'cancel') {
+    // 有未保存修改时，关闭前二次确认，避免误触丢失内容
+    if (reason === 'cancel' && formDirty.value) {
+      const confirmed = await new Promise((resolve) => {
+        const modal = Modal.confirm({
+          title: '有未保存的修改',
+          content: '离开后未保存的内容将丢失，确定放弃修改吗？',
+          okText: '放弃修改',
+          okType: 'danger',
+          cancelText: '继续编辑',
+          onOk: () => {
+            modal.destroy();
+            resolve(true);
+          },
+          onCancel: () => {
+            modal.destroy();
+            resolve(false);
+          },
+        });
+      });
+      if (!confirmed) return;
+    }
+
     ctx.emit('detailClose', reason);
 
     if (reason === 'cancel') {
@@ -232,6 +267,7 @@ export function useCrudTableDetail(props, ctx, callbacks) {
 
       modelValue.value = data;
       ctx.emit('update:modelValue', data);
+      takeSnapshot();
       return true;
     } catch (error) {
       console.error('[AppCrudTable] loadDetail error:', error);
@@ -303,6 +339,7 @@ export function useCrudTableDetail(props, ctx, callbacks) {
       ctx.emit('update:modelValue', savedData);
       ctx.emit('saved', savedData);
       ctx.emit('detailClose', 'saved');
+      takeSnapshot();
 
       // 7. 刷新列表
       if (typeof reloadList === 'function') {

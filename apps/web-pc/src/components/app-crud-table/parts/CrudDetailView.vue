@@ -176,6 +176,7 @@ const detailTitle = computed(() => {
                     :name="`field_${field.slot || field.field}`"
                     :field="field"
                     :model-value="modelValue[field.field]"
+                    :form-value="modelValue"
                     :update="(v) => updateField(field.field, v)"
                   ></slot>
                 </FormItem>

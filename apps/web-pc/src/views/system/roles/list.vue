@@ -128,7 +128,7 @@ function findNode(nodes, key) {
 
 async function loadPermissions() {
   try {
-    const { data } = await new Resource('admin/permissions').list({
+    const { data } = await new Resource('permissions').list({
       per_page: 'all',
     });
     allPermissions.value = data || [];
@@ -161,10 +161,11 @@ async function openAssign(row) {
   expandedKeys.value = [...allExpandedKeys.value];
   assignOpen.value = true;
   try {
-    const { data } = await new Resource(`admin/roles/${row.id}/permissions`).list(
+    const { data } = await new Resource(`roles/${row.id}/permissions`).list(
       {},
     );
-    checkedKeys.value = (data || []).map((p) => p.id);
+    // 接口返回权限 id 数组（非对象数组），直接赋值
+    checkedKeys.value = data || [];
   } catch (error) {
     console.error(error);
   }
@@ -196,7 +197,7 @@ function uncheckAll() {
 async function saveAssign() {
   assignLoading.value = true;
   try {
-    await requestClient.put(`/admin/roles/${assignRoleId.value}/permissions`, {
+    await requestClient.put(`/roles/${assignRoleId.value}/permissions`, {
       permissions: checkedKeys.value,
     });
     message.success('权限已保存');
@@ -224,7 +225,7 @@ onMounted(loadPermissions);
 
 <template>
   <AppCrudTable
-    api-url="admin/roles"
+    api-url="roles"
     :filter-fields="filterFields"
     :fields="formFields"
     :actions-config="actionsConfig"

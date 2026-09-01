@@ -20,11 +20,6 @@ const appId = computed(
     null,
 );
 
-const filterFields = ref([
-  { field: 'name', label: '名称', type: 'text', span: 8 },
-  { field: 'kind', label: '类型', type: 'select', span: 8, attrs: { items: kindItems } },
-]);
-
 const kindItems = [
   { id: 'image', name: '图片' },
   { id: 'video', name: '视频' },
@@ -33,6 +28,11 @@ const kindItems = [
   { id: 'archive', name: '压缩包' },
   { id: 'other', name: '其他' },
 ];
+
+const filterFields = ref([
+  { field: 'name', label: '名称', type: 'text', span: 8 },
+  { field: 'kind', label: '类型', type: 'select', span: 8, attrs: { items: kindItems } },
+]);
 
 const formFields = ref([
   { field: 'id', type: 'text', label: 'ID', span: 12, displayOnly: true },
@@ -72,7 +72,7 @@ async function handleUpload({ file }) {
     const formDataObj = new FormData();
     formDataObj.append('file', file);
     if (appId.value) formDataObj.append('application_id', appId.value);
-    await requestClient.post('/admin/files/upload', formDataObj, {
+    await requestClient.post('/files/upload', formDataObj, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
     message.success('上传成功');
@@ -87,7 +87,7 @@ async function handleUpload({ file }) {
 
 onMounted(async () => {
   try {
-    const { data } = await new Resource('admin/applications').list({ per_page: 100 });
+    const { data } = await new Resource('applications').list({ per_page: 100 });
     applications.value = data || [];
   } catch (error) {
     console.error(error);
@@ -98,7 +98,7 @@ onMounted(async () => {
 <template>
   <AppCrudTable
     ref="crudRef"
-    api-url="admin/files"
+    api-url="files"
     v-model="formData"
     :extra-query="{ application_id: appId }"
     :filter-fields="filterFields"

@@ -121,7 +121,7 @@ const roleOptions = ref([]);
 
 async function loadRoles() {
   try {
-    const api = new Resource('admin/roles');
+    const api = new Resource('roles');
     const { data } = await api.list({ per_page: 'all' });
     roleOptions.value = data || [];
   } catch (error) {
@@ -146,7 +146,7 @@ function openAssignRoles(row) {
 async function saveAssignRoles() {
   assignLoading.value = true;
   try {
-    await requestClient.put(`/admin/admin-users/${assignUserId.value}/roles`, {
+    await requestClient.put(`/admin-users/${assignUserId.value}/roles`, {
       role_ids: assignRoleIds.value,
     });
     message.success('角色已保存');
@@ -170,7 +170,7 @@ onMounted(() => {
   <div class="h-full">
     <AppCrudTable
       ref="crudRef"
-      api-url="admin/admin-users"
+      api-url="admin-users"
       v-model="formData"
       :filter-fields="filterFields"
       :fields="formFields"

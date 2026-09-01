@@ -7,8 +7,12 @@ import { initStores } from '@vben/stores';
 import '@vben/styles';
 import '@vben/styles/antdv-next';
 
+import '#/adapter/vxe-table';
+import 'vxe-table/es/style.css';
+
 import { useTitle } from '@vueuse/core';
 
+import AppCrudTable from '#/components/app-crud-table';
 import { $t, setupI18n } from '#/locales';
 
 import { initComponentAdapter } from './adapter/component';
@@ -33,6 +37,9 @@ async function bootstrap(namespace: string) {
   // });
 
   const app = createApp(App);
+
+  // 注册全局业务组件（各 CRUD 视图直接使用 <AppCrudTable>，无需逐个 import）
+  app.component('AppCrudTable', AppCrudTable);
 
   // 注册v-loading指令
   registerLoadingDirective(app, {

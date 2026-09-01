@@ -11,7 +11,7 @@ const saving = ref(false);
 const dirty = ref(false);
 
 function loadModules() {
-  return new Resource('admin/cms-modules').list({});
+  return new Resource('cms-modules').list({});
 }
 
 function toggle(key, enabled) {
@@ -29,7 +29,7 @@ async function save() {
     modules.value.forEach((m) => {
       payload[m.key] = m.enabled;
     });
-    await requestClient.put('/admin/cms-modules', { modules: payload });
+    await requestClient.put('/cms-modules', { modules: payload });
     message.success('模块配置已保存');
     dirty.value = false;
   } catch {

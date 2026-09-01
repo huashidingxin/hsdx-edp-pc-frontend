@@ -51,7 +51,7 @@ async function openDetail(row) {
   detailLoading.value = true;
   detailData.value = null;
   try {
-    detailData.value = await requestClient.get(`/admin/ai/sessions/${row.id}`);
+    detailData.value = await requestClient.get(`/ai/sessions/${row.id}`);
   } catch {
     message.error('加载会话失败');
   } finally {
@@ -74,7 +74,7 @@ const actionsConfig = ref([
   <div class="h-full">
     <AppCrudTable
       ref="crudRef"
-      api-url="admin/ai/sessions"
+      api-url="ai/sessions"
       v-model="formData"
       :filter-fields="filterFields"
       :fields="formFields"

@@ -44,7 +44,7 @@ class Resource {
   update(id: string, resource: object) {
     return request(`${this.uri}/${id}`, {
       data: resource,
-      method: 'put',
+      method: 'patch',
       ...this.options
     });
   }

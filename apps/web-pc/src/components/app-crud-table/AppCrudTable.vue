@@ -8,7 +8,7 @@
 import { computed, onMounted, provide, ref, useSlots, watch } from 'vue';
 import { useRoute } from 'vue-router';
 
-import { cloneDeep, isEqual } from 'lodash-es';
+import { cloneDeep, isEqual } from '@vben/utils';
 
 // Composables
 import { useCrudTableActions } from './composables/useCrudTableActions.js';
@@ -63,6 +63,8 @@ const props = defineProps({
   fieldFormat: { type: Function, default: (e) => e },
   excludeFields: { type: Array, default: () => [] },
   formAttrs: { type: Object, default: () => ({}) },
+  // 详情页底部保存按钮文案（多语言页面可改为「保存基本信息」）
+  saveLabel: { type: String, default: '保存' },
 
   // 行操作
   showActions: { type: Boolean, default: true },
@@ -593,6 +595,7 @@ defineExpose({
           :editing="editing"
           :disabled="formDisabled"
           :saving="saving"
+          :save-label="saveLabel"
           @submit="handleDetailSubmit"
           @reset="handleDetailReset"
           @close="handleDetailClose"
@@ -663,6 +666,7 @@ defineExpose({
           :editing="editing"
           :disabled="formDisabled"
           :saving="saving"
+          :save-label="saveLabel"
           @submit="handleDetailSubmit"
           @reset="handleDetailReset"
           @close="handleDetailClose"

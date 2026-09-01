@@ -178,10 +178,10 @@ async function saveDomain() {
   }
   domainSaving.value = true;
   try {
-    const base = `admin/applications/${domainApp.value.id}/domains`;
+    const base = `applications/${domainApp.value.id}/domains`;
     if (domainEditing.value) {
       await requestClient.patch(
-        `/admin/applications/${domainApp.value.id}/domains/${domainEditing.value.id}`,
+        `/applications/${domainApp.value.id}/domains/${domainEditing.value.id}`,
         domainForm.value,
       );
     } else {
@@ -200,7 +200,7 @@ async function saveDomain() {
 async function deleteDomain(domain) {
   try {
     await requestClient.delete(
-      `/admin/applications/${domainApp.value.id}/domains/${domain.id}`,
+      `/applications/${domainApp.value.id}/domains/${domain.id}`,
     );
     message.success('域名已删除');
     refreshDomains();
@@ -219,7 +219,7 @@ function hostText(domain) {
 
 onMounted(async () => {
   try {
-    const { data } = await new Resource('admin/applications/locale-catalog').list(
+    const { data } = await new Resource('applications/locale-catalog').list(
       {},
     );
     localeOptions.value = data || [];
@@ -233,7 +233,7 @@ onMounted(async () => {
   <div class="h-full">
     <AppCrudTable
       ref="crudRef"
-      api-url="admin/applications"
+      api-url="applications"
       v-model="formData"
       :filter-fields="filterFields"
       :fields="formFields"

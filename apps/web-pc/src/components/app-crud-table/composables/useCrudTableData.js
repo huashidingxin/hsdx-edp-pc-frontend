@@ -1,6 +1,6 @@
 import { reactive, ref, toValue, watch } from 'vue';
 
-import { cloneDeep } from 'lodash-es';
+import { cloneDeep } from '@vben/utils';
 
 import Resource from '#/api/resource';
 

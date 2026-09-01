@@ -10,20 +10,20 @@ const route = useRoute();
 const crudRef = ref(null);
 
 const formId = computed(() => Number(route.query.form_id) || null);
-const apiUrl = computed(() => `admin/forms/${formId.value}/submissions`);
+const apiUrl = computed(() => `forms/${formId.value}/submissions`);
 
 const statusMap = { 0: '新提交', 1: '已读', 2: '已回复' };
 const statusColor = { 0: 'blue', 1: 'default', 2: 'green' };
-
-const filterFields = ref([
-  { field: 'status', label: '状态', type: 'select', span: 8, attrs: { items: statusItems } },
-]);
 
 const statusItems = [
   { id: 0, name: '新提交' },
   { id: 1, name: '已读' },
   { id: 2, name: '已回复' },
 ];
+
+const filterFields = ref([
+  { field: 'status', label: '状态', type: 'select', span: 8, attrs: { items: statusItems } },
+]);
 
 const formFields = ref([
   { field: 'id', type: 'text', label: 'ID', span: 12, displayOnly: true },
@@ -69,7 +69,7 @@ function emptyText({ cellValue }) {
 
 async function mark(row, status) {
   try {
-    await requestClient.patch(`/admin/forms/${row.form_id}/submissions/${row.id}`, {
+    await requestClient.patch(`/forms/${row.form_id}/submissions/${row.id}`, {
       status,
     });
     message.success('状态已更新');

@@ -48,7 +48,8 @@ class Resource {
   update(id: string, resource: object): Promise<any> {
     return request(`${this.uri}/${id}`, {
       data: resource,
-      method: 'put',
+      // 后端所有 CRUD 更新路由均为 PATCH（见 routes/api_v1.php），PUT 会 405
+      method: 'patch',
       ...this.options,
     });
   }

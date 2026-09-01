@@ -1,6 +1,6 @@
 <script setup>
 import {reactive, watch, toRefs, ref} from 'vue'
-import {cloneDeep, isElement, isEqual} from "lodash-es";
+import { cloneDeep, isEqual } from '@vben/utils';
 import { Card, Button,Form } from 'antdv-next';
 import {VxeGrid} from 'vxe-table'
 

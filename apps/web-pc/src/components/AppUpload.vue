@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import type { Ref } from 'vue';
 
-import { h } from 'vue';
+import {
+  computed,
+  h,
+  nextTick,
+  ref,
+  shallowRef,
+  watch,
+} from 'vue';
 import { VueCropper } from 'vue-cropper/dist/vue-cropper.es.js';
 import 'vue-cropper/dist/index.css';
 
@@ -20,7 +27,7 @@ import {
   Spin,
 } from 'antdv-next';
 import Compressor from 'compressorjs';
-import { debounce } from 'lodash-es';
+import { debounce } from '#/utils/lodash';
 
 import { upload as uploadFile } from '#/api';
 import {

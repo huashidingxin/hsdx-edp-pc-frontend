@@ -5,15 +5,15 @@ import { Tag } from 'antdv-next';
 
 const statusMap = { 1: '已启用', 0: '已停用' };
 
-const filterFields = ref([
-  { field: 'capability_code', label: '能力', type: 'text', span: 8 },
-  { field: 'enabled', label: '状态', type: 'select', span: 8, attrs: { items: statusItems } },
-]);
-
 const statusItems = [
   { id: 1, name: '已启用' },
   { id: 0, name: '已停用' },
 ];
+
+const filterFields = ref([
+  { field: 'capability_code', label: '能力', type: 'text', span: 8 },
+  { field: 'enabled', label: '状态', type: 'select', span: 8, attrs: { items: statusItems } },
+]);
 
 const formFields = ref([
   { field: 'capability_code', type: 'text', label: '能力', span: 12, displayOnly: true },
@@ -55,7 +55,7 @@ function emptyText({ cellValue }) {
 
 <template>
   <AppCrudTable
-    api-url="admin/entitlements"
+    api-url="entitlements"
     v-model="formData"
     :filter-fields="filterFields"
     :fields="formFields"

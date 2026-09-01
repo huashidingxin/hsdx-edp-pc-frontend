@@ -19,7 +19,7 @@ async function load() {
   loading.value = true;
   try {
     const data = await requestClient.get(
-      `/admin/applications/${appIdNum.value}/theme`,
+      `/applications/${appIdNum.value}/theme`,
     );
     tokensText.value = JSON.stringify(data?.tokens || {}, null, 2);
   } catch {
@@ -39,7 +39,7 @@ async function save() {
   }
   saving.value = true;
   try {
-    await requestClient.put(`/admin/applications/${appIdNum.value}/theme`, {
+    await requestClient.put(`/applications/${appIdNum.value}/theme`, {
       tokens,
     });
     message.success('主题已保存');
@@ -52,7 +52,7 @@ async function save() {
 
 onMounted(async () => {
   try {
-    const { data } = await new Resource('admin/applications').list({ per_page: 100 });
+    const { data } = await new Resource('applications').list({ per_page: 100 });
     applications.value = data || [];
     appId.value =
       Number(localStorage.getItem('edp:current-application-id')) ||

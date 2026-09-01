@@ -22,7 +22,7 @@
 import { computed, nextTick, ref, watch } from 'vue';
 
 import { Button, Form, Select } from 'antdv-next';
-import { cloneDeep, isEqual } from 'lodash-es';
+import { cloneDeep, isEqual } from '@vben/utils';
 
 import Resource from '#/api/resource';
 import AppField from '#/components/AppField.vue';
