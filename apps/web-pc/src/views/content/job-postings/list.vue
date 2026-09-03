@@ -20,6 +20,12 @@ const employmentOptions = [
   { id: 'intern', name: '实习' },
 ];
 
+const channelMap = { social: '社招', campus: '校招' };
+const channelOptions = [
+  { id: 'social', name: '社会招聘' },
+  { id: 'campus', name: '校园招聘' },
+];
+
 const statusItems = [
   { id: 0, name: '草稿' },
   { id: 1, name: '已发布' },
@@ -30,6 +36,7 @@ const filterFields = ref([
   { field: 'department', label: '部门', type: 'text', span: 6 },
   { field: 'location', label: '地点', type: 'text', span: 6 },
   { field: 'employment_type', label: '类型', type: 'select', span: 6, attrs: { items: employmentOptions } },
+  { field: 'channel', label: '渠道', type: 'select', span: 6, attrs: { items: channelOptions } },
   { field: 'status', label: '状态', type: 'select', span: 6, attrs: { items: statusItems } },
 ]);
 
@@ -52,6 +59,14 @@ const formFields = ref([
     span: 12,
     attrs: { items: employmentOptions },
   },
+  {
+    field: 'channel',
+    type: 'select',
+    label: '招聘渠道',
+    span: 12,
+    attrs: { items: channelOptions },
+  },
+  { field: 'apply_form_code', type: 'text', label: '申请表单 Code（留空用站点默认）', span: 12 },
   { field: 'salary_range', type: 'text', label: '薪资范围', span: 12 },
   { field: 'deadline', type: 'text', label: '截止日期', span: 12 },
   { field: 'sort', type: 'number', label: '排序', span: 12 },
@@ -81,6 +96,12 @@ const gridColumns = ref([
     title: '类型',
     width: 90,
     slots: { default: 'default_employment' },
+  },
+  {
+    field: 'channel',
+    title: '渠道',
+    width: 90,
+    slots: { default: 'default_channel' },
   },
   {
     field: 'status',
@@ -134,6 +155,9 @@ onMounted(async () => {
   >
     <template #default_employment="{ row }">
       <Tag color="blue">{{ employmentMap[row.employment_type] || row.employment_type || '-' }}</Tag>
+    </template>
+    <template #default_channel="{ row }">
+      <Tag :color="row.channel === 'campus' ? 'green' : 'blue'">{{ channelMap[row.channel] || channelMap.social }}</Tag>
     </template>
     <template #default_status="{ row }">
       <Tag :color="statusColor[row.status] || 'default'">{{ statusMap[row.status] || '-' }}</Tag>
