@@ -9,7 +9,12 @@ export namespace AuthApi {
 
   /** 登录接口返回值 */
   export interface LoginResult {
-    accessToken: string
+    expires_at: null | string;
+    id: number | string;
+    mobile_verified_at: null | string;
+    ouid: null | string;
+    token: string;
+    username: string;
   }
 
   export interface RefreshTokenResult {
@@ -21,13 +26,14 @@ export namespace AuthApi {
 /**
  * 登录
  */
-export async function loginApi(data: AuthApi.LoginParams) {
-  const ret = await requestClient.post<AuthApi.LoginResult>('/auth/login', {...data,email:data.username});
-
-  console.log('ret',ret);
+export async function loginApi(params: AuthApi.LoginParams) {
+  const data = await requestClient.post<AuthApi.LoginResult>(
+    '/auth/login',
+    params,
+  );
   return {
-    ...ret,
-    accessToken: ret.token,
+    ...data,
+    accessToken: data.token,
     refreshToken: '',
   };
 }
@@ -45,7 +51,7 @@ export async function refreshTokenApi() {
  * 退出登录
  */
 export async function logoutApi() {
-  return baseRequestClient.post('/auth/logout', {
+  return requestClient.post('/auth/logout', {
     withCredentials: true,
   });
 }
@@ -55,4 +61,11 @@ export async function logoutApi() {
  */
 export async function getAccessCodesApi() {
   return requestClient.get<string[]>('/auth/codes');
+}
+
+/**
+ * 修改密码
+ */
+export async function changePasswordApi(data: { old_password: string; new_password: string; confirm_password: string }) {
+  return requestClient.post('/auth/password', data);
 }

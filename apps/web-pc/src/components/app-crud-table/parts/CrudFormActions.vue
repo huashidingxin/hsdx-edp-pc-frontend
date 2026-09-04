@@ -15,8 +15,6 @@ defineProps({
   editing: { type: Boolean, default: false },
   disabled: { type: Boolean, default: false },
   saving: { type: Boolean, default: false },
-  // 底部保存按钮文案：多语言页面可改为「保存基本信息」，与语种内容的分区保存区分开
-  saveLabel: { type: String, default: '保存' },
 });
 
 const emit = defineEmits(['submit', 'reset', 'close']);
@@ -51,7 +49,7 @@ function handleClose() {
           :loading="saving"
           @click="handleSubmit"
         >
-          {{ saveLabel }}
+          保存
         </Button>
       </Space>
       <slot

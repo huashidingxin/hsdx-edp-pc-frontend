@@ -63,7 +63,7 @@ const visibleFields = computed(() => props.fields);
   <div v-if="fields.length > 0" class="crud-filter-bar">
     <slot name="prepend"></slot>
     <Form class="crud-filter-bar__form">
-      <Row :gutter="12">
+      <Row :gutter="[12, 12]">
         <Col
           v-for="item in visibleFields"
           :key="item.field"

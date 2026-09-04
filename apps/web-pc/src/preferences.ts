@@ -14,6 +14,8 @@ export const overridesPreferences = defineOverridesPreferences({
     watermark: false,
     authPageLayout:'panel-center',
     // enablePreferences:true,
+    defaultHomePath: '/workspace',
+    "layout": "header-sidebar-nav",
   },
   "breadcrumb": {
     "enable": false

@@ -1,4 +1,4 @@
-import { initPreferences } from '@vben/preferences';
+import { initPreferences, updatePreferences } from '@vben/preferences';
 import { unmountGlobalLoading } from '@vben/utils';
 
 import { overridesPreferences } from './preferences';
@@ -17,6 +17,13 @@ async function initApplication() {
   await initPreferences({
     namespace,
     overrides: overridesPreferences,
+  });
+
+  // 退出按钮固定放在头像下拉菜单，覆盖旧版本缓存的 header 配置。
+  updatePreferences({
+    widget: {
+      logoutButtonPosition: 'user-dropdown',
+    },
   });
 
   // 启动应用并挂载

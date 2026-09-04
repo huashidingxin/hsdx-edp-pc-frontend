@@ -1,6 +1,6 @@
 import { reactive, ref, toValue, watch } from 'vue';
 
-import { cloneDeep } from '@vben/utils';
+import { cloneDeep } from 'lodash-es';
 
 import Resource from '#/api/resource';
 
@@ -124,7 +124,14 @@ export function useCrudTableData(props, ctx) {
     const resource = new Resource(url);
     const response = await resource.list(params);
 
-    const items = response?.items || response?.data || [];
+    const raw = response?.items || response?.data || [];
+    // 防御：个别接口曾把 LengthAwarePaginator 直接包在 data 下（{ data: { current_page, data: [...], ... } }），
+    // 取不到数组会让 vxe-table 对非数组调用 .slice() 抛 TypeError，此处统一展开兜底。
+    const items = Array.isArray(raw)
+      ? raw
+      : Array.isArray(raw?.data)
+        ? raw.data
+        : [];
     const meta = response?.meta || {};
 
     return { data: items, meta };

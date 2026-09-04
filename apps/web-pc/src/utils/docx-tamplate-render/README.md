@@ -1,0 +1,463 @@
+# docx-handlebars
+
+[![Crates.io](https://img.shields.io/crates/v/docx-handlebars.svg)](https://crates.io/crates/docx-handlebars)
+[![Documentation](https://docs.rs/docx-handlebars/badge.svg)](https://docs.rs/docx-handlebars)
+[![License](https://img.shields.io/crates/l/docx-handlebars.svg)](https://github.com/sail-sail/docx-handlebars#license)
+
+ English | [中文文档](README_CN.md) |[Demo](https://sail-sail.github.io/docx-handlebars-demo/) 
+
+A Rust library for processing DOCX files with Handlebars templates, supporting multiple platforms:
+- 🦀 Rust native
+- 🌐 WebAssembly (WASM)
+- 📦 npm package
+- 🟢 Node.js
+- 🦕 Deno
+- 🌍 Browser
+- 📋 JSR (JavaScript Registry)
+
+## Features
+
+- ✅ **Smart Merging**: Automatically handles Handlebars syntax split by XML tags
+- ✅ **DOCX Validation**: Built-in file format validation to ensure valid input files
+- ✅ **Handlebars Support**: Full template engine with variables, conditionals, loops, and helper functions
+- ✅ **Cross-platform**: Rust native + WASM support for multiple runtimes
+- ✅ **TypeScript**: Complete type definitions and intelligent code completion
+- ✅ **Zero Dependencies**: WASM binary with no external dependencies
+
+## Installation
+
+### Rust
+
+```bash
+cargo add docx-handlebars
+```
+
+### npm
+
+```bash
+npm install docx-handlebars
+```
+
+### Deno
+
+```typescript
+import init, { render_template } from "jsr:@sail/docx-handlebars";
+```
+
+## Usage Examples
+
+### Rust
+
+```rust
+use docx_handlebars::render_template;
+use serde_json::json;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Read DOCX template file
+    let template_bytes = std::fs::read("template.docx")?;
+    
+    // Prepare data
+    let data = json!({
+        "name": "John Doe",
+        "company": "ABC Technology Ltd.",
+        "position": "Software Engineer",
+        "projects": [
+            {"name": "Project A", "status": "Completed"},
+            {"name": "Project B", "status": "In Progress"}
+        ],
+        "has_bonus": true,
+        "bonus_amount": 5000
+    });
+    
+    // Render template
+    let result = render_template(template_bytes, &data)?;
+    
+    // Save result
+    std::fs::write("output.docx", result)?;
+    
+    Ok(())
+}
+```
+
+### JavaScript/TypeScript (Node.js)
+
+```javascript
+import init, { render_template } from 'docx-handlebars';
+import fs from 'fs';
+
+async function processTemplate() {
+    // Initialize WASM module
+    await init();
+    
+    // Read template file
+    const templateBytes = fs.readFileSync('template.docx');
+    
+    // Prepare data
+    const data = {
+        name: "Jane Smith",
+        company: "XYZ Tech Ltd.",
+        position: "Senior Developer",
+        projects: [
+            { name: "E-commerce Platform", status: "Completed" },
+            { name: "Mobile App", status: "In Development" }
+        ],
+        has_bonus: true,
+        bonus_amount: 8000
+    };
+    
+    // Render template
+    const result = render_template(templateBytes, JSON.stringify(data));
+    
+    // Save result
+    fs.writeFileSync('output.docx', new Uint8Array(result));
+}
+
+processTemplate().catch(console.error);
+```
+
+### Deno
+
+```typescript
+import init, { render_template } from "https://deno.land/x/docx_handlebars/mod.ts";
+
+async function processTemplate() {
+    // Initialize WASM module
+    await init();
+    
+    // Read template file
+    const templateBytes = await Deno.readFile("template.docx");
+    
+    // Prepare data
+    const data = {
+        name: "Alice Johnson",
+        department: "R&D Department",
+        projects: [
+            { name: "AI Customer Service", status: "Live" },
+            { name: "Data Visualization Platform", status: "In Development" }
+        ]
+    };
+    
+    // Render template
+    const result = render_template(templateBytes, JSON.stringify(data));
+    
+    // Save result
+    await Deno.writeFile("output.docx", new Uint8Array(result));
+}
+
+if (import.meta.main) {
+    await processTemplate();
+}
+```
+
+### Browser
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+    <title>DOCX Handlebars Example</title>
+</head>
+<body>
+    <input type="file" id="fileInput" accept=".docx">
+    <button onclick="processFile()">Process Template</button>
+    
+    <script type="module">
+        import init, { render_template } from './pkg/docx_handlebars.js';
+        
+        // Initialize WASM
+        await init();
+        
+        window.processFile = async function() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            
+            if (!file) return;
+            
+            const arrayBuffer = await file.arrayBuffer();
+            const templateBytes = new Uint8Array(arrayBuffer);
+            
+            const data = {
+                name: "John Doe",
+                company: "Example Company"
+            };
+            
+            try {
+                const result = render_template(templateBytes, JSON.stringify(data));
+                
+                // Download result
+                const blob = new Blob([new Uint8Array(result)], {
+                    type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'processed.docx';
+                a.click();
+            } catch (error) {
+                console.error('Processing failed:', error);
+            }
+        };
+    </script>
+</body>
+</html>
+```
+
+## Template Syntax
+
+### Basic Variable Substitution
+
+```handlebars
+Employee Name: {{name}}
+Company: {{company}}
+Position: {{position}}
+```
+
+### Conditional Rendering
+
+```handlebars
+{{#if has_bonus}}
+Bonus: ${{bonus_amount}}
+{{else}}
+No bonus
+{{/if}}
+
+{{#unless is_intern}}
+Full-time employee
+{{/unless}}
+```
+
+### Loop Rendering
+
+```handlebars
+Project Experience:
+{{#each projects}}
+- {{name}}: {{description}} ({{status}})
+{{/each}}
+
+Skills:
+{{#each skills}}
+{{@index}}. {{this}}
+{{/each}}
+```
+
+### Table Row/Column Loops (`{{tr ...}}` / `{{tc ...}}` prefix)
+
+Aligned with python-docx-template's `{%tr %}` / `{%tc %}` mechanism: prefix a handlebars tag with `tr `/`tc `/`p `/`r ` to **prevent the containing row/cell/paragraph/run from rendering** (no leftover empty rows/columns after loops).
+
+Four forms are supported: `{{y body}}`, `{{{y body}}}`, `{{!-- y body --}}`, `{{! y body}}`.
+
+**Row loop** — the open/close tags each occupy their own row (that row collapses, leaving only the bare tag):
+
+```handlebars
+{{tr #each projects}}
+<w:tr> ... {{name}} ... </w:tr>   <!-- this row repeats per item -->
+{{tr /each}}
+```
+
+> Note: the closing tag **must** carry the prefix too (`{{tr /each}}`, not bare `{{/each}}`), otherwise the closing row is not collapsed and the cross-level block corrupts the XML structure.
+
+**Column loop** — when the prefix tag is glued together with content in the same cell, the tag is relocated before the cell and the cell itself repeats per item, producing one column per item:
+
+```handlebars
+<w:tr>
+  <w:tc>...{{tc #each projects}}{{@index}}</w:tc>  <!-- one column per item -->
+  <w:tc>...{{tc /each}}</w:tc>                     <!-- this column collapses, no empty column -->
+</w:tr>
+```
+
+Unprefixed `{{#each rows}}` / `{{/each}}` remain literal and never collapse surrounding structure.
+
+### Helper Functions
+
+Built-in helper functions:
+
+```handlebars
+{{upper name}}           <!-- Convert to uppercase -->
+{{lower company}}        <!-- Convert to lowercase -->
+{{len projects}}         <!-- Array length -->
+{{#if (eq status "completed")}}Completed{{/if}}    <!-- Equality comparison -->
+{{#if (gt score 90)}}Excellent{{/if}}              <!-- Greater than comparison -->
+{{#if (lt age 30)}}Young{{/if}}                    <!-- Less than comparison -->
+
+<!-- Limit array length (useful to keep layout stable) -->
+{{#each (limit projects 4)}}...{{/each}}   <!-- At most 4 items, regardless of array size -->
+
+<!-- Image insertion -->
+{{img base64_data}}                    <!-- Inline image -->
+{{img base64_data 300 200}}           <!-- Inline image with specified dimensions -->
+{{img base64_data 300 200 options}}   <!-- Floating image with positioning options -->
+```
+
+### Cell Merging
+
+Cell merge directives are written as **single-brace** placeholders inside a table cell's `<w:t>` run. They are converted to raw OOXML (for example `<w:gridSpan>`) injected into the cell's `<w:tcPr>`. After rendering, `w:tblGrid` is automatically recomputed so Word won't prompt to repair the file.
+
+```handlebars
+{colspan 2}    <!-- horizontally merge current cell across 2 columns -->
+{hm 3}         <!-- equivalent to {colspan 3} (often used inside a loop) -->
+{vm}           <!-- vertically merge: write inside {{#each}} rows; first row = restart, rest = continue -->
+{cellbg FFFF00}<!-- set cell background color (6-digit hex or "auto") -->
+```
+
+Vertical merge example (first cell spans all rows):
+
+```handlebars
+{{#each rows}}
+<w:tr>
+  <w:tc><w:p><w:r><w:t>{vm}</w:t></w:r></w:p></w:tc>
+  <w:tc><w:p><w:r><w:t>{{this.value}}</w:t></w:r></w:p></w:tc>
+</w:tr>
+{{/each}}
+```
+
+Data:
+
+```json
+{
+  "rows": [{"value": "A"}, {"value": "B"}, {"value": "C"}]
+}
+```
+
+> Note: placeholders must stay inside a single `<w:t>` run. If Word splits a directive across multiple runs it will not be recognized.
+
+### Complex Example
+
+```handlebars
+=== Employee Report ===
+
+Basic Information:
+Name: {{employee.name}}
+Department: {{employee.department}}
+Position: {{employee.position}}
+Hire Date: {{employee.hire_date}}
+
+{{#if employee.has_bonus}}
+💰 Bonus: ${{employee.bonus_amount}}
+{{/if}}
+
+Project Experience ({{len projects}} total):
+{{#each projects}}
+{{@index}}. {{name}}
+   Description: {{description}}
+   Status: {{status}}
+   Team Size: {{team_size}} people
+   
+{{/each}}
+
+Skills Assessment:
+{{#each skills}}
+- {{name}}: {{level}}/10 ({{years}} years experience)
+{{/each}}
+
+To delete an entire table row, simply add the following to any cell in that row:
+{{removeTableRow}}
+
+{{#if (gt performance.score 90)}}
+🎉 Performance Rating: Excellent
+{{else if (gt performance.score 80)}}
+👍 Performance Rating: Good
+{{else}}
+📈 Performance Rating: Needs Improvement
+{{/if}}
+
+Image:
+{{img base64_image_data [width] [height] [options]}}
+  only height: {{img base64 "" 200}}
+  only width: {{img base64 300}}
+  no width/height: {{img base64}}
+  both width/height: {{img base64 300 200}}
+  
+  Floating image example:
+  {{img base64 200 100 options}}
+  
+  Where options can be:
+  {
+    "anchor": true,          // Whether to use anchor positioning (floating image)
+    "behind_doc": false,     // Whether image is behind text (false=overlay text, true=text overlays image)
+    "allow_overlap": true,   // Whether to allow overlap with other objects
+    "position_h": 40,        // Horizontal offset in pixels (negative values shift left)
+    "position_v": -14        // Vertical offset in pixels (negative values shift up)
+  }
+  
+  Image positioning guide:
+  - anchor: false (default) - Inline image, flows with text
+  - anchor: true - Floating image, can be freely positioned and overlay text
+  - position_h/position_v: When not provided, defaults to half the image size for centering
+  - Supports negative offsets for precise image positioning
+```
+
+## Build and Development
+
+### Build WASM Packages
+
+```bash
+# Build all targets
+npm run build
+
+# Or build separately
+npm run build:web    # Browser version
+npm run build:npm    # Node.js version 
+npm run build:jsr    # Deno version
+```
+
+### Run Examples
+
+```bash
+# Rust example
+cargo run --example rust_example
+
+# Node.js example
+node examples/node_example.js
+
+# Deno example  
+deno run --allow-read --allow-write examples/deno_example.ts
+
+# Browser example
+cd tests/npm_test
+node serve.js
+# Then open http://localhost:8080 in your browser
+# Select examples/template.docx file to test
+```
+
+## Technical Features
+
+### Smart Merging Algorithm
+
+The core innovation of this library is the intelligent merging of Handlebars syntax that has been split by XML tags. In DOCX files, when users input template syntax, Word may split it into multiple XML tags.
+
+## Performance and Compatibility
+
+- **Zero Copy**: Efficient memory management between Rust and WASM
+- **Streaming Processing**: Suitable for handling large DOCX files
+- **Cross-platform**: Support for Windows, macOS, Linux, Web
+- **Modern Browsers**: Support for all modern browsers that support WASM
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE-MIT](LICENSE-MIT) file for details.
+
+## Support
+
+- 📚 [Documentation](https://docs.rs/docx-handlebars)
+- 🐛 [Issue Tracker](https://github.com/sail-sail/docx-handlebars/issues)
+- 💬 [Discussions](https://github.com/sail-sail/docx-handlebars/discussions)
+
+---
+
+<div align="center">
+  <p>
+    <strong>docx-handlebars</strong> - Making DOCX template processing simple and efficient
+  </p>
+  <p>
+    <a href="https://github.com/sail-sail/docx-handlebars">⭐ Star the project</a>
+    ·
+    <a href="https://github.com/sail-sail/docx-handlebars/issues">🐛 Report issues</a>
+    ·
+    <a href="https://github.com/sail-sail/docx-handlebars/discussions">💬 Join discussions</a>
+  </p>
+</div>
+
+
+## Support this project with a donation via Alipay:
+![Support this project with a donation](https://www.ejsexcel.com/alipay.jpg)
+

@@ -22,14 +22,11 @@
 import { computed, nextTick, ref, watch } from 'vue';
 
 import { Button, Form, Select } from 'antdv-next';
-import { cloneDeep, isEqual } from '@vben/utils';
+import { cloneDeep, isEqual } from 'lodash-es';
 
 import Resource from '#/api/resource';
 import AppField from '#/components/AppField.vue';
-import {
-  buildRuleEvaluator,
-  toAntdRules,
-} from '#/composables/use-field-rules';
+import { buildRuleEvaluator, toAntdRules } from '#/composables/use-field-rules';
 
 const props = defineProps({
   // 已存在 submission 的字段值（后端 show 返回 submission_fields 数组，扁平 [{id, field_id, type, name, parent_id, content, rule_id, ...}]）
@@ -44,6 +41,11 @@ const props = defineProps({
   },
   // 表单 ID（用于加载 form.fields 配置 + base_rules）
   formId: {
+    type: [String, Number],
+    default: undefined,
+  },
+  // 已存在提交记录的 id：编辑/回显历史记录时按提交时固定的表单版本加载字段（字段增减不影响历史记录）
+  submissionId: {
     type: [String, Number],
     default: undefined,
   },
@@ -169,15 +171,15 @@ function mapType(field) {
 // 短字段（数字/时间等）占 1/4 行宽；其余类型整行。顶级字段与列表子字段共用。
 function isShortFieldType(type) {
   return [
-    'number',
-    'digit',
-    'decimal',
-    'time',
     'date',
     'datetime',
+    'decimal',
+    'digit',
+    'humidity',
+    'number',
     'switch',
     'temperature',
-    'humidity',
+    'time',
     'wind',
   ].includes(type);
 }
@@ -258,8 +260,7 @@ function initBaseRules() {
   const externalIds = Object.values(props.rules || {})
     .map((v) => String(v ?? ''))
     .filter(Boolean);
-  selectedRuleId.value =
-    externalIds.length > 0 ? Number(externalIds[0]) : 0;
+  selectedRuleId.value = externalIds.length > 0 ? Number(externalIds[0]) : 0;
   recomputeFieldBaseRule();
   // 首次自动选中也需重建 ant 校验规则，否则所选规范的规则不会生效
   rebuildValidation();
@@ -269,8 +270,7 @@ function initBaseRules() {
 function recomputeFieldBaseRule() {
   const sid = selectedRuleId.value;
   for (const field of formFields.value) {
-    const baseRules =
-      field.rules?.filter((r) => Number(r.rule_id) > 0) || [];
+    const baseRules = field.rules?.filter((r) => Number(r.rule_id) > 0) || [];
     const picked =
       sid > 0 ? baseRules.find((r) => Number(r.rule_id) === Number(sid)) : null;
     fieldBaseRule.value[fkey(field)] = picked ? picked.rule_id : null;
@@ -340,9 +340,10 @@ function changeBaseRule(ruleId) {
 // ---- 加载 form.fields ----
 async function loadForm() {
   if (!props.formId) return;
-  const { data } = await new Resource('forms').get(props.formId, {
-    project_id: props.projectId,
-  });
+  const params = { project_id: props.projectId };
+  // 已存在提交记录时按提交时固定的表单版本加载字段（表单字段增减/修改不影响历史记录编辑）
+  if (props.submissionId) params.submission_id = props.submissionId;
+  const { data } = await new Resource('forms').get(props.formId, params);
   formFields.value = data.fields || [];
   // 表单级规范列表（rules 表 form_id 关联的启用规范，用于填写端"校验规范"单选器）。
   // 优先取 form.show.base_rules；后端未部署该字段（旧版本）时回退直接查 rules 列表，
@@ -698,7 +699,11 @@ function evaluateList(listField, rowIndex) {
     const value = row[fkey(sub)];
     const result = evaluateField(sub, value);
     if (result.pass || !result.error) continue;
-    const item = { rule: result.error.leaf, value, message: result.error.message };
+    const item = {
+      rule: result.error.leaf,
+      value,
+      message: result.error.message,
+    };
     if (Number(result.error.leaf?.level) === 2) {
       warnings.push(item);
     } else {
@@ -951,9 +956,7 @@ loadForm();
       class="mb-4 rounded border border-gray-200 bg-gray-50 p-3"
     >
       <div class="mb-2 text-sm font-semibold text-gray-600">
-        校验规范<span class="ml-1 text-xs font-normal text-gray-400"
-          >（选择后按该规范校验对应字段，默认基本校验恒生效）</span
-        >
+        校验规范<span class="ml-1 text-xs font-normal text-gray-400">（选择后按该规范校验对应字段，默认基本校验恒生效）</span>
       </div>
       <Select
         :value="selectedRuleId"
@@ -964,12 +967,7 @@ loadForm();
       />
     </div>
 
-    <Form
-      ref="formRef"
-      :model="formModel"
-      layout="vertical"
-      class="field-grid"
-    >
+    <Form ref="formRef" :model="formModel" layout="vertical" class="field-grid">
       <template v-for="field in renderFields" :key="field._key">
         <!-- list 字段：嵌套子表 -->
         <div
@@ -1018,7 +1016,10 @@ loadForm();
                   "
                 />
                 <div
-                  v-if="!readonly && liveWarnings[subListKey(field.id, rowIndex, sub.id)]"
+                  v-if="
+                    !readonly &&
+                    liveWarnings[subListKey(field.id, rowIndex, sub.id)]
+                  "
                   class="warning-tip mt-1 text-xs text-orange-500"
                 >
                   {{ liveWarnings[subListKey(field.id, rowIndex, sub.id)] }}
@@ -1040,11 +1041,7 @@ loadForm();
             v-if="(listRows[field._key] || []).length > 0 && !readonly"
             class="mt-1 flex justify-center"
           >
-            <Button
-              size="small"
-              type="dashed"
-              @click="addListRow(field)"
-            >
+            <Button size="small" type="dashed" @click="addListRow(field)">
               + 新增组
             </Button>
           </div>
@@ -1115,11 +1112,13 @@ loadForm();
   gap: 12px;
 }
 
-/* 警告提示与控件间不留大空隙：ant Form.Item 默认 margin-bottom 较大，
-   有警告时压缩其底部留白，使橙色提示紧贴控件下方。 */
+/* 警告提示必须占据控件下方的独立空间，避免长文本横向溢出并被相邻输入控件遮挡。 */
 .warning-tip {
-  margin-top: -22px;
+  display: block;
+  width: 100%;
+  padding-bottom: 4px;
+  margin-top: 4px;
   line-height: 1.4;
-  padding-bottom: 16px;
+  overflow-wrap: anywhere;
 }
 </style>

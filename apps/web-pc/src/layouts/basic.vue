@@ -1,178 +1,114 @@
 <script lang="ts" setup>
-import type { NotificationItem } from '@vben/layouts';
+import type { FormProps } from 'antdv-next';
 
-import { computed, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
+import { computed, reactive, ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
 
 import { AuthenticationLoginExpiredModal } from '@vben/common-ui';
-import { VBEN_DOC_URL, VBEN_GITHUB_URL } from '@vben/constants';
 import { useWatermark } from '@vben/hooks';
-import { BookOpenText, CircleHelp, SvgGithubIcon } from '@vben/icons';
-import {
-  BasicLayout,
-  LockScreen,
-  Notification,
-  UserDropdown,
-} from '@vben/layouts';
-import { preferences, usePreferences } from '@vben/preferences';
+import { BasicLayout, LockScreen, UserDropdown } from '@vben/layouts';
+import { preferences } from '@vben/preferences';
 import { useAccessStore, useUserStore } from '@vben/stores';
-import { openWindow } from '@vben/utils';
 
-import { $t } from '#/locales';
-import { useAuthStore } from '#/store';
+import { Form, FormItem, InputPassword, message, Modal } from 'antdv-next';
+
+import { changePasswordApi } from '#/api';
+import AppProject from '#/components/AppProject.vue';
+import { useAppStore, useAuthStore } from '#/store';
 import LoginForm from '#/views/_core/authentication/login.vue';
 
-const notifications = ref<NotificationItem[]>([
-  {
-    id: 1,
-    avatar: 'https://avatar.vercel.sh/vercel.svg?text=VB',
-    date: '3小时前',
-    isRead: true,
-    message: '描述信息描述信息描述信息',
-    title: '收到了 14 份新周报',
-  },
-  {
-    id: 2,
-    avatar: 'https://avatar.vercel.sh/1',
-    date: '刚刚',
-    isRead: false,
-    message: '描述信息描述信息描述信息',
-    title: '朱偏右 回复了你',
-  },
-  {
-    id: 3,
-    avatar: 'https://avatar.vercel.sh/1',
-    date: '2024-01-01',
-    isRead: false,
-    message: '描述信息描述信息描述信息',
-    title: '曲丽丽 评论了你',
-  },
-  {
-    id: 4,
-    avatar: 'https://avatar.vercel.sh/satori',
-    date: '1天前',
-    isRead: false,
-    message: '描述信息描述信息描述信息',
-    title: '代办提醒',
-  },
-  {
-    id: 5,
-    avatar: 'https://avatar.vercel.sh/satori',
-    date: '1天前',
-    isRead: false,
-    message: '描述信息描述信息描述信息',
-    title: '跳转Workspace示例',
-    link: '/workspace',
-  },
-  {
-    id: 6,
-    avatar: 'https://avatar.vercel.sh/satori',
-    date: '1天前',
-    isRead: false,
-    message: '描述信息描述信息描述信息',
-    title: '跳转外部链接示例',
-    link: 'https://doc.vben.pro',
-  },
-]);
-
-const router = useRouter();
 const userStore = useUserStore();
 const authStore = useAuthStore();
 const accessStore = useAccessStore();
+const appStore = useAppStore();
+const route = useRoute();
 const { destroyWatermark, updateWatermark } = useWatermark();
-const { isDark } = usePreferences();
-const showDot = computed(() =>
-  notifications.value.some((item) => !item.isRead),
+
+const isProjectMenu = computed(() =>
+  route.matched.some((record) => record.meta?.isProjectMenu === true),
 );
 
-const menus = computed(() => [
-  {
-    handler: () => {
-      router.push({ name: 'Profile' });
+const passwordFormRef = ref();
+const passwordModalOpen = ref(false);
+const passwordSubmitting = ref(false);
+const passwordForm = reactive({
+  old_password: '',
+  new_password: '',
+  confirm_password: '',
+});
+
+const passwordRules: FormProps['rules'] = {
+  old_password: [{ required: true, message: '请输入旧密码', trigger: 'blur' }],
+  new_password: [
+    { required: true, message: '请输入新密码', trigger: 'blur' },
+    { min: 8, message: '新密码至少 8 位', trigger: 'blur' },
+  ],
+  confirm_password: [
+    { required: true, message: '请再次输入新密码', trigger: 'blur' },
+    {
+      validator: async (_rule: unknown, value: string) => {
+        if (value !== passwordForm.new_password) {
+          return Promise.reject(new Error('两次输入的新密码不一致'));
+        }
+        return Promise.resolve();
+      },
+      trigger: 'blur',
     },
-    icon: 'lucide:user',
-    text: $t('page.auth.profile'),
-  },
+  ],
+};
+
+const menus = [
   {
-    handler: () => {
-      openWindow(VBEN_DOC_URL, {
-        target: '_blank',
-      });
-    },
-    icon: BookOpenText,
-    text: $t('ui.widgets.document'),
+    handler: openPasswordModal,
+    icon: 'lucide:key-round',
+    text: '修改密码',
   },
-  {
-    handler: () => {
-      openWindow(VBEN_GITHUB_URL, {
-        target: '_blank',
-      });
-    },
-    icon: SvgGithubIcon,
-    text: 'GitHub',
-  },
-  {
-    handler: () => {
-      openWindow(`${VBEN_GITHUB_URL}/issues`, {
-        target: '_blank',
-      });
-    },
-    icon: CircleHelp,
-    text: $t('ui.widgets.qa'),
-  },
-]);
+];
 
 const avatar = computed(() => {
   return userStore.userInfo?.avatar ?? preferences.app.defaultAvatar;
+});
+
+const currentRoleName = computed(() => {
+  const role = (appStore.defaultProject as any)?.role;
+  if (!role) return '';
+  if (typeof role === 'string') return role;
+  return role.display_name || role.name || '';
 });
 
 async function handleLogout() {
   await authStore.logout(false);
 }
 
-function handleNoticeClear() {
-  notifications.value = [];
+function resetPasswordForm() {
+  passwordForm.old_password = '';
+  passwordForm.new_password = '';
+  passwordForm.confirm_password = '';
+  passwordFormRef.value?.clearValidate?.();
 }
 
-function markRead(id: number | string) {
-  const item = notifications.value.find((item) => item.id === id);
-  if (item) {
-    item.isRead = true;
+function openPasswordModal() {
+  resetPasswordForm();
+  passwordModalOpen.value = true;
+}
+
+async function submitPasswordChange() {
+  try {
+    await passwordFormRef.value?.validate();
+  } catch {
+    return;
   }
-}
 
-function remove(id: number | string) {
-  notifications.value = notifications.value.filter((item) => item.id !== id);
-}
-
-function handleMakeAll() {
-  notifications.value.forEach((item) => (item.isRead = true));
-}
-
-const viewAll = () => {};
-
-const handleClick = (item: NotificationItem) => {
-  // 如果通知项有链接，点击时跳转
-  if (item.link) {
-    navigateTo(item.link, item.query, item.state);
-  }
-};
-
-function navigateTo(
-  link: string,
-  query?: Record<string, any>,
-  state?: Record<string, any>,
-) {
-  if (link.startsWith('http://') || link.startsWith('https://')) {
-    // 外部链接，在新标签页打开
-    window.open(link, '_blank');
-  } else {
-    // 内部路由链接，支持 query 参数和 state
-    router.push({
-      path: link,
-      query: query || {},
-      state,
-    });
+  passwordSubmitting.value = true;
+  try {
+    await changePasswordApi({ ...passwordForm });
+    message.success('密码修改成功，请重新登录');
+    passwordModalOpen.value = false;
+    await authStore.logout(false);
+  } catch (error: any) {
+    message.error(error?.message || '密码修改失败');
+  } finally {
+    passwordSubmitting.value = false;
   }
 }
 
@@ -180,28 +116,10 @@ watch(
   () => ({
     enable: preferences.app.watermark,
     content: preferences.app.watermarkContent,
-    isDark: isDark.value,
   }),
-  async ({ enable, content, isDark: isDarkValue }) => {
+  async ({ enable, content }) => {
     if (enable) {
-      const watermarkColor = isDarkValue
-        ? 'rgba(255, 255, 255, 0.12)'
-        : 'rgba(0, 0, 0, 0.12)';
-
       await updateWatermark({
-        advancedStyle: {
-          colorStops: [
-            {
-              color: watermarkColor,
-              offset: 0,
-            },
-            {
-              color: watermarkColor,
-              offset: 1,
-            },
-          ],
-          type: 'linear',
-        },
         content:
           content ||
           `${userStore.userInfo?.username} - ${userStore.userInfo?.realName}`,
@@ -217,33 +135,17 @@ watch(
 </script>
 
 <template>
-  <BasicLayout
-    :avatar
-    :text="userStore.userInfo?.realName"
-    @clear-preferences-and-logout="handleLogout"
-    @logout="handleLogout"
-  >
+  <BasicLayout @clear-preferences-and-logout="handleLogout" @logout="handleLogout">
+    <template #header-left-1>
+      <AppProject v-if="isProjectMenu" />
+    </template>
     <template #user-dropdown>
       <UserDropdown
         :avatar
         :menus
-        :text="userStore.userInfo?.realName"
-        description="ann.vben@gmail.com"
-        tag-text="Pro"
-        @clear-preferences-and-logout="handleLogout"
+        :text="userStore.userInfo?.name"
+        :description="currentRoleName"
         @logout="handleLogout"
-      />
-    </template>
-    <template #notification>
-      <Notification
-        :dot="showDot"
-        :notifications="notifications"
-        @clear="handleNoticeClear"
-        @read="(item) => item.id && markRead(item.id)"
-        @remove="(item) => item.id && remove(item.id)"
-        @make-all="handleMakeAll"
-        @on-click="handleClick"
-        @view-all="viewAll"
       />
     </template>
     <template #extra>
@@ -258,4 +160,43 @@ watch(
       <LockScreen :avatar @to-login="handleLogout" />
     </template>
   </BasicLayout>
+
+  <Modal
+    v-model:open="passwordModalOpen"
+    title="修改密码"
+    :confirm-loading="passwordSubmitting"
+    ok-text="确认修改"
+    cancel-text="取消"
+    @ok="submitPasswordChange"
+    @cancel="resetPasswordForm"
+  >
+    <Form
+      ref="passwordFormRef"
+      :model="passwordForm"
+      :rules="passwordRules"
+      layout="vertical"
+    >
+      <FormItem label="旧密码" name="old_password">
+        <InputPassword
+          v-model:value="passwordForm.old_password"
+          autocomplete="current-password"
+          placeholder="请输入旧密码"
+        />
+      </FormItem>
+      <FormItem label="新密码" name="new_password">
+        <InputPassword
+          v-model:value="passwordForm.new_password"
+          autocomplete="new-password"
+          placeholder="请输入至少 8 位新密码"
+        />
+      </FormItem>
+      <FormItem label="确认新密码" name="confirm_password">
+        <InputPassword
+          v-model:value="passwordForm.confirm_password"
+          autocomplete="new-password"
+          placeholder="请再次输入新密码"
+        />
+      </FormItem>
+    </Form>
+  </Modal>
 </template>

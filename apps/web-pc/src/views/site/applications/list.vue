@@ -5,6 +5,10 @@ import { Button, Drawer, Form, FormItem, Input, Modal, Popconfirm, Select, Switc
 
 import Resource from '#/api/resource';
 import { requestClient } from '#/api/request';
+import {
+  getCurrentApplicationId,
+  setCurrentApplicationId,
+} from '#/api/application-context';
 
 const TYPE_OPTIONS = [
   { id: 1, name: '官网' },
@@ -146,6 +150,15 @@ const gridColumns = ref([
 ]);
 
 const formData = ref(null);
+const currentApplicationId = ref(getCurrentApplicationId());
+
+function selectApplication(row) {
+  const id = Number(row?.id);
+  if (!Number.isSafeInteger(id) || id <= 0) return;
+  currentApplicationId.value = id;
+  setCurrentApplicationId(id);
+  message.success('当前应用已切换');
+}
 
 /* ===================== 域名管理抽屉 ===================== */
 const domainOpen = ref(false);
@@ -246,6 +259,15 @@ onMounted(async () => {
       :form-attrs="{ layout: 'vertical', size: 'medium' }"
       :actions-config="[
         {
+          key: 'select_application',
+          label: '设为当前',
+          icon: 'mdi--check-circle-outline',
+          permission: 'edit',
+          visible: (row) => Number(row?.id) !== currentApplicationId.value,
+          onClick: (row) => selectApplication(row),
+          order: 30,
+        },
+        {
           key: 'manage_domains',
           label: '域名',
           icon: 'mdi--web',
@@ -254,7 +276,7 @@ onMounted(async () => {
           order: 35,
         },
       ]"
-      :inline-actions="['view', 'edit', 'manage_domains', 'delete']"
+      :inline-actions="['view', 'edit', 'select_application', 'manage_domains', 'delete']"
       permission-name="cms.page"
       title="应用与域名"
       class="p-4"

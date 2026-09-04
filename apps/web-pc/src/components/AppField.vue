@@ -18,12 +18,8 @@ import {
   TimePicker,
   TreeSelect,
 } from 'antdv-next';
-import { useAccess } from '@vben/access';
-import { cloneDeep, isEqual } from '@vben/utils';
 import dayjs from 'dayjs';
-import { useRouter } from 'vue-router';
-
-import { debounce } from '#/utils/lodash';
+import { cloneDeep, debounce, isEqual } from 'lodash-es';
 import { Solar } from 'lunar-javascript';
 
 import Resource from '#/api/resource';
@@ -91,12 +87,19 @@ const defaultEvents = ref({});
 const component = shallowRef(Input);
 const attrs = ref({});
 
+// 文件控件的只读态仍需允许点击预览/下载，使用 AppUpload 的 readonly
+// 而不是 disabled，避免外层表单把预览按钮渲染成不可点击状态。
+const componentDisabled = computed(() => {
+  if (component.value === AppUpload) return false;
+  return props.field.attrs?.readonly || props.readonly;
+});
+
 const fieldRef = ref(null);
 const attrItems = ref([]);
 let formatter = (e) => e;
 
 // 选择类组件列表
-const selectComponents = new Set([Select, AutoComplete, TreeSelect]);
+const selectComponents = new Set([AutoComplete, Select, TreeSelect]);
 
 // 动态计算 allowClear：仅在有值时显示清除按钮
 const computedAllowClear = computed(() => {
@@ -119,10 +122,13 @@ function normalizeFieldValue(field, val) {
       }
       return Array.isArray(val) ? val : [val];
     }
-    case 'select':
-    case 'multiselect': {
+    case 'multiselect':
+    case 'select': {
       // 多选模式：确保值为数组，空值归一化为空数组
-      const isMultiple = field.type === 'multiselect' || field.attrs?.multiple || field.attrs?.mode === 'multiple';
+      const isMultiple =
+        field.type === 'multiselect' ||
+        field.attrs?.multiple ||
+        field.attrs?.mode === 'multiple';
       if (isMultiple) {
         if (val === undefined || val === null || val === '') {
           return [];
@@ -171,11 +177,7 @@ const displayOnlyText = computed(() => {
       props.field.type,
     )
   ) {
-    const options =
-      props.field.options ||
-      props.field.attrs?.options ||
-      props.field.attrs?.items ||
-      [];
+    const options = props.field.options || props.field.attrs?.options || [];
     const fieldNames = props.field.attrs?.fieldNames || {
       label: 'name',
       value: 'id',
@@ -277,15 +279,19 @@ function initComponent() {
     case 'audio':
     case 'file':
     case 'image':
-    case 'video': {
-      // 约定：图片/文件字段 type 为 file，attrs.type 指定媒体类型（image/video/audio/file），
-      // attrs.multiple 控制单选/多选；image/video/audio 类型直接以类型作为 fileType。
+    case 'images':
+    case 'video':
+    case 'videos': {
+      // images/videos：复数类型同样使用 AppUpload，fileType 归一到单数，
+      // 保证图片/视频以缩略图网格渲染（而非默认的纯文本 Input）
+      const uploadType = props.field.type;
       defaultAttrs.value = {
         fileType:
-          props.field.type === 'file'
-            ? props.field.attrs?.type || props.field.attrs?.fileType || 'file'
-            : props.field.type,
-        multiple: Boolean(props.field.attrs?.multiple),
+          uploadType === 'file'
+            ? props.field.attrs?.fileType
+            : uploadType.replace(/s$/, ''),
+        multiple: uploadType === 'images' || uploadType === 'videos',
+        maxCount: props.field.attrs?.multiple ? 10 : 1,
       };
       component.value = AppUpload;
       break;
@@ -358,6 +364,12 @@ function initComponent() {
       formatter = (e) => (e?.format ? e.format('YYYY-MM-DD HH:mm:ss') : e);
       break;
     }
+    case 'digit': {
+      // 小数类型：允许输入小数（step=0.01），区别于普通数字（整数）
+      defaultAttrs.value = { step: 0.01 };
+      component.value = InputNumber;
+      break;
+    }
     case 'editor': {
       defaultAttrs.value = {};
       component.value = AppEditor;
@@ -376,12 +388,6 @@ function initComponent() {
     }
     case 'number': {
       defaultAttrs.value = {};
-      component.value = InputNumber;
-      break;
-    }
-    case 'digit': {
-      // 小数类型：允许输入小数（step=0.01），区别于普通数字（整数）
-      defaultAttrs.value = { step: 0.01 };
       component.value = InputNumber;
       break;
     }
@@ -471,42 +477,23 @@ function initComponent() {
   }
 
   // select 选项归一化：{ id, name }（接口数据）→ { value, label }，
-  // 兼容页面直接写 { value, label } 的静态选项。
-  // items 是页面里最常用的选项写法（attrs: { items: [...] }），与 options 等价。
-  // 显式声明 fieldNames 时保留原始结构（{ id, name, children }），由 antd 按 fieldNames 取值。
-  if (component.value === Select) {
-    const rawOptions =
-      props.field.attrs?.options ?? props.field.options ?? props.field.attrs?.items;
-    attrs.value.options = props.field.attrs?.fieldNames
-      ? rawOptions
-      : Array.isArray(rawOptions)
-        ? rawOptions.map((opt) => {
-            if (!opt || typeof opt !== 'object') return opt;
-            if (opt.value !== undefined || opt.label !== undefined) return opt;
-            if (opt.id !== undefined) {
-              return {
-                ...opt,
-                value: opt.id,
-                label: opt.name === undefined ? String(opt.id) : opt.name,
-              };
-            }
-            return opt;
-          })
-        : rawOptions;
-  }
-
-  // items 仅作为选项源，不传给 antd Select（fieldNames 分支同样生效）
-  if (component.value === Select && attrs.value.items !== undefined) {
-    delete attrs.value.items;
-  }
-
-  // AppUpload：attrs.type 已映射为 fileType，maxCount 非其属性，避免透传
-  if (component.value === AppUpload) {
-    delete attrs.value.type;
-    delete attrs.value.maxCount;
-    if (attrs.value.items !== undefined) {
-      delete attrs.value.items;
-    }
+  // 兼容页面直接写 { value, label } 的静态选项；显式声明 fieldNames 时不处理
+  if (component.value === Select && !props.field.attrs?.fieldNames) {
+    const rawOptions = props.field.attrs?.options ?? props.field.options;
+    attrs.value.options = Array.isArray(rawOptions)
+      ? rawOptions.map((opt) => {
+          if (!opt || typeof opt !== 'object') return opt;
+          if (opt.value !== undefined || opt.label !== undefined) return opt;
+          if (opt.id !== undefined) {
+            return {
+              ...opt,
+              value: opt.id,
+              label: opt.name === undefined ? String(opt.id) : opt.name,
+            };
+          }
+          return opt;
+        })
+      : rawOptions;
   }
 
   // tree-select 选项归一化：antdv TreeSelect 使用 treeData 而非 options，
@@ -619,14 +606,11 @@ watch(
 );
 
 // 监听值变化，更新 Select/AutoComplete/TreeSelect 的 allowClear
-watch(
-  componentValue,
-  () => {
-    if (selectComponents.has(component.value) && attrs.value) {
-      attrs.value.allowClear = computedAllowClear.value;
-    }
-  },
-);
+watch(componentValue, () => {
+  if (selectComponents.has(component.value) && attrs.value) {
+    attrs.value.allowClear = computedAllowClear.value;
+  }
+});
 
 defineExpose({
   reset,
@@ -706,7 +690,7 @@ function getMonthInGanZhi(date) {
             :placeholder="field.attrs?.placeholder"
             :label="field.label || field.attrs?.label"
             v-bind="attrs"
-            :disabled="field.attrs?.readonly || readonly"
+            :disabled="componentDisabled"
             v-on="{ ...defaultEvents, ...field.events }"
             :key="field.field"
             :field-name="field.field"

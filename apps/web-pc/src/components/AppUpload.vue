@@ -1,21 +1,15 @@
 <script setup lang="ts">
 import type { Ref } from 'vue';
 
-import {
-  computed,
-  h,
-  nextTick,
-  ref,
-  shallowRef,
-  watch,
-} from 'vue';
-import { VueCropper } from 'vue-cropper/dist/vue-cropper.es.js';
+import { h } from 'vue';
 import 'vue-cropper/dist/index.css';
+import { VueCropper } from 'vue-cropper/dist/vue-cropper.es.js';
 
 import {
   Button,
   Card,
   Col,
+  Drawer,
   Image,
   InputNumber,
   message,
@@ -27,9 +21,10 @@ import {
   Spin,
 } from 'antdv-next';
 import Compressor from 'compressorjs';
-import { debounce } from '#/utils/lodash';
+import { debounce } from 'lodash-es';
 
 import { upload as uploadFile } from '#/api';
+import AppOnlyoffice from '#/components/AppOnlyoffice.vue';
 import {
   base64ToFile,
   blobUrlToFile,
@@ -39,6 +34,11 @@ import {
   isBase64,
   videoUrlToBlobUrl,
 } from '#/utils/file.js';
+import {
+  downloadBlob,
+  fetchFileBytes,
+  safeFileName,
+} from '#/utils/render-docx';
 
 interface FileItem {
   url: string;
@@ -47,14 +47,15 @@ interface FileItem {
 }
 
 interface FileDescriptor {
-  category: null | string;
-  name: string;
-  size: number;
+  category?: null | number | string;
+  name?: string;
+  size?: number;
   type?: string;
 }
 
 interface PreviewInfo {
   extension: string;
+  name: string;
   type: string;
   url: string;
 }
@@ -117,6 +118,15 @@ const props = defineProps({
     default: false,
     type: Boolean,
   },
+  // 只读/禁用：仅展示已有文件（图片/视频网格、文件列表），隐藏上传入口与删除/裁剪等操作
+  disabled: {
+    default: false,
+    type: Boolean,
+  },
+  readonly: {
+    default: false,
+    type: Boolean,
+  },
   scene: {
     default: '',
     type: String,
@@ -139,23 +149,32 @@ const props = defineProps({
   },
 });
 
-const emit = defineEmits(['update:model-value', 'update:value', 'snapshot']);
+const emit = defineEmits([
+  'update:model-value',
+  'update:modelValue',
+  'update:value',
+  'snapshot',
+]);
 
 // 兼容 antdv-next v-model:value 和 Vue3 v-model
 const currentValue = computed(() => props.modelValue || props.value);
 
+// 只读查看：仅展示已有文件，隐藏上传入口与删除/裁剪/拖拽等操作
+const viewOnly = computed(() => props.disabled || props.readonly);
+
 function emitValue(val: any) {
-  emit('update:model-value', val);
+  emit('update:modelValue', val);
   emit('update:value', val);
 }
-
 
 const files: Ref<File[]> = ref([]);
 const list: Ref<FileItem[]> = ref([]);
 const inputRef: Ref<HTMLInputElement | null> = ref(null);
-const previewSrc = ref('');
-const previewOpen = ref(false);
 const dragover = ref(false);
+const previewDialog = ref(false);
+const previewLoading = ref(false);
+const officeDocument = ref<null | Record<string, any>>(null);
+let previewSequence = 0;
 const cropper = ref<CropperInstance | null>(null);
 const video = ref<HTMLVideoElement | null>(null);
 const videoCanvas = ref<HTMLCanvasElement | null>(null);
@@ -174,7 +193,7 @@ const typeIcons = [
     types: ['image', 'video'],
     class: 'icon-[mdi--fullscreen] w-4 h-4',
   },
-  
+
   { name: 'crop', types: ['image'], class: 'icon-[mdi--crop] w-4 h-4' },
   {
     name: 'snapshot',
@@ -318,52 +337,104 @@ watch(
   { immediate: true, deep: true },
 );
 
-// 设置初始值
-async function setValue() {
-  let _list: any[] = [];
+function isBlobFile(value: unknown): value is Blob | File {
+  return typeof Blob !== 'undefined' && value instanceof Blob;
+}
 
-  if (props.multiple) {
-    _list = Array.isArray(currentValue.value) ? [...currentValue.value] : [];
-  } else if (
-    currentValue.value &&
-    typeof currentValue.value === 'object' &&
-    !Array.isArray(currentValue.value)
-  ) {
-    _list = [currentValue.value];
-  } else if (
-    currentValue.value &&
-    typeof currentValue.value === 'string' &&
-    currentValue.value
-  ) {
-    _list = [currentValue.value];
-  }
+// 已上传文件使用 URL 回传；blob/data URL 或 File/Blob 仍是待上传文件。
+function isPendingUpload(item: FileItem): boolean {
+  return (
+    (isBlobFile(item.file) ||
+      /^(?:blob:|data:)/i.test(String(item.url || ''))) &&
+    !isPersistedUrl(item.url)
+  );
+}
 
-  // 清空现有列表
-  list.value = [];
+function isPersistedUrl(url: unknown): url is string {
+  if (typeof url !== 'string' || !url.trim()) return false;
+  return !/^(?:blob:|data:|https?:\/\/tmp\/)/i.test(url);
+}
 
-  for (const item of _list) {
-    if (typeof item === 'string') {
-      let fileItem: FileItem = { url: item };
-
-      if (isBase64(item)) {
-        fileItem.file = base64ToFile(item);
-      } else if (item.startsWith('blob:')) {
-        fileItem.file = (await blobUrlToFile(item)) ?? undefined;
-      } else {
-        fileItem = formatUrl(item);
-      }
-      list.value.push(fileItem);
-    } else {
-      list.value.push(item);
-    }
+function absolutePreviewUrl(url: string): string {
+  if (!url || /^(?:https?:|blob:|data:)/i.test(url)) return url;
+  try {
+    return new URL(url, window.location.origin).href;
+  } catch {
+    return url;
   }
 }
 
-// 更新模型值
+function normalizeObjectItem(item: any): FileItem | null {
+  if (isBlobFile(item)) {
+    return { file: item, url: createObjectURL(item) };
+  }
+  if (!item || typeof item !== 'object') return null;
+
+  const nestedFile = item.file;
+  const url =
+    (typeof item.url === 'string' && item.url) ||
+    (typeof nestedFile?.url === 'string' && nestedFile.url) ||
+    (typeof item.path === 'string' && item.path) ||
+    '';
+  if (!url) return null;
+
+  const file = isBlobFile(nestedFile)
+    ? nestedFile
+    : nestedFile || {
+        category: item.category ?? item.category_id ?? null,
+        name: item.name,
+        size: item.size,
+        type: item.type,
+      };
+  return { ...item, file, url };
+}
+
+async function normalizeValueItem(item: any): Promise<FileItem | null> {
+  if (typeof item === 'string') {
+    if (item.startsWith('data:') || (isBase64(item) && !/[/:?#.]/.test(item))) {
+      return { url: item, file: base64ToFile(item) };
+    }
+    if (item.startsWith('blob:')) {
+      return {
+        url: item,
+        file: (await blobUrlToFile(item)) ?? undefined,
+      };
+    }
+    return formatUrl(item);
+  }
+
+  const fileItem = normalizeObjectItem(item);
+  if (!fileItem) return null;
+  // 父级可能直接回传 { url: 'blob:...', file: { name, ... } }，
+  // 与移动端一样把 blob URL 转成真实 File，避免编辑态重复提交时丢失文件。
+  if (fileItem.url.startsWith('blob:') && !isBlobFile(fileItem.file)) {
+    fileItem.file = (await blobUrlToFile(fileItem.url)) ?? fileItem.file;
+  }
+  return fileItem;
+}
+
+// 设置初始值：后端 file/image 字段统一返回 URL 数组，单文件控件也要取数组首项回显。
+async function setValue() {
+  const value = currentValue.value;
+  let values: any[] = [];
+  if (Array.isArray(value)) {
+    values = props.multiple ? [...value] : value.slice(0, 1);
+  } else if (value !== null && value !== undefined && value !== '') {
+    values = [value];
+  }
+
+  list.value = [];
+  for (const item of values) {
+    const fileItem = await normalizeValueItem(item);
+    if (fileItem) list.value.push(fileItem);
+  }
+}
+
+// 更新模型值：远程/相对 URL 只回传字符串，本地 FileItem 保留对象供 upload() 处理。
 function updateModelValue() {
-  const arr = list.value.map((item) => {
-    return item.url.startsWith('http') ? item.url : item;
-  });
+  const arr = list.value.map((item) =>
+    isPersistedUrl(item.url) && !isPendingUpload(item) ? item.url : item,
+  );
 
   emitValue(props.multiple ? arr : arr[0] || null);
   files.value = [];
@@ -433,6 +504,140 @@ function inputChange(e: Event) {
   target.value = ''; // 重置input，允许重复选择相同文件
 }
 
+const previewInfo = ref<PreviewInfo>({
+  extension: '',
+  name: '',
+  type: '',
+  url: '',
+});
+const previewItemIndex = ref<null | number>(null);
+const previewDownloading = ref(false);
+
+const imageExtensions = new Set([
+  'avif',
+  'bmp',
+  'gif',
+  'jpeg',
+  'jpg',
+  'png',
+  'svg',
+  'webp',
+]);
+const videoExtensions = new Set(['avi', 'mkv', 'mov', 'mp4', 'ogg', 'webm']);
+const officeExtensions = new Set([
+  'csv',
+  'doc',
+  'docx',
+  'odf',
+  'odp',
+  'ods',
+  'odt',
+  'pdf',
+  'ppt',
+  'pptx',
+  'rtf',
+  'txt',
+  'xls',
+  'xlsx',
+]);
+
+function fileCategory(item: FileItem): string {
+  const direct =
+    item.file && typeof item.file === 'object'
+      ? ((item.file as any).category ?? (item.file as any).category_id)
+      : undefined;
+  const value = direct ?? item.category ?? item.category_id;
+  if (value !== undefined && value !== null && value !== '') {
+    return String(value);
+  }
+  try {
+    return (
+      new URL(item.url, window.location.origin).searchParams.get('category') ||
+      ''
+    );
+  } catch {
+    return '';
+  }
+}
+
+function fileExtension(item: FileItem): string {
+  const file = item.file;
+  const name =
+    (file && typeof file === 'object' && 'name' in file
+      ? String(file.name || '')
+      : '') ||
+    String(item.name || '') ||
+    String(item.url || '');
+  const path = name.split(/[?#]/)[0] || '';
+  const extension = path.split('.').pop()?.toLowerCase() || '';
+  if (extension) return extension;
+
+  const mime = file && typeof file === 'object' ? String(file.type || '') : '';
+  return mime.split('/')[1]?.toLowerCase() || '';
+}
+
+function previewType(item: FileItem): string {
+  const configuredType = String(props.fileType || '').toLowerCase();
+  if (configuredType === 'image' || configuredType === 'video') {
+    return configuredType;
+  }
+
+  // 与移动端 app-file-upload 保持一致：1=图片、2=视频、4~7=文档。
+  const category = Number(fileCategory(item));
+  if (category === 1) return 'image';
+  if (category === 2) return 'video';
+
+  const extension = fileExtension(item);
+  // PDF 在预览抽屉内使用 iframe，交给浏览器原生 PDF 查看器。
+  if (extension === 'pdf') return 'pdf';
+  if (imageExtensions.has(extension)) return 'image';
+  if (videoExtensions.has(extension)) return 'video';
+  if (officeExtensions.has(extension)) return 'office';
+  if (category >= 4) return 'document';
+  return '';
+}
+
+function documentPreviewUrl(item: FileItem): string {
+  const base = String(
+    import.meta.env.VITE_GLOB_URL || window.location.origin,
+  ).replace(/\/$/, '');
+  const params = new URLSearchParams({
+    file: absolutePreviewUrl(item.url),
+  });
+  const name = fileDisplayName(item);
+  if (name) params.set('name', name);
+  return `${base}/file-preview?${params.toString()}`;
+}
+
+async function loadOfficeDocument(
+  item: FileItem,
+  extension: string,
+  sequence: number,
+) {
+  let bytes: Uint8Array;
+  if (isBlobFile(item.file)) {
+    bytes = new Uint8Array(await item.file.arrayBuffer());
+  } else if (/^(?:blob:|data:)/i.test(item.url)) {
+    const response = await fetch(item.url);
+    if (!response.ok) throw new Error(`文件加载失败（${response.status}）`);
+    bytes = new Uint8Array(await response.arrayBuffer());
+  } else {
+    bytes = await fetchFileBytes(item.url);
+  }
+
+  if (sequence !== previewSequence) return;
+
+  officeDocument.value = {
+    fileType: extension || 'pdf',
+    key: `upload-preview-${Date.now()}-${extension}`,
+    title: safeFileName(fileDisplayName(item) || `文件.${extension}`),
+    buffer: bytes.buffer.slice(
+      bytes.byteOffset,
+      bytes.byteOffset + bytes.byteLength,
+    ),
+  };
+}
+
 // 图标操作
 function iconAction(action: string, index: number) {
   switch (action) {
@@ -441,14 +646,7 @@ function iconAction(action: string, index: number) {
       break;
     }
     case 'preview': {
-      if (props.fileType === 'file') {
-        preview(index);
-      } else {
-        previewSrc.value = list.value[index]?.url ?? '';
-        nextTick(() => {
-          previewOpen.value = true;
-        });
-      }
+      preview(index);
       break;
     }
     case 'remove': {
@@ -462,36 +660,97 @@ function iconAction(action: string, index: number) {
   }
 }
 
-const previewDialog = ref(false);
-const previewInfo = ref<PreviewInfo>({ extension: '', type: '', url: '' });
-function preview(index: number) {
-  if (props.fileType === 'file' && list.value[index]?.url?.startsWith('http')) {
-    const url = new URL(list.value[index].url, window.location.origin);
-    const fileName = url.pathname.split('/').pop() ?? '';
-    const categories: Record<string, string[]> = {
-      word: ['doc', 'docx'],
-      excel: ['xls', 'xlsx'],
-      ppt: ['ppt', 'pptx'],
-      pdf: ['pdf'],
-      image: ['jpg', 'jpeg', 'png', 'svg', 'bmp'],
-    };
-    const extension = fileName.split('.').pop()?.toLowerCase() ?? '';
-    let type = '';
-    for (const key in categories) {
-      if (categories[key]?.includes(extension)) {
-        type = key;
-        break;
-      }
-    }
-    previewInfo.value = {
-      url: ['pdf'].includes(type)
-        ? `${import.meta.env.VITE_GLOB_URL}/file-preview?file=${list.value[index].url}`
-        : list.value[index].url,
-      type,
+async function preview(index: number) {
+  const item = list.value[index];
+  if (!item?.url) {
+    message.warning('文件地址无效');
+    return;
+  }
 
-      extension,
-    };
-    previewDialog.value = true;
+  const sequence = ++previewSequence;
+  const extension = fileExtension(item);
+  const type = previewType(item) || 'unsupported';
+  const url = absolutePreviewUrl(item.url);
+
+  officeDocument.value = null;
+  previewLoading.value = false;
+
+  previewItemIndex.value = index;
+  previewInfo.value = {
+    extension,
+    name: fileDisplayName(item),
+    type,
+    url,
+  };
+  previewDialog.value = true;
+
+  if (type !== 'office') return;
+
+  previewLoading.value = true;
+  try {
+    await loadOfficeDocument(item, extension, sequence);
+  } catch (error) {
+    console.error('文件预览加载失败:', error);
+    // 远程文件无法被浏览器直接读取时，退回后端文件预览页；
+    // 这与移动端 H5 的 file-preview 处理一致。
+    if (sequence === previewSequence) {
+      previewInfo.value = {
+        extension,
+        name: fileDisplayName(item),
+        type: 'document',
+        url: documentPreviewUrl(item),
+      };
+    }
+  } finally {
+    if (sequence === previewSequence) previewLoading.value = false;
+  }
+}
+
+function closePreview() {
+  previewSequence += 1;
+  previewDialog.value = false;
+  previewLoading.value = false;
+  previewDownloading.value = false;
+  previewItemIndex.value = null;
+  officeDocument.value = null;
+}
+
+async function downloadPreviewFile() {
+  if (previewDownloading.value) return;
+  const item =
+    previewItemIndex.value === null ? null : list.value[previewItemIndex.value];
+  const url = item?.url;
+  if (!item || !url) return;
+
+  previewDownloading.value = true;
+  try {
+    let blob;
+    if (isBlobFile(item.file)) {
+      blob = item.file;
+    } else if (/^(?:blob:|data:)/i.test(url)) {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`文件加载失败（${response.status}）`);
+      blob = await response.blob();
+    } else {
+      const bytes = await fetchFileBytes(url);
+      const buffer = bytes.buffer.slice(
+        bytes.byteOffset,
+        bytes.byteOffset + bytes.byteLength,
+      ) as ArrayBuffer;
+      blob = new Blob([buffer]);
+    }
+    downloadBlob(
+      blob,
+      safeFileName(
+        previewInfo.value.name ||
+          `文件.${previewInfo.value.extension || 'bin'}`,
+      ),
+    );
+  } catch (error) {
+    console.error('文件下载失败:', error);
+    message.error('文件下载失败');
+  } finally {
+    previewDownloading.value = false;
   }
 }
 
@@ -506,13 +765,19 @@ async function setCurrent(index: number) {
   if (!item) return false;
 
   const file = item.file;
+  let fileName = '';
+  if (file instanceof File) {
+    fileName = file.name;
+  } else if (file && typeof file === 'object' && 'name' in file) {
+    fileName = String(file.name || '');
+  }
   fileOrgInfo.value = file?.size
     ? {
-        name: file instanceof File ? file.name : 'name' in file ? file.name : '',
+        name: fileName,
         size: file.size,
         type: file.type,
       }
-    : (await getInfo(item.url)) ?? {};
+    : ((await getInfo(item.url)) ?? {});
 
   fileOrgInfo.value.index = index;
 
@@ -523,8 +788,7 @@ async function setCurrent(index: number) {
       img.src = item.url;
       await new Promise((resolve, reject) => {
         img.addEventListener('load', resolve);
-        // eslint-disable-next-line unicorn/prefer-add-event-listener
-        img.onerror = reject;
+        img.addEventListener('error', reject);
       });
       fileOrgInfo.value.width = img.naturalWidth;
       fileOrgInfo.value.height = img.naturalHeight;
@@ -614,7 +878,6 @@ function cropHandler() {
 
 // 压缩相关函数
 function compress(blob: Blob, outputType?: string, fileName?: string) {
-  // eslint-disable-next-line no-new
   new Compressor(blob, {
     quality: (compressorOption.value.quality - 1) / 100,
     mimeType: outputType || blob.type,
@@ -696,8 +959,11 @@ function handleDragStart(e: DragEvent, index: number) {
 
   draggedIndex.value = index;
   isDragging.value = true;
-  e.dataTransfer!.effectAllowed = 'move';
-  e.dataTransfer!.setData('text/html', e.target?.toString() || '');
+  const dt = e.dataTransfer;
+  if (dt) {
+    dt.effectAllowed = 'move';
+    dt.setData('text/html', e.target?.toString() || '');
+  }
 
   // 阻止事件冒泡，防止触发父级的拖拽上传逻辑
   e.stopPropagation();
@@ -712,7 +978,10 @@ function handleDragEnd() {
 function handleItemDragOver(e: DragEvent, index: number) {
   e.preventDefault();
   e.stopPropagation();
-  e.dataTransfer!.dropEffect = 'move';
+  const dt = e.dataTransfer;
+  if (dt) {
+    dt.dropEffect = 'move';
+  }
 
   if (draggedIndex.value !== null && draggedIndex.value !== index) {
     dragOverIndex.value = index;
@@ -758,26 +1027,32 @@ async function upload() {
   const uploadItems = list.value
     .filter(
       (item): item is FileItem & { file: File } =>
-        item.file instanceof File && !item.url.startsWith('http'),
+        item.file instanceof File && isPendingUpload(item),
     )
     .map((item) => item.file);
 
   if (uploadItems.length === 0) return list.value;
 
+  const uploadTarget = props.multiple ? uploadItems : uploadItems[0];
+  if (!uploadTarget) return list.value;
+
   uploading.value = true;
   try {
-    const ret = await uploadFile(
-      props.multiple ? uploadItems : uploadItems[0]!,
-      { scene: props.scene },
-      (e) => {
-        uploadProgress.value = Math.floor((e.progress ?? 0) * 100);
-      },
-    );
+    const ret = await uploadFile(uploadTarget, { scene: props.scene }, (e) => {
+      uploadProgress.value = Math.floor((e.progress ?? 0) * 100);
+    });
 
-    const results = props.multiple ? ret : [ret];
+    let results: string[] = [];
+    if (props.multiple) {
+      results = Array.isArray(ret)
+        ? ret.filter((value): value is string => typeof value === 'string')
+        : [];
+    } else if (typeof ret === 'string') {
+      results = [ret];
+    }
 
     list.value = list.value.map((item) => {
-      if (item.file && !item.url.startsWith('http')) {
+      if (item.file instanceof File && isPendingUpload(item)) {
         const result = results.shift();
         if (result) {
           return { ...item, url: result };
@@ -797,16 +1072,45 @@ async function upload() {
   }
 }
 
+// 取文件展示名：Blob 无 name，File/FileDescriptor 有；缺省回退到 url
+function fileDisplayName(item: FileItem): string {
+  const f = item.file;
+  if (f && typeof f === 'object' && 'name' in f && f.name) {
+    return String(f.name);
+  }
+  if (item.name) return String(item.name);
+  try {
+    return decodeURIComponent(
+      new URL(item.url, window.location.origin).pathname.split('/').pop() ||
+        item.url,
+    );
+  } catch {
+    return item.url || '';
+  }
+}
+
 function formatUrl(urlString: string): FileItem {
-  const url = new URL(urlString, window.location.origin);
-  const params = new URLSearchParams(url.search);
+  let url: null | URL = null;
+  try {
+    url = new URL(urlString, window.location.origin);
+  } catch {
+    // 保留无法解析的本地路径，仍允许上层显示/上传。
+  }
+  const params = url ? new URLSearchParams(url.search) : null;
+  const pathname = url?.pathname || urlString.split(/[?#]/)[0] || '';
+  let name = params?.get('name') || pathname.split('/').pop() || '';
+  try {
+    name = decodeURIComponent(name);
+  } catch {
+    // 使用原始文件名。
+  }
 
   return {
     url: urlString,
     file: {
-      size: Number(params.get('size') || 0),
-      name: params.get('name') || url.pathname.split('/').pop() || '',
-      category: params.get('category'),
+      size: Number(params?.get('size') || 0),
+      name,
+      category: params?.get('category') || params?.get('category_id'),
     },
   };
 }
@@ -875,9 +1179,10 @@ defineExpose({
                 >
                   <div class="w-100 h-full position-relative">
                     <Card
-                      class="w-100 h-full position-relative image-card on-hover"
+                      class="w-100 h-full position-relative image-card on-hover cursor-pointer"
                       :body-style="{ padding: 0, height: '100%' }"
                       :bordered="false"
+                      @click="preview(index)"
                     >
                       <Image
                         v-if="!isVideoUrl(item.url, item.file)"
@@ -907,7 +1212,7 @@ defineExpose({
                       >
                         <!-- 拖拽指示器 -->
                         <div
-                          v-if="props.multiple && list.length > 1"
+                          v-if="!viewOnly && props.multiple && list.length > 1"
                           class="drag-handle"
                         >
                           <span
@@ -915,15 +1220,28 @@ defineExpose({
                             style="color: white; cursor: grab; opacity: 0.7"
                           ></span>
                         </div>
-                        <div class="flex items-center justify-center gap-1">
+                        <div
+                          v-if="
+                            !viewOnly ||
+                            typeIcons.some(
+                              (icon) =>
+                                icon.name === 'preview' &&
+                                icon.types.includes(props.fileType),
+                            )
+                          "
+                          class="flex items-center justify-center gap-1"
+                        >
                           <Button
-                            v-for="(icon, i) in typeIcons.filter((icon) =>
-                              icon.types.includes(props.fileType),
+                            v-for="(icon, i) in typeIcons.filter(
+                              (icon) =>
+                                icon.types.includes(props.fileType) &&
+                                (!viewOnly || icon.name === 'preview'),
                             )"
                             :key="i"
                             type="text"
                             size="small"
-                            @click="iconAction(icon.name, index)"
+                            :disabled="icon.name === 'preview' ? false : undefined"
+                            @click.stop="iconAction(icon.name, index)"
                             style="
                               color: white;
                               background: transparent;
@@ -941,7 +1259,10 @@ defineExpose({
                 </div>
               </div>
             </div>
-            <div class="grid-item" v-if="list.length === 0 || props.multiple">
+            <div
+              class="grid-item"
+              v-if="!viewOnly && (list.length === 0 || props.multiple)"
+            >
               <div class="square-container">
                 <div class="media-item add" @click="choose">
                   <span class="icon-[mdi--plus] h-6 w-6"></span>
@@ -950,64 +1271,65 @@ defineExpose({
               </div>
             </div>
           </div>
-          <!-- 隐藏的 Image 做预览控制器 -->
-          <Image
-            v-if="previewSrc"
-            :style="{ display: 'none' }"
-            :src="previewSrc"
-            :preview="{
-              open: previewOpen,
-              onOpenChange: (val) => {
-                previewOpen = val;
-              },
-            }"
-          >
-            <template v-if="isVideoUrl(previewSrc)" #imageRender>
-              <video
-                
-                width="100%"
-                controls
-                autoplay
-                :src="previewSrc"
-                style="max-width: 90vw; max-height: 90vh"
-              ></video>
-            </template>
-          </Image>
         </template>
         <template v-else>
-          <Button
-            class="cursor-pointer border border-dashed border-gray-300"
-            @click="choose"
-          >
-            <span class="icon-[mdi--upload] h-5 w-5"></span>
-            <div>点击或拖拽上传</div>
-          </Button>
-          <div class="bg-transparent py-3">
-            <!-- <List class="bg-transparent">
-              <ListItem
+          <div v-if="viewOnly" class="bg-transparent py-2">
+            <div
+              v-for="(item, index) in list"
+              :key="index"
+              class="mb-1 flex items-center justify-between gap-2 text-sm"
+            >
+              <span
+                class="truncate cursor-pointer hover:text-blue-500"
+                :title="fileDisplayName(item)"
+                @click="preview(index)"
+              >
+                {{ fileDisplayName(item) }}
+              </span>
+              <Button
+                type="link"
+                size="small"
+                :disabled="false"
+                @click="preview(index)"
+              >
+                预览
+              </Button>
+            </div>
+            <div v-if="list.length === 0" class="text-sm text-gray-400">
+              暂无文件
+            </div>
+          </div>
+          <template v-else>
+            <Button
+              class="cursor-pointer border border-dashed border-gray-300"
+              @click="choose"
+            >
+              <span class="icon-[mdi--upload] h-5 w-5"></span>
+              <div>点击或拖拽上传</div>
+            </Button>
+            <div class="bg-transparent py-3">
+              <div
                 v-for="(item, index) in list"
                 :key="index"
-                @click="preview(index)"
-                :style="{ cursor: 'pointer' }"
+                class="mb-1 flex items-center justify-between gap-2 text-sm"
               >
-                <template #actions>
-                  <Button
-                    type="text"
-                    danger
-                    :icon="h('span', { class: 'icon-[mdi--close] w-4 h-4' })"
-                    size="small"
-                    @click.stop="remove(index)"
-                  />
-                </template>
-                <List.Item.Meta
-                  :title="item.file?.name || '文件'"
-                  :description="
-                    item.file?.size ? formatSize(item.file?.size) : ''
-                  "
+                <span
+                  class="truncate cursor-pointer"
+                  :title="fileDisplayName(item)"
+                  @click="preview(index)"
+                >
+                  {{ fileDisplayName(item) }}
+                </span>
+                <Button
+                  type="text"
+                  danger
+                  :icon="h('span', { class: 'icon-[mdi--close] w-4 h-4' })"
+                  size="small"
+                  @click.stop="remove(index)"
                 />
-              </ListItem>
-            </List> -->
-          </div>
+              </div>
+            </div>
+          </template>
         </template>
       </Spin>
     </div>
@@ -1028,9 +1350,7 @@ defineExpose({
       width="50vw"
       :footer="null"
     >
-      <div
-        class="flex items-center justify-center bg-black"
-      >
+      <div class="flex items-center justify-center bg-black">
         <video
           ref="video"
           :src="videoUrl"
@@ -1083,20 +1403,19 @@ defineExpose({
             <div>
               <span class="mr-3 font-bold">处理前</span>
               <span>类型：{{ fileOrgInfo.type.replace('image/', '') }}</span>
-              <span class="mx-2"
-                >分辨率：{{ fileOrgInfo.width }} *
-                {{ fileOrgInfo.height }}</span
-              >
+              <span class="mx-2">
+                分辨率：{{ fileOrgInfo.width }} * {{ fileOrgInfo.height }}
+              </span>
               <span>大小：{{ formatSize(fileOrgInfo.size) }}</span>
             </div>
 
             <div v-if="compressedFileSize" class="text-red-500">
               <span class="mr-3 font-bold">处理后</span>
               <span>类型：{{ cropperOption.outputType }}</span>
-              <span class="mx-2"
-                >分辨率：{{ cropperOption.fixedWidth }} *
-                {{ cropperOption.fixedHeight }}</span
-              >
+              <span class="mx-2">
+                分辨率：{{ cropperOption.fixedWidth }} *
+                {{ cropperOption.fixedHeight }}
+              </span>
               <span>大小：{{ formatSize(compressedFileSize) }}</span>
             </div>
           </div>
@@ -1167,47 +1486,83 @@ defineExpose({
       </div>
     </Modal>
 
-    <Modal
+    <Drawer
       v-model:open="previewDialog"
       title="文件预览"
-      width="100vw"
-      :footer="null"
-      wrap-class-name="fullscreen-modal"
+      placement="right"
+      width="min(100vw, 1200px)"
+      destroy-on-close
+      class="file-preview-drawer"
+      @close="closePreview"
     >
-      <div class="mb-4 flex items-center justify-between">
-        <span class="text-lg font-medium">文件预览</span>
+      <template #extra>
         <Button
-          type="text"
-          :icon="h('span', { class: 'icon-[mdi--close] w-4 h-4' })"
-          @click="previewDialog = false"
-        />
-      </div>
-      <div style="height: calc(100vh - 120px)">
-        <div v-if="previewInfo.type === 'image'">
-          <Image
-            :src="previewInfo.url"
-            :preview="false"
-            style="width: 100%; height: 100%; object-fit: contain"
-          />
+          :disabled="false"
+          :icon="h('span', { class: 'icon-[mdi--download-outline] w-4 h-4' })"
+          :loading="previewDownloading"
+          size="small"
+          @click="downloadPreviewFile"
+        >
+          下载
+        </Button>
+      </template>
+      <div class="preview-content">
+        <div
+          v-if="previewLoading"
+          class="flex h-full items-center justify-center"
+        >
+          <Spin tip="正在加载文件..." size="large" />
         </div>
+        <img
+          v-else-if="previewInfo.type === 'image'"
+          :src="previewInfo.url"
+          alt="文件预览"
+          class="preview-image"
+        />
+        <video
+          v-else-if="previewInfo.type === 'video'"
+          :src="previewInfo.url"
+          controls
+          autoplay
+          class="preview-video"
+        ></video>
         <iframe
           v-else-if="previewInfo.type === 'pdf'"
           :src="previewInfo.url"
           width="100%"
           height="100%"
+          frameborder="0"
+        ></iframe>
+        <AppOnlyoffice
+          v-else-if="previewInfo.type === 'office' && officeDocument"
+          :key="officeDocument.key"
+          :document="officeDocument"
+          mode="view"
+          stream-fallback="download"
+        />
+        <iframe
+          v-else-if="previewInfo.type === 'document'"
+          :src="previewInfo.url"
+          width="100%"
+          height="100%"
+          frameborder="0"
         ></iframe>
         <div
-          v-else-if="['word', 'excel', 'ppt', 'pdf'].includes(previewInfo.type)"
-          style="height: 100%"
+          v-else
+          class="flex h-full flex-col items-center justify-center gap-4 text-sm text-gray-400"
         >
-          <!-- <AppOffice
-            :document-type="previewInfo.type"
-            :document="{ url: previewInfo.url }"
-            callback-url="https://dev2.cpzhongzhou.com/api/v1/mock-save"
-          /> -->
+          <span>该类型文件暂不支持在线预览</span>
+          <Button
+            type="primary"
+            :disabled="false"
+            :loading="previewDownloading"
+            @click="downloadPreviewFile"
+          >
+            点击下载
+          </Button>
         </div>
       </div>
-    </Modal>
+    </Drawer>
   </div>
 </template>
 
@@ -1217,14 +1572,14 @@ defineExpose({
   box-sizing: border-box;
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
   gap: 8px;
+  align-items: flex-start;
 }
 
 .grid-item {
-  min-width: 0;
   flex: 0 0 var(--item-width, 150px);
   width: var(--item-width, 150px);
+  min-width: 0;
 }
 
 /* 正方形容器 */
@@ -1309,6 +1664,25 @@ defineExpose({
   object-fit: cover !important;
 }
 
+.preview-content {
+  flex: 1;
+  height: calc(100vh - 56px);
+  min-height: 320px;
+}
+
+.preview-content :deep(.onlyoffice-shell) {
+  width: 100%;
+  height: 100%;
+}
+
+.preview-image,
+.preview-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
 .btn-wrap {
   gap: 8px;
   background: rgb(0 0 0 / 50%);
@@ -1341,23 +1715,10 @@ defineExpose({
   margin-left: 0;
 }
 
-/* 全屏模态框样式 */
-:deep(.fullscreen-modal) {
-  top: 0 !important;
-  width: 100vw !important;
-  max-width: 100vw !important;
-  height: 100vh !important;
-  padding-bottom: 0 !important;
-}
-
-:deep(.fullscreen-modal .ant-modal-content) {
+/* 文件预览抽屉 */
+.file-preview-drawer :deep(.ant-drawer-body) {
   display: flex;
   flex-direction: column;
-  height: 100vh;
-}
-
-:deep(.fullscreen-modal .ant-modal-body) {
-  flex: 1;
-  padding: 0;
+  padding: 0 !important;
 }
 </style>

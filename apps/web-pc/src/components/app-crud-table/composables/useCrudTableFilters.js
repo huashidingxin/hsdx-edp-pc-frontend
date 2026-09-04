@@ -69,15 +69,13 @@ export function useCrudTableFilters(props, ctx, dataApi) {
     computeCollapseCount(formatedFilterFields.value),
   );
 
-  /**
-   * 当前可见的筛选字段
-   */
-  const visibleFilterFields = computed(() => {
-    // 无操作区时没有展开/收起入口，不能把字段折叠到页面不可访问。
-    if (filterExpand.value || props.filterActionable === false) {
-      return formatedFilterFields.value;
-    }
-    return formatedFilterFields.value.slice(0, collapsedCount.value);
+  // 操作区会在筛选字段占满一行时自动换行，此时无需再折叠筛选字段。
+  const fieldsFitOneRow = computed(() => {
+    const totalSpan = formatedFilterFields.value.reduce(
+      (total, field) => total + (Number(field.col ?? field.span ?? 6) || 6),
+      0,
+    );
+    return totalSpan <= ROW_TOTAL_COLS;
   });
 
   /**
@@ -86,8 +84,24 @@ export function useCrudTableFilters(props, ctx, dataApi) {
   const canToggleExpand = computed(
     () =>
       props.filterActionable !== false &&
+      !fieldsFitOneRow.value &&
       formatedFilterFields.value.length > collapsedCount.value,
   );
+
+  /**
+   * 当前可见的筛选字段
+   */
+  const visibleFilterFields = computed(() => {
+    // 无操作区或字段本身能完整占满一行时，没有展开/收起入口，展示全部字段。
+    if (
+      filterExpand.value ||
+      props.filterActionable === false ||
+      fieldsFitOneRow.value
+    ) {
+      return formatedFilterFields.value;
+    }
+    return formatedFilterFields.value.slice(0, collapsedCount.value);
+  });
 
   /**
    * 重置筛选状态

@@ -35,7 +35,7 @@ function parseJson(text) {
 
 async function loadPages() {
   try {
-    const { data } = await new Resource('pages').list({ per_page: 'all' });
+    const { data } = await new Resource('pages').list({ per_page: 100 });
     pages.value = data || [];
     const fromRoute = route.params.pageId;
     if (fromRoute && pages.value.some((p) => String(p.id) === String(fromRoute))) {
@@ -50,8 +50,8 @@ async function loadPages() {
 
 async function loadCodeOptions() {
   try {
-    const res = await requestClient.get('/pages/data-schema', {
-      page_id: pageId.value,
+    const res = await requestClient.get('/page-data-schema', {
+      params: { page_id: pageId.value },
     });
     const items = res?.items || res || [];
     codeOptions.value = [...new Set(items.map((i) => i.code))].sort();

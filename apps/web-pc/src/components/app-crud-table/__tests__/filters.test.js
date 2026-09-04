@@ -60,6 +60,15 @@ describe('useCrudTableFilters', () => {
     expect(fitting.api.canToggleExpand.value).toBe(false);
     expect(fitting.api.visibleFilterFields.value).toHaveLength(3);
 
+    const exactlyOneRow = createFilters({
+      filterFields: [
+        { col: 12, field: 'left' },
+        { col: 12, field: 'right' },
+      ],
+    });
+    expect(exactlyOneRow.api.canToggleExpand.value).toBe(false);
+    expect(exactlyOneRow.api.visibleFilterFields.value).toHaveLength(2);
+
     const withoutActions = createFilters({ filterActionable: false });
     expect(withoutActions.api.canToggleExpand.value).toBe(false);
     expect(withoutActions.api.visibleFilterFields.value).toHaveLength(3);

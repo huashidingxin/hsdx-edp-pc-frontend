@@ -1,10 +1,10 @@
 <script lang="ts" setup>
-import { computed, watch } from 'vue';
+import { computed, onMounted, watch } from 'vue';
 
 import { useAntdDesignTokens } from '@vben/hooks';
 import { preferences, usePreferences } from '@vben/preferences';
 
-import { App, ConfigProvider, StyleProvider, theme } from 'antdv-next';
+import { App, ConfigProvider, theme } from 'antdv-next';
 
 import { antdLocale } from '#/locales';
 
@@ -25,26 +25,52 @@ const tokenTheme = computed(() => {
 
   return {
     algorithm,
-    token: tokens,
+    token: {
+      ...tokens
+    },
   };
 });
 
-watch(
-  tokenTheme,
-  (themeConfig) => {
-    ConfigProvider.config({ theme: themeConfig });
+const globalComponentConfig = {
+  input: {
+    autoComplete: 'off',
   },
-  { immediate: true },
-);
+};
+
+import { useAccessStore } from '@vben/stores';
+import { useSocketStore } from '#/store/socket';
+import { useAppStore } from '#/store/app';
+
+
+const accessStore = useAccessStore();
+const socketStore = useSocketStore();
+const appStore = useAppStore();
+
+watch(()=>accessStore.isAccessChecked,(isAccessChecked)=>{
+  if(isAccessChecked){
+    socketStore.connect()
+    appStore.getProjects('all').catch(()=>{})
+  }
+},{immediate:true,deep:true})
+
+
+
+// 直接同步初始化，不依赖异步 API 阻塞显示
+onMounted(() => {
+  appStore.loadSetting()
+});
+
 </script>
 
 <template>
-  <!-- layer: antd 组件样式注入 @layer antd，让 Tailwind 工具类可以覆盖组件样式 -->
-  <StyleProvider layer>
-    <ConfigProvider :locale="antdLocale" :theme="tokenTheme">
-      <App>
-        <RouterView />
-      </App>
-    </ConfigProvider>
-  </StyleProvider>
+  <ConfigProvider
+    :locale="antdLocale"
+    :theme="tokenTheme"
+    component-size="large"
+    v-bind="globalComponentConfig"
+  >
+    <App>
+      <RouterView />
+    </App>
+  </ConfigProvider>
 </template>

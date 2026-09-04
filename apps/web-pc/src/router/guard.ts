@@ -7,6 +7,7 @@ import { startProgress, stopProgress } from '@vben/utils';
 
 import { accessRoutes, coreRouteNames } from '#/router/routes';
 import { useAuthStore } from '#/store';
+import { getAccessCodesApi } from '#/api/core/auth';
 
 import { generateAccess } from './access';
 
@@ -95,6 +96,15 @@ function setupAccessGuard(router: Router) {
     const userInfo = userStore.userInfo || (await authStore.fetchUserInfo());
     const userRoles = userInfo.roles ?? [];
 
+    // 每次进入应用（含页面刷新）都重新拉取权限码：
+    // accessCodes 会被持久化到 localStorage，登录后修改角色权限若不刷新
+    // 这里覆盖，用户只能靠退出重登才能生效。
+    try {
+      accessStore.setAccessCodes(await getAccessCodesApi());
+    } catch (error) {
+      console.error('刷新权限码失败:', error);
+    }
+
     // 生成菜单和路由
     const { accessibleMenus, accessibleRoutes } = await generateAccess({
       roles: userRoles,
@@ -111,9 +121,17 @@ function setupAccessGuard(router: Router) {
       (to.path === preferences.app.defaultHomePath
         ? userInfo.homePath || preferences.app.defaultHomePath
         : to.fullPath)) as string;
+    const decodedRedirectPath = decodeURIComponent(redirectPath);
+    const resolvedRedirect = router.resolve(decodedRedirectPath);
+    const shouldFallbackHome = resolvedRedirect.matched.some(
+      (record) => record.name === 'FallbackNotFound',
+    );
+    const nextPath = shouldFallbackHome
+      ? userInfo.homePath || preferences.app.defaultHomePath
+      : decodedRedirectPath;
 
     return {
-      ...router.resolve(decodeURIComponent(redirectPath)),
+      ...router.resolve(nextPath),
       replace: true,
     };
   });

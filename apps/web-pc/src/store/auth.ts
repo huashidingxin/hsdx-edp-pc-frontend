@@ -20,6 +20,8 @@ export const useAuthStore = defineStore('auth', () => {
 
   const loginLoading = ref(false);
 
+  let isLoggingOut = false;
+
   /**
    * 异步处理登录操作
    * Asynchronously handle the login process
@@ -29,6 +31,7 @@ export const useAuthStore = defineStore('auth', () => {
     params: Recordable<any>,
     onSuccess?: () => Promise<void> | void,
   ) {
+    isLoggingOut = false;
     // 异步处理用户登录操作并获取 accessToken
     let userInfo: null | UserInfo = null;
     try {
@@ -40,19 +43,15 @@ export const useAuthStore = defineStore('auth', () => {
         accessStore.setAccessToken(accessToken);
 
         // 获取用户信息并存储到 accessStore 中
-        // const [fetchUserInfoResult, accessCodes] = await Promise.all([
-        //   fetchUserInfo(),
-        //   getAccessCodesApi(),
-        // ]);
-        const [fetchUserInfoResult] = await Promise.all([
-          fetchUserInfo()
+        const [fetchUserInfoResult, accessCodes] = await Promise.all([
+          fetchUserInfo(),
+          getAccessCodesApi(),
         ]);
-
 
         userInfo = fetchUserInfoResult;
 
         userStore.setUserInfo(userInfo);
-        accessStore.setAccessCodes(fetchUserInfoResult.permissions);
+        accessStore.setAccessCodes(accessCodes);
 
         if (accessStore.loginExpired) {
           accessStore.setLoginExpired(false);
@@ -66,7 +65,7 @@ export const useAuthStore = defineStore('auth', () => {
 
         if (userInfo?.realName) {
           notification.success({
-            description: `${$t('authentication.loginSuccessDesc')}:${userInfo?.realName}`,
+            description: `${$t('authentication.loginSuccessDesc')}:${userInfo.realName}`,
             duration: 3,
             title: $t('authentication.loginSuccess'),
           });
@@ -81,7 +80,11 @@ export const useAuthStore = defineStore('auth', () => {
     };
   }
 
+
   async function logout(redirect: boolean = true) {
+    if(isLoggingOut) return;
+
+    isLoggingOut = true;
     try {
       await logoutApi();
     } catch {
@@ -89,6 +92,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
     resetAllStores();
     accessStore.setLoginExpired(false);
+
 
     // 回登录页带上当前路由地址
     await router.replace({
@@ -102,7 +106,8 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function fetchUserInfo() {
-    const userInfo = await getUserInfoApi();
+    let userInfo: null | UserInfo = null;
+    userInfo = await getUserInfoApi();
     userStore.setUserInfo(userInfo);
     return userInfo;
   }
