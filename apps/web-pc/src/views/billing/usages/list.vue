@@ -1,4 +1,5 @@
 <script setup>
+import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
 import { ref } from 'vue';
 
 const filterFields = ref([

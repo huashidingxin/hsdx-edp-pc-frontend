@@ -21,7 +21,6 @@ declare module 'vue' {
     AppOffice: typeof import('./components/AppOffice.vue')['default']
     AppOnlyoffice: typeof import('./components/AppOnlyoffice.vue')['default']
     AppProject: typeof import('./components/AppProject.vue')['default']
-    AppTable: typeof import('./components/AppTable.vue')['default']
     AppUpload: typeof import('./components/AppUpload.vue')['default']
     CrudAuditModal: typeof import('./components/app-crud-table/parts/CrudAuditModal.vue')['default']
     CrudDetailView: typeof import('./components/app-crud-table/parts/CrudDetailView.vue')['default']

@@ -1,10 +1,18 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 
 import { Button, Card, Input, Select, Table, message } from 'antdv-next';
 
 import Resource from '#/api/resource';
 import { requestClient } from '#/api/request';
+
+/**
+ * 双用组件：独立页面时自带应用选择；嵌入应用卡片抽屉时由 appId 指定应用
+ * （接口 URL 自带应用 id，无需同步 localStorage）。
+ */
+const props = defineProps({
+  appId: { type: [Number, String], default: null },
+});
 
 const applications = ref([]);
 const appId = ref(null);
@@ -16,6 +24,8 @@ const saving = ref(false);
 const allData = ref(null);
 
 const appIdNum = computed(() => Number(appId.value) || null);
+/** 抽屉嵌入时隐藏自带的应用选择 */
+const embedded = computed(() => Number(props.appId) > 0);
 
 async function load() {
   if (!appIdNum.value) return;
@@ -89,15 +99,29 @@ onMounted(async () => {
   try {
     const { data } = await new Resource('applications').list({ per_page: 100 });
     applications.value = data || [];
+    const propApp = Number(props.appId);
     appId.value =
-      Number(localStorage.getItem('edp:current-application-id')) ||
-      applications.value[0]?.id ||
-      null;
+      propApp > 0 && applications.value.some((a) => Number(a.id) === propApp)
+        ? propApp
+        : Number(localStorage.getItem('edp:current-application-id')) ||
+          applications.value[0]?.id ||
+          null;
     await load();
   } catch (error) {
     console.error(error);
   }
 });
+
+watch(
+  () => props.appId,
+  (id) => {
+    const num = Number(id);
+    if (num > 0 && num !== appId.value) {
+      appId.value = num;
+      load();
+    }
+  },
+);
 </script>
 
 <template>
@@ -105,16 +129,18 @@ onMounted(async () => {
     <Card :loading="loading">
       <template #title>UI 词条</template>
       <div class="mb-4 flex flex-wrap items-center gap-3">
-        <span class="text-sm text-gray-600">应用</span>
-        <select
-          v-model="appId"
-          class="rounded border border-gray-200 px-2 py-1 text-sm dark:border-gray-600 dark:bg-gray-800"
-          @change="load"
-        >
-          <option v-for="a in applications" :key="a.id" :value="a.id">
-            {{ a.name }}
-          </option>
-        </select>
+        <template v-if="!embedded">
+          <span class="text-sm text-gray-600">应用</span>
+          <select
+            v-model="appId"
+            class="rounded border border-gray-200 px-2 py-1 text-sm dark:border-gray-600 dark:bg-gray-800"
+            @change="load"
+          >
+            <option v-for="a in applications" :key="a.id" :value="a.id">
+              {{ a.name }}
+            </option>
+          </select>
+        </template>
         <span class="text-sm text-gray-600">语言</span>
         <Select v-model:value="locale" style="width: 140px" @change="applyLocale">
           <option v-for="l in locales" :key="l" :value="l">{{ l }}</option>

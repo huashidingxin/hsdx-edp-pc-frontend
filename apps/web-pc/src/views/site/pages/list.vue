@@ -1,7 +1,18 @@
 <script setup>
-import { ref } from 'vue';
+import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
+import { onMounted, ref, watch } from 'vue';
 
 import { Tag } from 'antdv-next';
+
+import { setCurrentApplicationId } from '#/api/application-context';
+
+/**
+ * 双用组件：独立页面时读 localStorage 应用；嵌入应用卡片抽屉时由 appId 指定
+ * （页面接口走请求头 X-Application-Id，需同步 localStorage）。
+ */
+const props = defineProps({
+  appId: { type: [Number, String], default: null },
+});
 
 const TYPE_OPTIONS = [
   { id: 1, name: '首页' },
@@ -9,17 +20,8 @@ const TYPE_OPTIONS = [
   { id: 3, name: '自定义' },
   { id: 4, name: '记录' },
 ];
-const STATUS_OPTIONS = [
-  { id: 0, name: '草稿' },
-  { id: 1, name: '已发布' },
-  { id: 2, name: '已归档' },
-];
 const typeMap = { 1: '首页', 2: '标准', 3: '自定义', 4: '记录' };
 const typeColor = { 1: 'blue', 2: 'green', 3: 'purple', 4: 'orange' };
-const statusMap = { 0: '草稿', 1: '已发布', 2: '已归档' };
-const statusColor = { 0: 'default', 1: 'green', 2: 'orange' };
-const localeStatusMap = { 0: '草稿', 1: '已发布', 2: '已归档' };
-const localeStatusColor = { 0: 'default', 1: 'green', 2: 'orange' };
 
 const filterFields = ref([
   { field: 'code', label: '编码', type: 'text', span: 8 },
@@ -28,7 +30,8 @@ const filterFields = ref([
     label: '类型',
     type: 'select',
     span: 8,
-    attrs: { items: TYPE_OPTIONS },
+    attrs: { fieldNames: { label: 'name', value: 'id' },
+      items: TYPE_OPTIONS },
   },
 ]);
 
@@ -48,13 +51,6 @@ const formFields = ref([
     label: '类型',
     span: 12,
     attrs: { items: TYPE_OPTIONS },
-  },
-  {
-    field: 'status',
-    type: 'select',
-    label: '状态',
-    span: 12,
-    attrs: { items: STATUS_OPTIONS },
   },
   {
     field: 'record_binding',
@@ -89,12 +85,6 @@ const gridColumns = ref([
     slots: { default: 'default_type' },
   },
   {
-    field: 'status',
-    title: '状态',
-    width: 90,
-    slots: { default: 'default_status' },
-  },
-  {
     field: 'locales',
     title: '语言',
     minWidth: 220,
@@ -117,6 +107,24 @@ const actionsConfig = ref([
     order: 35,
   },
 ]);
+
+// 抽屉嵌入时以传入应用为准，并同步请求头上下文
+onMounted(() => {
+  const propApp = Number(props.appId);
+  if (propApp > 0) {
+    setCurrentApplicationId(propApp);
+  }
+});
+
+watch(
+  () => props.appId,
+  (id) => {
+    const num = Number(id);
+    if (num > 0) {
+      setCurrentApplicationId(num);
+    }
+  },
+);
 </script>
 
 <template>
@@ -141,15 +149,11 @@ const actionsConfig = ref([
     <template #default_type="{ row }">
       <Tag :color="typeColor[row.type] || 'default'">{{ typeMap[row.type] || '-' }}</Tag>
     </template>
-    <template #default_status="{ row }">
-      <Tag :color="statusColor[row.status] || 'default'">{{ statusMap[row.status] || '-' }}</Tag>
-    </template>
     <template #default_locales="{ row }">
       <div class="flex flex-wrap gap-1">
         <Tag
           v-for="l in row.locales || []"
           :key="l.locale"
-          :color="localeStatusColor[l.status] || 'default'"
         >
           {{ l.locale }}：{{ l.title || l.slug || l.locale }}
         </Tag>

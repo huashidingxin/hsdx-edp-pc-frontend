@@ -1,30 +1,15 @@
 <script setup lang="ts">
-import type { BasicOption } from '@vben/types';
-
 import type { VbenFormSchema } from '#/adapter/form';
 
 import { computed, onMounted, ref } from 'vue';
 
 import { ProfileBaseSetting } from '@vben/common-ui';
 
-import { getUserInfoApi } from '#/api';
+import { message } from 'antdv-next';
+
+import { getUserInfoApi, updateProfileApi } from '#/api';
 
 const profileBaseSettingRef = ref();
-
-const MOCK_ROLES_OPTIONS: BasicOption[] = [
-  {
-    label: '管理员',
-    value: 'super',
-  },
-  {
-    label: '用户',
-    value: 'user',
-  },
-  {
-    label: '测试',
-    value: 'test',
-  },
-];
 
 const formSchema = computed((): VbenFormSchema[] => {
   return [
@@ -37,29 +22,59 @@ const formSchema = computed((): VbenFormSchema[] => {
       fieldName: 'username',
       component: 'Input',
       label: '用户名',
-    },
-    {
-      fieldName: 'roles',
-      component: 'Select',
       componentProps: {
-        mode: 'tags',
-        options: MOCK_ROLES_OPTIONS,
+        placeholder: '租户内唯一，可留空',
       },
-      label: '角色',
     },
     {
-      fieldName: 'introduction',
-      component: 'Textarea',
-      label: '个人简介',
+      fieldName: 'mobile',
+      component: 'Input',
+      label: '手机号',
+      componentProps: {
+        placeholder: '租户内唯一，可留空',
+      },
+    },
+    {
+      fieldName: 'email',
+      component: 'Input',
+      label: '邮箱',
+      componentProps: {
+        disabled: true,
+      },
     },
   ];
 });
 
 onMounted(async () => {
   const data = await getUserInfoApi();
-  profileBaseSettingRef.value.getFormApi().setValues(data);
+  const info = data as Record<string, any>;
+  profileBaseSettingRef.value
+    .getFormApi()
+    .setValues({
+      email: info.email,
+      mobile: info.mobile ?? '',
+      realName: info.realName,
+      username: info.username ?? '',
+    });
 });
+
+async function handleSubmit(values: Record<string, any>) {
+  try {
+    await updateProfileApi({
+      mobile: values.mobile || null,
+      name: values.realName,
+      username: values.username || null,
+    });
+    message.success('资料已更新');
+  } catch {
+    // 错误提示由请求拦截器统一处理
+  }
+}
 </script>
 <template>
-  <ProfileBaseSetting ref="profileBaseSettingRef" :form-schema="formSchema" />
+  <ProfileBaseSetting
+    ref="profileBaseSettingRef"
+    :form-schema="formSchema"
+    @submit="handleSubmit"
+  />
 </template>

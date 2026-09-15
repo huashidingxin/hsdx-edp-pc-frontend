@@ -155,48 +155,47 @@ watch(
       >
         <LoginForm />
       </AuthenticationLoginExpiredModal>
+      <Modal
+        v-model:open="passwordModalOpen"
+        title="修改密码"
+        :confirm-loading="passwordSubmitting"
+        ok-text="确认修改"
+        cancel-text="取消"
+        @ok="submitPasswordChange"
+        @cancel="resetPasswordForm"
+      >
+        <Form
+          ref="passwordFormRef"
+          :model="passwordForm"
+          :rules="passwordRules"
+          layout="vertical"
+        >
+          <FormItem label="旧密码" name="old_password">
+            <InputPassword
+              v-model:value="passwordForm.old_password"
+              autocomplete="current-password"
+              placeholder="请输入旧密码"
+            />
+          </FormItem>
+          <FormItem label="新密码" name="new_password">
+            <InputPassword
+              v-model:value="passwordForm.new_password"
+              autocomplete="new-password"
+              placeholder="请输入至少 8 位新密码"
+            />
+          </FormItem>
+          <FormItem label="确认新密码" name="confirm_password">
+            <InputPassword
+              v-model:value="passwordForm.confirm_password"
+              autocomplete="new-password"
+              placeholder="请再次输入新密码"
+            />
+          </FormItem>
+        </Form>
+      </Modal>
     </template>
     <template #lock-screen>
       <LockScreen :avatar @to-login="handleLogout" />
     </template>
   </BasicLayout>
-
-  <Modal
-    v-model:open="passwordModalOpen"
-    title="修改密码"
-    :confirm-loading="passwordSubmitting"
-    ok-text="确认修改"
-    cancel-text="取消"
-    @ok="submitPasswordChange"
-    @cancel="resetPasswordForm"
-  >
-    <Form
-      ref="passwordFormRef"
-      :model="passwordForm"
-      :rules="passwordRules"
-      layout="vertical"
-    >
-      <FormItem label="旧密码" name="old_password">
-        <InputPassword
-          v-model:value="passwordForm.old_password"
-          autocomplete="current-password"
-          placeholder="请输入旧密码"
-        />
-      </FormItem>
-      <FormItem label="新密码" name="new_password">
-        <InputPassword
-          v-model:value="passwordForm.new_password"
-          autocomplete="new-password"
-          placeholder="请输入至少 8 位新密码"
-        />
-      </FormItem>
-      <FormItem label="确认新密码" name="confirm_password">
-        <InputPassword
-          v-model:value="passwordForm.confirm_password"
-          autocomplete="new-password"
-          placeholder="请再次输入新密码"
-        />
-      </FormItem>
-    </Form>
-  </Modal>
 </template>

@@ -1,10 +1,22 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue';
+import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
+import { computed, onMounted, ref, watch } from 'vue';
 
 import { Tag, Upload, message } from 'antdv-next';
 
 import Resource from '#/api/resource';
+import { setCurrentApplicationId } from '#/api/application-context';
 import { requestClient } from '#/api/request';
+
+/**
+ * 文件库（双层模型）：按 uploads（上传/引用记录）管理，照抄参考设计。
+ * - 上传：POST /files/upload → files(物理) + uploads(引用)，返回 url?upload=ID
+ * - 列表：GET /uploads（name/大小/分类/引用状态）
+ * - 删除：DELETE /uploads/{id} 解除引用（软删）；物理文件由 files 层管理
+ */
+const props = defineProps({
+  appId: { type: [Number, String], default: null },
+});
 
 const crudRef = ref(null);
 const applications = ref([]);
@@ -13,43 +25,58 @@ const uploading = ref(false);
 const kindMap = { image: '图片', video: '视频', audio: '音频', document: '文档', archive: '压缩包', other: '其他' };
 const kindColor = { image: 'blue', video: 'purple', audio: 'green', document: 'orange', archive: 'default', other: 'default' };
 
-const appId = computed(
-  () =>
+const appId = computed(() => {
+  const propApp = Number(props.appId);
+  if (propApp > 0) return propApp;
+  return (
     Number(localStorage.getItem('edp:current-application-id')) ||
     applications.value[0]?.id ||
-    null,
+    null
+  );
+});
+
+watch(
+  () => props.appId,
+  (id) => {
+    const num = Number(id);
+    if (num > 0) {
+      setCurrentApplicationId(num);
+      crudRef.value?.refresh();
+    }
+  },
 );
 
-const kindItems = [
-  { id: 'image', name: '图片' },
-  { id: 'video', name: '视频' },
-  { id: 'audio', name: '音频' },
-  { id: 'document', name: '文档' },
-  { id: 'archive', name: '压缩包' },
-  { id: 'other', name: '其他' },
-];
-
 const filterFields = ref([
-  { field: 'name', label: '名称', type: 'text', span: 8 },
-  { field: 'kind', label: '类型', type: 'select', span: 8, attrs: { items: kindItems } },
+  { field: 'keyword', label: '文件名', type: 'text', span: 8 },
 ]);
 
 const formFields = ref([
   { field: 'id', type: 'text', label: 'ID', span: 12, displayOnly: true },
-  { field: 'name', type: 'text', label: '名称', span: 12, displayOnly: true },
-  { field: 'kind', type: 'text', label: '类型', span: 12, displayOnly: true },
+  { field: 'name', type: 'text', label: '文件名', span: 12, displayOnly: true },
+  { field: 'category_name', type: 'text', label: '分类', span: 12, displayOnly: true },
   { field: 'mime', type: 'text', label: 'MIME', span: 12, displayOnly: true },
   { field: 'size', type: 'text', label: '大小', span: 12, displayOnly: true },
   { field: 'url', type: 'text', label: 'URL', span: 24, displayOnly: true },
-  { field: 'created_at', type: 'datetime', label: '上传时间', span: 12, displayOnly: true },
+  { field: 'created_at', type: 'text', label: '上传时间', span: 12, displayOnly: true },
 ]);
 
 const gridColumns = ref([
   { field: 'id', title: 'ID', width: 70 },
   { field: 'preview', title: '预览', width: 90, slots: { default: 'default_preview' } },
-  { field: 'name', title: '名称', minWidth: 200 },
-  { field: 'kind', title: '类型', width: 90, slots: { default: 'default_kind' } },
+  { field: 'name', title: '文件名', minWidth: 200 },
+  {
+    field: 'category_name',
+    title: '分类',
+    width: 90,
+    slots: { default: 'default_category' },
+  },
   { field: 'size', title: '大小', width: 100, formatter: formatSize },
+  {
+    field: 'object_id',
+    title: '引用',
+    width: 80,
+    formatter: ({ cellValue }) => (cellValue ? '已引用' : '未引用'),
+  },
   { field: 'created_at', title: '上传时间', minWidth: 170 },
 ]);
 
@@ -63,7 +90,7 @@ function formatSize({ cellValue }) {
 }
 
 function isImage(row) {
-  return row.kind === 'image';
+  return row.mime?.startsWith('image/');
 }
 
 async function handleUpload({ file }) {
@@ -72,10 +99,11 @@ async function handleUpload({ file }) {
     const formDataObj = new FormData();
     formDataObj.append('file', file);
     if (appId.value) formDataObj.append('application_id', appId.value);
-    await requestClient.post('/files/upload', formDataObj, {
+    const res = await requestClient.post('/files/upload', formDataObj, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
-    message.success('上传成功');
+    // 双层模型返回 {url?upload=ID, upload_id, isNew, exists}：秒传时 isNew=false
+    message.success(res?.exists ? '文件已存在，已复用（秒传）' : '上传成功');
     crudRef.value?.refresh();
   } catch {
     message.error('上传失败');
@@ -89,6 +117,11 @@ onMounted(async () => {
   try {
     const { data } = await new Resource('applications').list({ per_page: 100 });
     applications.value = data || [];
+    // 抽屉嵌入时以传入应用为准，并同步请求头上下文
+    const propApp = Number(props.appId);
+    if (propApp > 0) {
+      setCurrentApplicationId(propApp);
+    }
   } catch (error) {
     console.error(error);
   }
@@ -98,7 +131,7 @@ onMounted(async () => {
 <template>
   <AppCrudTable
     ref="crudRef"
-    api-url="files"
+    api-url="uploads"
     v-model="formData"
     :extra-query="{ application_id: appId }"
     :filter-fields="filterFields"
@@ -138,10 +171,12 @@ onMounted(async () => {
         alt=""
         class="h-10 w-14 rounded object-cover"
       />
-      <Tag v-else>{{ kindMap[row.kind] || row.kind }}</Tag>
+      <Tag v-else>{{ row.extension || '文件' }}</Tag>
     </template>
-    <template #default_kind="{ row }">
-      <Tag :color="kindColor[row.kind] || 'default'">{{ kindMap[row.kind] || '-' }}</Tag>
+    <template #default_category="{ row }">
+      <Tag :color="row.mime?.startsWith('image/') ? 'blue' : 'default'">
+        {{ row.category_name || '其他' }}
+      </Tag>
     </template>
   </AppCrudTable>
 </template>

@@ -59,6 +59,7 @@
     "pinia": "catalog:",
     "vue": "catalog:",
     "mitt": "^3.0.1",
+    "lodash-es": "^4.17.23",
     "vue-cropper": "^1.1.4",
     "vue-router": "catalog:",
     "vxe-pc-ui": "catalog:",

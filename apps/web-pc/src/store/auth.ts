@@ -10,6 +10,10 @@ import { resetAllStores, useAccessStore, useUserStore } from '@vben/stores';
 import { notification } from 'antdv-next';
 import { defineStore } from 'pinia';
 
+import {
+  clearCurrentApplicationId,
+  ensureCurrentApplicationId,
+} from '#/api/application-context';
 import { getAccessCodesApi, getUserInfoApi, loginApi, logoutApi } from '#/api';
 import { $t } from '#/locales';
 
@@ -91,6 +95,8 @@ export const useAuthStore = defineStore('auth', () => {
       // 不做任何处理
     }
     resetAllStores();
+    // 清掉当前应用选择，避免切换账号后带上别的租户的应用 id
+    clearCurrentApplicationId();
     accessStore.setLoginExpired(false);
 
 
@@ -109,6 +115,10 @@ export const useAuthStore = defineStore('auth', () => {
     let userInfo: null | UserInfo = null;
     userInfo = await getUserInfoApi();
     userStore.setUserInfo(userInfo);
+
+    // 登录/刷新后确保已选择当前应用（应用级接口依赖 X-Application-Id）
+    await ensureCurrentApplicationId().catch(() => {});
+
     return userInfo;
   }
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Ref } from 'vue';
 
-import { h } from 'vue';
+import { h,computed,ref,shallowRef,watch } from 'vue';
 import 'vue-cropper/dist/index.css';
 import { VueCropper } from 'vue-cropper/dist/vue-cropper.es.js';
 

@@ -60,7 +60,7 @@ const props = defineProps({
   },
 });
 
-const emit = defineEmits(['saved', 'saveDraft', 'restoreDraft']);
+const emit = defineEmits(['saved']);
 
 // ---- 表单字段配置 ----
 const formFields = ref([]); // 后端 form.show 的 fields 数组（含 rules/base_rules/options）

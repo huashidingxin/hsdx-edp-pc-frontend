@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, ref, shallowRef, useSlots, watch } from 'vue';
+import { useRouter } from 'vue-router';
 
 import {
   AutoComplete,
@@ -652,15 +653,16 @@ function getMonthInGanZhi(date) {
 </script>
 
 <template>
-  <!-- hidden 字段 -->
-  <div v-if="field.type === 'hidden'" ref="fieldRef"></div>
+  <div class="app-field">
+    <!-- hidden 字段 -->
+    <div v-if="field.type === 'hidden'" ref="fieldRef"></div>
 
-  <!-- 动态包裹组件 -->
-  <component
-    :is="shouldUseFormItem ? FormItem : 'div'"
-    v-bind="shouldUseFormItem ? formItemProps : {}"
-    :class="!shouldUseFormItem ? getClass(field) : {}"
-  >
+    <!-- 动态包裹组件 -->
+    <component
+      :is="shouldUseFormItem ? FormItem : 'div'"
+      v-bind="shouldUseFormItem ? formItemProps : {}"
+      :class="!shouldUseFormItem ? getClass(field) : {}"
+    >
     <slot name="default">
       <!-- 纯显示模式：只显示文本 -->
       <div
@@ -817,6 +819,7 @@ function getMonthInGanZhi(date) {
       </div>
     </slot>
   </component>
+  </div>
 </template>
 
 <style scoped>

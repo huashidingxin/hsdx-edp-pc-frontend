@@ -1,4 +1,5 @@
 <script setup>
+import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
 import { onMounted, ref } from 'vue';
 
 import { Tag } from 'antdv-next';
@@ -33,7 +34,8 @@ const filterFields = ref([
     label: '域',
     type: 'select',
     span: 8,
-    attrs: { items: domainOptions },
+    attrs: { fieldNames: { label: 'name', value: 'id' },
+      items: domainOptions },
   },
 ]);
 

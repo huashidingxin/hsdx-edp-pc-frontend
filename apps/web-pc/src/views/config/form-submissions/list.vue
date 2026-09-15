@@ -1,4 +1,5 @@
 <script setup>
+import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
 import { computed, ref } from 'vue';
 import { useRoute } from 'vue-router';
 
@@ -22,7 +23,8 @@ const statusItems = [
 ];
 
 const filterFields = ref([
-  { field: 'status', label: '状态', type: 'select', span: 8, attrs: { items: statusItems } },
+  { field: 'status', label: '状态', type: 'select', span: 8, attrs: { fieldNames: { label: 'name', value: 'id' },
+      items: statusItems } },
 ]);
 
 const formFields = ref([
@@ -102,30 +104,32 @@ const actionsConfig = ref([
 </script>
 
 <template>
-  <AppCrudTable
-    v-if="formId"
-    ref="crudRef"
-    :api-url="apiUrl"
-    v-model="formData"
-    :filter-fields="filterFields"
-    :fields="formFields"
-    :grid-options="{
-      columns: gridColumns,
-      showOverflow: false,
-      columnConfig: { resizable: true },
-    }"
-    :open-mode="{ create: 'modal', detail: 'modal' }"
-    :form-attrs="{ layout: 'vertical', size: 'medium' }"
-    :actions-config="actionsConfig"
-    :inline-actions="['view', 'mark_read', 'mark_replied']"
-    :toolbar="{ create: false }"
-    permission-name="cms.form"
-    title="表单提交"
-    class="p-4"
-  >
-    <template #default_status="{ row }">
-      <Tag :color="statusColor[row.status] || 'default'">{{ statusMap[row.status] || '-' }}</Tag>
-    </template>
-  </AppCrudTable>
-  <div v-else class="p-8 text-center text-gray-400">请从表单列表进入提交记录</div>
+  <div class="h-full">
+    <AppCrudTable
+      v-if="formId"
+      ref="crudRef"
+      :api-url="apiUrl"
+      v-model="formData"
+      :filter-fields="filterFields"
+      :fields="formFields"
+      :grid-options="{
+        columns: gridColumns,
+        showOverflow: false,
+        columnConfig: { resizable: true },
+      }"
+      :open-mode="{ create: 'modal', detail: 'modal' }"
+      :form-attrs="{ layout: 'vertical', size: 'medium' }"
+      :actions-config="actionsConfig"
+      :inline-actions="['view', 'mark_read', 'mark_replied']"
+      :toolbar="{ create: false }"
+      permission-name="cms.form"
+      title="表单提交"
+      class="p-4"
+    >
+      <template #default_status="{ row }">
+        <Tag :color="statusColor[row.status] || 'default'">{{ statusMap[row.status] || '-' }}</Tag>
+      </template>
+    </AppCrudTable>
+    <div v-else class="p-8 text-center text-gray-400">请从表单列表进入提交记录</div>
+  </div>
 </template>

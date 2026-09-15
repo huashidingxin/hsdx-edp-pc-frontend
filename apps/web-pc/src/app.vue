@@ -49,7 +49,6 @@ const appStore = useAppStore();
 watch(()=>accessStore.isAccessChecked,(isAccessChecked)=>{
   if(isAccessChecked){
     socketStore.connect()
-    appStore.getProjects('all').catch(()=>{})
   }
 },{immediate:true,deep:true})
 

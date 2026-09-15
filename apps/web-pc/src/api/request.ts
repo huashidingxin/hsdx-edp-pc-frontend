@@ -17,6 +17,7 @@ import { message } from 'antdv-next';
 
 import { useAuthStore } from '#/store';
 
+import { getCurrentApplicationId } from './application-context';
 import { refreshTokenApi } from './core';
 
 const { apiURL } = useAppConfig(import.meta.env, import.meta.env.PROD);
@@ -50,8 +51,7 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
    */
   async function doRefreshToken() {
     const accessStore = useAccessStore();
-    const resp = await refreshTokenApi();
-    const newToken = resp.data;
+    const newToken = await refreshTokenApi();
     accessStore.setAccessToken(newToken);
     return newToken;
   }
@@ -67,6 +67,14 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
 
       config.headers.Authorization = formatToken(accessStore.accessToken);
       config.headers['Accept-Language'] = preferences.app.locale;
+
+      // 应用级接口（settings / page-data-schema / menus / files …）必需；
+      // 由 store/auth 登录后 ensureCurrentApplicationId() 初始化。
+      const applicationId = getCurrentApplicationId();
+      if (applicationId) {
+        config.headers['X-Application-Id'] = String(applicationId);
+      }
+
       return config;
     },
   });
@@ -95,9 +103,10 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
   client.addResponseInterceptor(
     errorMessageResponseInterceptor((msg: string, error) => {
       // 这里可以根据业务进行定制,你可以拿到 error 内的信息进行定制化处理，根据不同的 code 做不同的提示，而不是直接使用 message.error 提示 msg
-      // 当前mock接口返回的错误字段是 error 或者 message
+      // 后端错误包络：{ success, message, error: { code, message, details } }
       const responseData = error?.response?.data ?? {};
-      const errorMessage = responseData?.error ?? responseData?.message ?? '';
+      const errorMessage =
+        responseData?.message ?? responseData?.error?.message ?? '';
       // 如果没有错误信息，则会根据状态码进行提示
       message.error(errorMessage || msg);
     }),

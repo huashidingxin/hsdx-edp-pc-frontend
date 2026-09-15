@@ -1,4 +1,5 @@
 <script setup>
+import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
 import { ref } from 'vue';
 
 import { Tag } from 'antdv-next';
@@ -12,7 +13,8 @@ const statusItems = [
 
 const filterFields = ref([
   { field: 'capability_code', label: '能力', type: 'text', span: 8 },
-  { field: 'enabled', label: '状态', type: 'select', span: 8, attrs: { items: statusItems } },
+  { field: 'enabled', label: '状态', type: 'select', span: 8, attrs: { fieldNames: { label: 'name', value: 'id' },
+      items: statusItems } },
 ]);
 
 const formFields = ref([

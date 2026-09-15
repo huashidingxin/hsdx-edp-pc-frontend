@@ -1,4 +1,5 @@
 <script setup>
+import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
 import { onMounted, ref } from 'vue';
 
 import { Button, Modal, Select, Tag, message } from 'antdv-next';
@@ -23,7 +24,8 @@ const filterFields = ref([
     label: '状态',
     type: 'select',
     span: 6,
-    attrs: { items: STATUS_OPTIONS },
+    attrs: { fieldNames: { label: 'name', value: 'id' },
+      items: STATUS_OPTIONS },
   },
 ]);
 

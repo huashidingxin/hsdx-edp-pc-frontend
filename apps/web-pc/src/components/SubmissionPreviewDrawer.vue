@@ -313,6 +313,7 @@ defineExpose({ open: openPreview, close });
 </script>
 
 <template>
+  <div>
   <Drawer
     :open="open && !activeAttachment"
     :header="null"
@@ -463,6 +464,7 @@ defineExpose({ open: openPreview, close });
     @close="closeAttachmentPreview"
     @change="changeAttachment"
   />
+  </div>
 </template>
 
 <style scoped>

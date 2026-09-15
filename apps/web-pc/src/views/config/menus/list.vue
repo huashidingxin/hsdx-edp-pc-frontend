@@ -1,19 +1,42 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue';
-
-import { Button, Drawer, Form, FormItem, Input, InputNumber, Modal, Popconfirm, Select, Tag, Tree, message } from 'antdv-next';
+import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
+import { computed, onMounted, ref, watch } from 'vue';
 
 import Resource from '#/api/resource';
-import { requestClient } from '#/api/request';
+import { setCurrentApplicationId } from '#/api/application-context';
+
+import MenuItemsManager from './_components/MenuItemsManager.vue';
+
+/**
+ * 双用组件：独立页面时读 localStorage 应用；嵌入应用卡片抽屉时由 appId 指定
+ * （菜单接口要求请求头与参数一致，仍需同步 localStorage）。
+ */
+const props = defineProps({
+  appId: { type: [Number, String], default: null },
+});
 
 const crudRef = ref(null);
 const applications = ref([]);
 
-const appId = computed(
-  () =>
+const appId = computed(() => {
+  const propApp = Number(props.appId);
+  if (propApp > 0) return propApp;
+  return (
     Number(localStorage.getItem('edp:current-application-id')) ||
     applications.value[0]?.id ||
-    null,
+    null
+  );
+});
+
+watch(
+  () => props.appId,
+  (id) => {
+    const num = Number(id);
+    if (num > 0) {
+      setCurrentApplicationId(num);
+      crudRef.value?.refresh();
+    }
+  },
 );
 
 const filterFields = ref([]);
@@ -66,79 +89,10 @@ function emptyText({ cellValue }) {
 /* ===================== 菜单项管理抽屉 ===================== */
 const itemsOpen = ref(false);
 const itemsMenu = ref(null);
-const itemEditing = ref(null);
-const itemForm = ref({ title: '', url: '', sort: 0 });
 
 function openItems(row) {
   itemsMenu.value = row;
   itemsOpen.value = true;
-}
-
-function itemTitle(item) {
-  const t = item.titles || {};
-  return Object.values(t).find(Boolean) || item.link_value || '-';
-}
-
-function buildItemTree(items) {
-  const nodes = new Map((items || []).map((i) => [i.id, { ...i, children: [] }]));
-  const roots = [];
-  (items || []).forEach((i) => {
-    const node = nodes.get(i.id);
-    if (i.parent_id && nodes.has(i.parent_id)) {
-      nodes.get(i.parent_id).children.push(node);
-    } else {
-      roots.push(node);
-    }
-  });
-  return roots;
-}
-
-function startNewItem() {
-  itemEditing.value = null;
-  itemForm.value = { title: '', url: '', sort: 0 };
-}
-
-function editItem(item) {
-  itemEditing.value = item;
-  itemForm.value = {
-    title: Object.values(item.titles || {}).find(Boolean) || '',
-    url: item.link_value || '',
-    sort: item.sort ?? 0,
-  };
-}
-
-async function saveItem() {
-  try {
-    const payload = {
-      titles: { 'zh-CN': itemForm.value.title },
-      link_value: itemForm.value.url,
-      sort: itemForm.value.sort,
-    };
-    if (itemEditing.value) {
-      await requestClient.patch(
-        `/menus/${itemsMenu.value.id}/items/${itemEditing.value.id}`,
-        payload,
-      );
-    } else {
-      await requestClient.post(`/menus/${itemsMenu.value.id}/items`, payload);
-    }
-    message.success('菜单项已保存');
-    refreshMenu();
-  } catch {
-    message.error('保存失败');
-  }
-}
-
-async function deleteItem(item) {
-  try {
-    await requestClient.delete(
-      `/menus/${itemsMenu.value.id}/items/${item.id}`,
-    );
-    message.success('已删除');
-    refreshMenu();
-  } catch {
-    message.error('删除失败');
-  }
 }
 
 function refreshMenu() {
@@ -149,6 +103,11 @@ onMounted(async () => {
   try {
     const { data } = await new Resource('applications').list({ per_page: 100 });
     applications.value = data || [];
+    // 抽屉嵌入时以传入应用为准，并同步请求头上下文
+    const propApp = Number(props.appId);
+    if (propApp > 0) {
+      setCurrentApplicationId(propApp);
+    }
   } catch (error) {
     console.error(error);
   }
@@ -191,54 +150,10 @@ onMounted(async () => {
       </template>
     </AppCrudTable>
 
-    <Drawer
-      :open="itemsOpen"
-      :title="`菜单项 - ${itemsMenu?.name || itemsMenu?.code || ''}`"
-      width="560"
-      @close="itemsOpen = false"
-    >
-      <div class="mb-4 rounded border border-gray-200 p-3 dark:border-gray-600">
-        <div class="mb-3 flex items-center justify-between">
-          <span class="text-sm font-medium text-gray-700">
-            {{ itemEditing ? '编辑菜单项' : '新增菜单项' }}
-          </span>
-          <Button size="small" @click="startNewItem">新增</Button>
-        </div>
-        <Form layout="vertical" :model="itemForm">
-          <FormItem label="标题">
-            <Input v-model:value="itemForm.title" placeholder="菜单标题" />
-          </FormItem>
-          <FormItem label="链接">
-            <Input v-model:value="itemForm.url" placeholder="如 /products" />
-          </FormItem>
-          <FormItem label="排序">
-            <InputNumber v-model:value="itemForm.sort" style="width: 120px" />
-          </FormItem>
-          <div class="flex justify-end gap-2">
-            <Button size="small" @click="startNewItem">重置</Button>
-            <Button size="small" type="primary" @click="saveItem">保存</Button>
-          </div>
-        </Form>
-      </div>
-
-      <div class="space-y-2">
-        <div
-          v-for="item in buildItemTree(itemsMenu?.items)"
-          :key="item.id"
-          class="flex items-center justify-between rounded border border-gray-200 px-3 py-2 dark:border-gray-600"
-        >
-          <span class="text-sm text-gray-800">{{ itemTitle(item) }}</span>
-          <div class="flex shrink-0 gap-2">
-            <Button size="small" @click="editItem(item)">编辑</Button>
-            <Popconfirm title="确定删除？" @confirm="deleteItem(item)">
-              <Button size="small" danger>删除</Button>
-            </Popconfirm>
-          </div>
-        </div>
-        <div v-if="!itemsMenu?.items?.length" class="py-6 text-center text-gray-400">
-          暂无菜单项
-        </div>
-      </div>
-    </Drawer>
+    <MenuItemsManager
+      v-model:open="itemsOpen"
+      :menu="itemsMenu"
+      @refresh="refreshMenu"
+    />
   </div>
 </template>

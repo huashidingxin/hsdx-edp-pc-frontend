@@ -7,6 +7,8 @@ import { ProfilePasswordSetting, z } from '@vben/common-ui';
 
 import { message } from 'antdv-next';
 
+import { changePasswordApi } from '#/api';
+
 const formSchema = computed((): VbenFormSchema[] => {
   return [
     {
@@ -23,7 +25,7 @@ const formSchema = computed((): VbenFormSchema[] => {
       component: 'VbenInputPassword',
       componentProps: {
         passwordStrength: true,
-        placeholder: '请输入新密码',
+        placeholder: '请输入新密码（至少 8 位）',
       },
     },
     {
@@ -50,8 +52,17 @@ const formSchema = computed((): VbenFormSchema[] => {
   ];
 });
 
-function handleSubmit() {
-  message.success('密码修改成功');
+async function handleSubmit(values: Record<string, any>) {
+  try {
+    await changePasswordApi({
+      confirm_password: values.confirmPassword,
+      new_password: values.newPassword,
+      old_password: values.oldPassword,
+    });
+    message.success('密码修改成功');
+  } catch {
+    // 错误提示（旧密码不正确等）由请求拦截器统一处理
+  }
 }
 </script>
 <template>

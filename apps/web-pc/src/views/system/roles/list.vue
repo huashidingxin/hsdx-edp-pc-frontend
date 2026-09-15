@@ -1,4 +1,5 @@
 <script setup>
+import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
 import { computed, onMounted, ref } from 'vue';
 
 import { Button, Drawer, Tag, Tree, message } from 'antdv-next';
@@ -224,69 +225,71 @@ onMounted(loadPermissions);
 </script>
 
 <template>
-  <AppCrudTable
-    api-url="roles"
-    :filter-fields="filterFields"
-    :fields="formFields"
-    :actions-config="actionsConfig"
-    :inline-actions="['view', 'edit', 'assign_permissions', 'delete']"
-    permission-name="system.role"
-    :grid-options="{
-      columns: gridColumns,
-      showOverflow: false,
-      columnConfig: { resizable: true },
-    }"
-    :open-mode="{ create: 'modal', detail: 'modal' }"
-    :form-attrs="{ layout: 'vertical', size: 'medium' }"
-    title="角色管理"
-    class="p-4"
-  >
-    <template #default_is_system="{ row }">
-      <Tag :color="row.is_system ? 'orange' : 'green'">
-        {{ isSystemText(row) }}
-      </Tag>
-    </template>
-  </AppCrudTable>
-
-  <Drawer
-    :open="assignOpen"
-    :title="`分配权限 - ${assignRoleName}`"
-    width="560"
-    @close="assignOpen = false"
-  >
-    <div class="mb-2 text-xs text-gray-500">
-      权限按 域（domain）→ 资源（resource）→ 动作（action）三层分组。
-      勾选资源节点将自动勾选其全部动作；取消勾选同步清除该节点全部动作。
-    </div>
-    <div class="mb-2 flex gap-2">
-      <Button size="small" @click="checkAll">全选</Button>
-      <Button size="small" @click="uncheckAll">清空</Button>
-      <span class="text-xs leading-6 text-gray-400">
-        已选 {{ checkedKeys.length }} / {{ leafIds.size }}
-      </span>
-    </div>
-    <div
-      style="height: calc(100vh - 260px); overflow-y: auto"
-      class="rounded border border-gray-200 dark:border-gray-600"
+  <div class="h-full">
+    <AppCrudTable
+      api-url="roles"
+      :filter-fields="filterFields"
+      :fields="formFields"
+      :actions-config="actionsConfig"
+      :inline-actions="['view', 'edit', 'assign_permissions', 'delete']"
+      permission-name="system.role"
+      :grid-options="{
+        columns: gridColumns,
+        showOverflow: false,
+        columnConfig: { resizable: true },
+      }"
+      :open-mode="{ create: 'modal', detail: 'modal' }"
+      :form-attrs="{ layout: 'vertical', size: 'medium' }"
+      title="角色管理"
+      class="p-4"
     >
-      <Tree
-        :checked-keys="checkedKeys"
-        :tree-data="permissionTree"
-        :expanded-keys="expandedKeys"
-        checkable
-        check-strictly
-        block-node
-        @check="onCheck"
-        @expand="(keys) => (expandedKeys = keys)"
-      />
-    </div>
-    <template #footer>
-      <div class="flex justify-end gap-2">
-        <Button @click="assignOpen = false">取消</Button>
-        <Button type="primary" :loading="assignLoading" @click="saveAssign">
-          保存
-        </Button>
+      <template #default_is_system="{ row }">
+        <Tag :color="row.is_system ? 'orange' : 'green'">
+          {{ isSystemText(row) }}
+        </Tag>
+      </template>
+    </AppCrudTable>
+
+    <Drawer
+      :open="assignOpen"
+      :title="`分配权限 - ${assignRoleName}`"
+      width="560"
+      @close="assignOpen = false"
+    >
+      <div class="mb-2 text-xs text-gray-500">
+        权限按 域（domain）→ 资源（resource）→ 动作（action）三层分组。
+        勾选资源节点将自动勾选其全部动作；取消勾选同步清除该节点全部动作。
       </div>
-    </template>
-  </Drawer>
+      <div class="mb-2 flex gap-2">
+        <Button size="small" @click="checkAll">全选</Button>
+        <Button size="small" @click="uncheckAll">清空</Button>
+        <span class="text-xs leading-6 text-gray-400">
+          已选 {{ checkedKeys.length }} / {{ leafIds.size }}
+        </span>
+      </div>
+      <div
+        style="height: calc(100vh - 260px); overflow-y: auto"
+        class="rounded border border-gray-200 dark:border-gray-600"
+      >
+        <Tree
+          :checked-keys="checkedKeys"
+          :tree-data="permissionTree"
+          :expanded-keys="expandedKeys"
+          checkable
+          check-strictly
+          block-node
+          @check="onCheck"
+          @expand="(keys) => (expandedKeys = keys)"
+        />
+      </div>
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <Button @click="assignOpen = false">取消</Button>
+          <Button type="primary" :loading="assignLoading" @click="saveAssign">
+            保存
+          </Button>
+        </div>
+      </template>
+    </Drawer>
+  </div>
 </template>

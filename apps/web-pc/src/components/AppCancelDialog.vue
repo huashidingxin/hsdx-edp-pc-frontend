@@ -62,36 +62,38 @@ onMounted(loadReasons);
 </script>
 
 <template>
-  <slot :open="openDialog">
-    <Button danger @click="openDialog">{{ buttonText }}</Button>
-  </slot>
+  <div class="app-cancel-dialog">
+    <slot :open="openDialog">
+      <Button danger @click="openDialog">{{ buttonText }}</Button>
+    </slot>
 
-  <Modal
-    :open="open"
-    title="取消原因"
-    :confirm-loading="saving"
-    ok-text="确定取消"
-    cancel-text="暂不取消"
-    @ok="submit"
-    @cancel="open = false"
-  >
-    <div class="space-y-4 py-2">
-      <div>
-        <div class="mb-1 text-sm text-gray-600">原因</div>
-        <Select
-          v-model:value="form.reason_id"
-          :options="reasons.map((r) => ({ value: r.id, label: r.name }))"
-          style="width: 100%"
-        />
+    <Modal
+      :open="open"
+      title="取消原因"
+      :confirm-loading="saving"
+      ok-text="确定取消"
+      cancel-text="暂不取消"
+      @ok="submit"
+      @cancel="open = false"
+    >
+      <div class="space-y-4 py-2">
+        <div>
+          <div class="mb-1 text-sm text-gray-600">原因</div>
+          <Select
+            v-model:value="form.reason_id"
+            :options="reasons.map((r) => ({ value: r.id, label: r.name }))"
+            style="width: 100%"
+          />
+        </div>
+        <div v-if="form.reason_id === 0">
+          <div class="mb-1 text-sm text-gray-600">其他原因</div>
+          <Input.TextArea
+            v-model:value="form.other_reason"
+            :rows="2"
+            placeholder="请输入取消原因"
+          />
+        </div>
       </div>
-      <div v-if="form.reason_id === 0">
-        <div class="mb-1 text-sm text-gray-600">其他原因</div>
-        <Input.TextArea
-          v-model:value="form.other_reason"
-          :rows="2"
-          placeholder="请输入取消原因"
-        />
-      </div>
-    </div>
-  </Modal>
+    </Modal>
+  </div>
 </template>

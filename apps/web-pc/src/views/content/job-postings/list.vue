@@ -1,9 +1,14 @@
 <script setup>
-import { onMounted, ref } from 'vue';
+import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
+import { computed, onMounted, ref } from 'vue';
 
 import { Tag } from 'antdv-next';
 
 import Resource from '#/api/resource';
+import { useCurrentAppStore } from '#/store/current-app';
+
+import ContentPublishModal from '../_components/ContentPublishModal.vue';
+import { useAppQueryFilter } from '../_components/useAppQueryFilter.js';
 
 import LocaleManager from '../_components/LocaleManager.vue';
 
@@ -32,12 +37,53 @@ const statusItems = [
   { id: 2, name: '已归档' },
 ];
 
+const appStore = useCurrentAppStore();
+const crudRef = ref(null);
+const props = defineProps({ appId: { type: [Number, String], default: null } });
+const { appFilterDefault, suggestedAppId, onFiltersUpdate, embedded } = useAppQueryFilter(crudRef, () => props.appId);
+
+/** 应用筛选选项（第一筛选位）：全部 + 各应用；内容默认全局展示。 */
+const appOptions = computed(() =>
+  (appStore.applications || []).map((a) => ({ id: a.id, name: a.name })),
+);
+
 const filterFields = ref([
+  {
+    field: 'application_id',
+    label: '应用',
+    default: appFilterDefault,
+    type: 'select',
+    span: 8,
+    attrs: {
+      allowClear: true,
+      placeholder: '全部应用',
+      items: appOptions,
+      fieldNames: { label: 'name', value: 'id' },
+      showSearch: true,
+    },
+  },
   { field: 'department', label: '部门', type: 'text', span: 6 },
   { field: 'location', label: '地点', type: 'text', span: 6 },
-  { field: 'employment_type', label: '类型', type: 'select', span: 6, attrs: { items: employmentOptions } },
-  { field: 'channel', label: '渠道', type: 'select', span: 6, attrs: { items: channelOptions } },
-  { field: 'status', label: '状态', type: 'select', span: 6, attrs: { items: statusItems } },
+  { field: 'employment_type', label: '类型', type: 'select', span: 6, attrs: { fieldNames: { label: 'name', value: 'id' },
+      items: employmentOptions } },
+  { field: 'channel', label: '渠道', type: 'select', span: 6, attrs: { fieldNames: { label: 'name', value: 'id' },
+      items: channelOptions } },
+  { field: 'status', label: '状态', type: 'select', span: 6, attrs: { items: statusItems, fieldNames: { label: 'name', value: 'id' } } },
+  {
+    field: 'publish_state',
+    label: '发布范围',
+    type: 'select',
+    span: 8,
+    attrs: {
+      allowClear: true,
+      placeholder: '全部',
+      fieldNames: { label: 'name', value: 'id' },
+      items: [
+        { id: 'published', name: '已发布' },
+        { id: 'unpublished', name: '未发布' },
+      ],
+    },
+  },
 ]);
 
 const formFields = ref([
@@ -110,9 +156,42 @@ const gridColumns = ref([
     slots: { default: 'default_status' },
   },
   { field: 'created_at', title: '创建时间', minWidth: 160 },
+  {
+    field: 'published_applications',
+    title: '发布范围',
+    minWidth: 180,
+    slots: { default: 'default_published' },
+  },
 ]);
 
+
+
 const formData = ref(null);
+/* ===================== 发布到应用 ===================== */
+const publishOpen = ref(false);
+const publishRow = ref(null);
+const publishIds = computed(() =>
+  (publishRow.value?.published_applications || []).map((a) => Number(a.id)),
+);
+const publishTitle = computed(
+  () => publishRow.value?.locales?.[0]?.title || `#${publishRow.value?.id ?? ''}`,
+);
+
+/** 是否发布到租户全部应用（= 通用）。 */
+function isGlobal(row) {
+  const ids = (row?.published_applications || []).map((a) => Number(a.id));
+  if (ids.length === 0 || appStore.applications.length === 0) return false;
+  return appStore.applications.every((a) => ids.includes(Number(a.id)));
+}
+
+function openPublish(row) {
+  publishRow.value = row;
+  publishOpen.value = true;
+}
+
+function handlePublished() {
+  crudRef.value?.refresh();
+}
 
 function emptyText({ cellValue }) {
   return cellValue === null || cellValue === undefined || cellValue === ''
@@ -121,6 +200,11 @@ function emptyText({ cellValue }) {
 }
 
 onMounted(async () => {
+  try {
+    await appStore.loadApplications();
+  } catch (error) {
+    console.error(error);
+  }
   try {
     const { data } = await new Resource('categories').list({ per_page: 100, type: 2 });
     categories.value = data || [];
@@ -137,9 +221,13 @@ onMounted(async () => {
 </script>
 
 <template>
+  <div>
   <AppCrudTable
+    ref="crudRef"
     api-url="job-postings"
     v-model="formData"
+    @update:filters="onFiltersUpdate"
+    :exclude-filters="embedded ? ['application_id'] : []"
     :filter-fields="filterFields"
     :fields="formFields"
     :grid-options="{
@@ -149,10 +237,26 @@ onMounted(async () => {
     }"
     :open-mode="{ create: 'modal', detail: 'modal' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
+    :actions-config="[
+      {
+        key: 'publish',
+        label: '发布',
+        icon: 'lucide--send',
+        permission: 'edit',
+        onClick: (row) => openPublish(row),
+        order: 30,
+      },
+    ]"
+    :inline-actions="['view', 'edit', 'publish', 'delete']"
     permission-name="cms.job"
     title="招聘管理"
     class="p-4"
   >
+    <template #sub-title>
+      <span class="text-xs text-gray-400">
+        内容全局管理 · 用首位的「应用」筛选查看某站点的发布情况
+      </span>
+    </template>
     <template #default_employment="{ row }">
       <Tag color="blue">{{ employmentMap[row.employment_type] || row.employment_type || '-' }}</Tag>
     </template>
@@ -161,6 +265,22 @@ onMounted(async () => {
     </template>
     <template #default_status="{ row }">
       <Tag :color="statusColor[row.status] || 'default'">{{ statusMap[row.status] || '-' }}</Tag>
+    </template>
+
+    <template #default_published="{ row }">
+      <span v-if="isGlobal(row)">
+        <Tag color="green">通用</Tag>
+      </span>
+      <span v-else-if="row.published_applications?.length" class="flex flex-wrap gap-1">
+        <Tag
+          v-for="app in row.published_applications"
+          :key="app.id"
+          color="blue"
+        >
+          {{ app.name || `#${app.id}` }}
+        </Tag>
+      </span>
+      <Tag v-else color="default">未发布</Tag>
     </template>
 
     <template #field_locale_manager="{ modelValue, formValue }">
@@ -179,4 +299,16 @@ onMounted(async () => {
       />
     </template>
   </AppCrudTable>
+
+  <ContentPublishModal
+    v-model:open="publishOpen"
+    :suggested-app-id="suggestedAppId"
+    resource="job-postings"
+    :content-id="publishRow?.id"
+    :content-title="publishTitle"
+    :initial-ids="publishIds"
+    :applications="appStore.applications"
+    @saved="handlePublished"
+  />
+  </div>
 </template>
