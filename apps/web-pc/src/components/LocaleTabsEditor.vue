@@ -19,6 +19,8 @@ import { Button, Empty, Input, Select, Spin, Tabs } from 'antdv-next';
 import { requestClient } from '#/api/request';
 import AppUpload from '#/components/AppUpload.vue';
 
+import AppEditor from './app-editor/index.vue';
+
 const props = defineProps({
   fields: { type: Array, default: () => [] },
   locales: { type: Array, default: () => [] },
@@ -109,7 +111,7 @@ function blankForm() {
 }
 
 function fillForm(form, data) {
-  const next = { ...(data || {}) };
+  const next = { ...data };
   for (const f of props.fields) {
     const v = data?.[f.field];
     if (f.type === 'json') {
@@ -338,7 +340,7 @@ onMounted(async () => {
             v-for="f in fields"
             :key="f.field"
             :class="
-              f.type === 'textarea' || f.type === 'json' || isUploadField(f)
+              f.type === 'textarea' || f.type === 'json' || f.type === 'editor' || isUploadField(f)
                 ? 'md:col-span-2'
                 : ''
             "
@@ -348,8 +350,15 @@ onMounted(async () => {
             >
               {{ f.label }}
             </label>
+            <AppEditor
+              v-if="f.type === 'editor'"
+              v-model="forms[activeCode][f.field]"
+              :placeholder="f.placeholder || ''"
+              :min-height="f.attrs?.minHeight || 240"
+              @update:model-value="handleFieldChange(activeCode)"
+            />
             <Input.TextArea
-              v-if="f.type === 'textarea' || f.type === 'json'"
+              v-else-if="f.type === 'textarea' || f.type === 'json'"
               v-model:value="forms[activeCode][f.field]"
               :rows="f.type === 'json' ? 8 : 3"
               :placeholder="f.placeholder || ''"

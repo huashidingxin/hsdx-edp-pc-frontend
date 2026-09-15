@@ -14,7 +14,9 @@ export const overridesPreferences = defineOverridesPreferences({
     watermark: false,
     authPageLayout:'panel-center',
     // enablePreferences:true,
-    defaultHomePath: '/workspace',
+    // 必须与后端 AuthService::HOME_PATH 指向同一路由，且该路由要在 AdminMenuSeeder 中存在；
+    // 否则未登录访问 / 会 redirect 到不存在的路径（根路由 core.ts 也用它）。
+    defaultHomePath: '/dashboard/analytics',
     "layout": "header-sidebar-nav",
   },
   "breadcrumb": {
