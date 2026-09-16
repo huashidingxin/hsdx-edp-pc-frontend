@@ -190,19 +190,35 @@ describe('默认校验规则编解码', () => {
   });
 
   it('校验规则行：必填无需值，数值型必须为数字', () => {
-    expect(validateRuleRows([{ type: 'required', value: '', message: '必填' }], 'text')).toBeNull();
-    expect(validateRuleRows([{ type: 'min', value: '', message: 'x' }], 'number')).toBe(
+    // 行模型固定携带 level（FormRuleModal 新建行给 1，fieldRuleEditorRows 归一为 1|2），
+    // 夹具必须带上，否则会先被「请为每行选择级别」拦下、测不到值相关分支。
+    const row = (overrides) => ({ level: 1, ...overrides });
+    expect(validateRuleRows([row({ type: 'required', value: '', message: '必填' })], 'text')).toBeNull();
+    expect(validateRuleRows([row({ type: 'min', value: '', message: 'x' })], 'number')).toBe(
       '「最小值（不低于）」需要填写值',
     );
-    expect(validateRuleRows([{ type: 'min', value: 'abc', message: 'x' }], 'number')).toBe(
+    expect(validateRuleRows([row({ type: 'min', value: 'abc', message: 'x' })], 'number')).toBe(
       '「最小值（不低于）」的值需为数字',
     );
-    expect(validateRuleRows([{ type: 'contains', value: '', message: 'x' }], 'text')).toBe(
+    expect(validateRuleRows([row({ type: 'contains', value: '', message: 'x' })], 'text')).toBe(
       '「包含」需要填写值',
     );
-    expect(validateRuleRows([{ type: 'contains', value: 'x', message: 'x' }], 'group')).toBe(
+    expect(validateRuleRows([row({ type: 'contains', value: 'x', message: 'x' })], 'group')).toBe(
       '字段类型不支持规则「contains」',
     );
+  });
+
+  it('校验规则行：级别必须显式选择，缺失或越界都拦下', () => {
+    // level 不是可选装饰：它决定不通过时是「错误」还是「警告」，缺失即视为未选择。
+    expect(validateRuleRows([{ type: 'required', value: '', message: '必填' }], 'text')).toBe(
+      '请为每行选择级别（错误/警告）',
+    );
+    expect(
+      validateRuleRows([{ type: 'required', value: '', message: '必填', level: 3 }], 'text'),
+    ).toBe('请为每行选择级别（错误/警告）');
+    expect(
+      validateRuleRows([{ type: 'required', value: '', message: '必填', level: 2 }], 'text'),
+    ).toBeNull();
   });
 });
 

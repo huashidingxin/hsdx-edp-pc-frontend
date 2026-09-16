@@ -22,7 +22,6 @@ import LocaleManager from '../_components/LocaleManager.vue';
  */
 const CONTENT_KIND = 'certificate';
 
-const statusMap = { 0: '草稿', 1: '已发布', 2: '已归档' };
 const statusColor = { 0: 'default', 1: 'green', 2: 'orange' };
 
 const categories = ref([]);
@@ -102,7 +101,6 @@ const filterFields = ref([
 ]);
 
 const formFields = ref([
-  { field: 'id', type: 'text', label: 'ID', span: 12, displayOnly: true },
   {
     field: 'category_id',
     type: 'select',
@@ -110,7 +108,7 @@ const formFields = ref([
     span: 12,
     attrs: { items: categoryOptions, fieldNames: { label: 'name', value: 'id' }, showSearch: true },
   },
-  { field: 'image', type: 'image', label: '证书图片', span: 12, required: true },
+  { field: 'image', type: 'image', label: '证书图片', span: 24, required: true },
   { field: 'sort', type: 'number', label: '排序', span: 12 },
   {
     field: 'published_at',
@@ -265,7 +263,7 @@ onMounted(async () => {
       <span v-else>-</span>
     </template>
     <template #default_status="{ row }">
-      <Tag :color="statusColor[row.status] || 'default'">{{ statusMap[row.status] || '-' }}</Tag>
+      <Tag :color="statusColor[row.status] || 'default'">{{ row.status_label || '-' }}</Tag>
     </template>
 
     <template #default_published="{ row }">

@@ -69,7 +69,6 @@ const otherCodes = computed(() => {
 
 const orderedCodes = computed(() => [defaultLocale.value, ...otherCodes.value]);
 
-const statusMap = { 0: '草稿', 1: '已发布', 2: '已归档' };
 const activeStatus = computed(() => contentMap[activeCode.value]?.status);
 const filledCount = computed(
   () => orderedCodes.value.filter((code) => hasAnyContent(code)).length,
@@ -317,7 +316,7 @@ onMounted(async () => {
             v-if="item.key === defaultLocale && activeStatus !== undefined"
             class="text-xs text-gray-400"
           >
-            {{ statusMap[activeStatus] || '' }}
+            {{ contentMap[activeCode]?.status_label || '' }}
           </span>
         </span>
       </template>

@@ -11,7 +11,6 @@ const saving = ref(false);
 const editing = ref(false);
 const form = ref({ name: '', default_locale: '' });
 
-const statusMap = { 0: '未激活', 1: '正常', 2: '禁用' };
 const statusColor = { 0: 'orange', 1: 'green', 2: 'red' };
 
 async function load() {
@@ -71,7 +70,7 @@ onMounted(load);
           </Descriptions.Item>
           <Descriptions.Item label="状态">
             <Tag :color="statusColor[tenant.status] || 'default'">
-              {{ statusMap[tenant.status] || '-' }}
+              {{ tenant.status_label || '-' }}
             </Tag>
           </Descriptions.Item>
           <Descriptions.Item label="套餐">

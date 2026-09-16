@@ -12,6 +12,10 @@
  * 这里只做「读取/写入/校验」的纯函数，不发起请求、不碰 DOM。
  */
 
+// 「这段文本看起来像 JSON 吗」是纯数据形状判断，被表单推断与脏值比较共用，
+// 定义在 pageContentAutoForm（该模块无任何 import，不构成循环依赖）。
+import { looksLikeJsonText } from './pageContentAutoForm';
+
 /** 允许的 provider。 */
 export const PROVIDERS = ['model', 'static_content', 'page_banner'];
 
@@ -69,8 +73,19 @@ export const CARD_FIELD_KINDS = {
 
 const BLOCK_NAME_RE = /^[a-z][a-z0-9_-]*$/;
 
-/** 深拷贝（仅处理 JSON 可表达的值，页面内容本身就是 JSON）。 */
-function deepClone(value) {
+/**
+ * 深拷贝（仅处理 JSON 可表达的值，页面内容本身就是 JSON）。
+ *
+ * **为什么草稿必须经过它**：`unwrap` 的 `default` 分支是**原样返回**（`raw ?? null`）。
+ * 若直接把它的返回值当草稿，草稿与 `contentData` 基线就是**同一个对象引用** ——
+ * 用户改草稿等于改基线，`isDirty` 永远为 false，保存按钮永远点不动。
+ *
+ * 历史：JSON 兜底分支靠「把对象转成字符串」意外规避了别名问题；
+ * 改成图形表单后草稿重新变回对象，别名问题才暴露出来。
+ * 所以在 `unwrap` **之前**深拷贝，对所有 editor.type 一并生效
+ * （`unwrap` 对 `card`/`cards` 只做浅拷贝，嵌套对象仍会别名）。
+ */
+export function deepClone(value) {
   if (value === null || typeof value !== 'object') return value;
 
   return JSON.parse(JSON.stringify(value));
@@ -136,6 +151,8 @@ export function setAtPath(data, path, value) {
  *
  * 对每个 editor.type 都返回**已定义**的值（对象/数组/字符串），绝不返回 undefined
  * —— 模板会直接对这些值取属性（如 `drafts[name].image`），undefined 会直接抛错。
+ *
+ * ⚠️ 调用方在需要「可编辑草稿」时，必须先用 `deepClone` 隔离基线引用（见该函数注释）。
  */
 export function unwrap(editorType, raw) {
   const isObject = isPlainObject(raw);
@@ -511,4 +528,51 @@ export function parseJsonText(text) {
   } catch (error) {
     return { ok: false, value: null, error: error.message };
   }
+}
+
+/**
+ * 展示用文本：对象 → 格式化 JSON，字符串原样返回。
+ *
+ * 字符串**原样**返回很重要：`about-*.body` 这类块的数据本身就是一段 HTML，
+ * 若在这里 `JSON.stringify` 会加上引号并转义，用户看到的就是一堆 `\n`。
+ */
+export function formatJson(value) {
+  if (typeof value === 'string') return value;
+  if (value === null || value === undefined) return '';
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * 脏值比较前的规范化。
+ *
+ * 两侧必须用**同一套规则**，否则会出现「数据没变却显示已修改」：
+ * - 高级（JSON）模式下草稿是一段 JSON 文本、基线是对象，
+ *   直接比较是「文本 vs 对象」，永远不相等 → 保存成功后仍显示「未保存」、
+ *   保存按钮仍可点。所以先把 JSON 文本解析回值再比较。
+ * - json 块统一格式化成缩进文本，避免键序/空白差异造成误判。
+ */
+export function comparableValue(editorType, value) {
+  if (typeof value === 'string' && looksLikeJsonText(value)) {
+    const parsed = parseJsonText(value);
+    if (parsed.ok) value = parsed.value;
+  }
+  return editorType === 'json' ? formatJson(value) : JSON.stringify(value ?? null);
+}
+
+/**
+ * 草稿相对基线是否已修改（决定「保存」按钮是否可点）。
+ *
+ * @param {string} editorType 块的 editor.type，缺省时调用方应传 'auto'
+ * @param {*} originalRaw 基线里的原始值（直接来自 contentData）
+ * @param {*} draft 当前草稿值
+ */
+export function isDraftDirty(editorType, originalRaw, draft) {
+  return (
+    comparableValue(editorType, unwrap(editorType, originalRaw)) !==
+    comparableValue(editorType, draft)
+  );
 }

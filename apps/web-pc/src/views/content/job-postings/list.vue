@@ -12,7 +12,6 @@ import { useAppQueryFilter } from '../_components/useAppQueryFilter.js';
 
 import LocaleManager from '../_components/LocaleManager.vue';
 
-const statusMap = { 0: '草稿', 1: '已发布', 2: '已归档' };
 const statusColor = { 0: 'default', 1: 'green', 2: 'orange' };
 const employmentMap = { full: '全职', part: '兼职', intern: '实习' };
 
@@ -264,7 +263,7 @@ onMounted(async () => {
       <Tag :color="row.channel === 'campus' ? 'green' : 'blue'">{{ channelMap[row.channel] || channelMap.social }}</Tag>
     </template>
     <template #default_status="{ row }">
-      <Tag :color="statusColor[row.status] || 'default'">{{ statusMap[row.status] || '-' }}</Tag>
+      <Tag :color="statusColor[row.status] || 'default'">{{ row.status_label || '-' }}</Tag>
     </template>
 
     <template #default_published="{ row }">

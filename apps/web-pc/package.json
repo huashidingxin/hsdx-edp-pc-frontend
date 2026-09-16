@@ -20,6 +20,7 @@
     "build:analyze": "pnpm vite build --mode analyze",
     "dev": "pnpm vite --mode development",
     "preview": "vite preview",
+    "test": "vitest run --pool=forks --maxWorkers=1 --no-file-parallelism",
     "typecheck": "vue-tsc --noEmit --skipLibCheck"
   },
   "imports": {
@@ -55,6 +56,7 @@
     "compressorjs": "^1.2.1",
     "crypto-js": "^4.2.0",
     "dayjs": "catalog:",
+    "fflate": "catalog:",
     "lunar-javascript": "^1.7.7",
     "pinia": "catalog:",
     "vue": "catalog:",
@@ -64,5 +66,8 @@
     "vue-router": "catalog:",
     "vxe-pc-ui": "catalog:",
     "vxe-table": "catalog:"
+  },
+  "devDependencies": {
+    "@vue/test-utils": "catalog:"
   }
 }

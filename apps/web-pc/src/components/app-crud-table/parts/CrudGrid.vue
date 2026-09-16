@@ -12,6 +12,18 @@ defineProps({
   showActions: { type: Boolean, default: true },
   resolveRowActions: { type: Function, default: null },
   actionOverflow: { type: String, default: 'more' },
+  /**
+   * 宿主高度是否已「钉死」（典型：抽屉/弹窗）。
+   *
+   * 传 true 时给 vxe 表格 height="100%"，让表格自己撑满宿主高度并在**表格内部**滚动，
+   * 分页器随之固定在表格底部、始终可见。
+   *
+   * 不传时保持 vxe 默认（按内容自然高度渲染），页面级滚动，行为与历史一致——
+   * 这是必须区分的：独立页面里 .app-crud-table 的 height:100% 解析为 auto，
+   * 此时若强行 height="100%" 会形成「父高依赖子高、子高又依赖父高」的循环，表格会塌缩
+   * （实测 1220px → 360px，表体只剩 62px）。
+   */
+  fillHeight: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
@@ -60,6 +72,7 @@ defineExpose({
     <VxeGrid
       ref="gridRef"
       class="p-2"
+      :height="fillHeight ? '100%' : null"
       v-bind="gridOptions"
       @cell-click="handleCellClick"
       @cell-dblclick="handleCellDblclick"

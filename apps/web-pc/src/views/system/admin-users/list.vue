@@ -11,7 +11,6 @@ const STATUS_OPTIONS = [
   { id: 1, name: '正常' },
   { id: 2, name: '禁用' },
 ];
-const statusMap = { 1: '正常', 2: '禁用' };
 const statusColor = { 1: 'green', 2: 'red' };
 
 const filterFields = ref([
@@ -213,7 +212,7 @@ onMounted(() => {
 
       <template #default_status="{ row }">
         <Tag :color="statusColor[row.status] || 'default'">
-          {{ statusMap[row.status] || '-' }}
+          {{ row.status_label || '-' }}
         </Tag>
       </template>
     </AppCrudTable>

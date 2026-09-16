@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  comparableValue,
+  deepClone,
   describeStaticBlocks,
+  formatJson,
   getAtPath,
   groupByContentKey,
+  isDraftDirty,
   isValidBlockName,
   parseJsonText,
   setAtPath,
@@ -383,5 +387,149 @@ describe('parseJsonText', () => {
     const bad = parseJsonText('{a:');
     expect(bad.ok).toBe(false);
     expect(bad.error).toBeTruthy();
+  });
+});
+
+/**
+ * 这些用例锁住「草稿必须与基线脱钩」所依赖的两条底层语义。
+ *
+ * 背景：`isDirty` 靠比较 `contentData`（基线）与 `drafts`（草稿）来判断是否可保存。
+ * 两者一旦共享对象引用，改草稿就等于改基线，`isDirty` 恒为 false、保存按钮永远点不动
+ * （浏览器实测复现过：编辑后 7 个保存按钮全部 disabled）。
+ */
+describe('deepClone / setAtPath 的引用语义（草稿-基线脱钩的前提）', () => {
+  it('deepClone 返回结构相同但引用独立的新对象', () => {
+    const source = { a: 1, nested: { b: [1, 2] }, list: [{ c: 3 }] };
+    const copy = deepClone(source);
+
+    expect(copy).toEqual(source);
+    expect(copy).not.toBe(source);
+    expect(copy.nested).not.toBe(source.nested);
+    expect(copy.nested.b).not.toBe(source.nested.b);
+    expect(copy.list[0]).not.toBe(source.list[0]);
+  });
+
+  it('deepClone 对标量原样返回', () => {
+    expect(deepClone('x')).toBe('x');
+    expect(deepClone(0)).toBe(0);
+    expect(deepClone(null)).toBeNull();
+  });
+
+  it('setAtPath 把 value 按引用挂上去（所以调用方必须自己先 clone）', () => {
+    const draft = { title: '草稿' };
+    const next = setAtPath({ block: { title: '原值' } }, ['block'], draft);
+
+    // 这就是别名陷阱本身：基线里挂的就是 draft 这个对象
+    expect(next.block).toBe(draft);
+
+    // 也正因如此，调用方保存后必须重新 clone 草稿，否则第二次编辑检测不到变化
+    const detached = deepClone(draft);
+    detached.title = '第二次改';
+    expect(next.block.title).toBe('草稿');
+  });
+
+  it('空路径时 setAtPath 直接返回 value（整份替换，同样不 clone）', () => {
+    const draft = { title: '草稿' };
+    expect(setAtPath({ anything: 1 }, [], draft)).toBe(draft);
+  });
+});
+
+describe('formatJson', () => {
+  it('字符串原样返回（HTML 正文不该被加引号转义）', () => {
+    expect(formatJson('<p>公司简介</p>')).toBe('<p>公司简介</p>');
+  });
+
+  it('对象格式化成缩进 JSON', () => {
+    expect(formatJson({ a: 1 })).toBe('{\n  "a": 1\n}');
+  });
+
+  it('null / undefined 返回空串', () => {
+    expect(formatJson(null)).toBe('');
+    expect(formatJson(undefined)).toBe('');
+  });
+});
+
+/**
+ * `isDraftDirty` 决定「保存」按钮是否可点。这一组用例覆盖曾经出过的两类 bug：
+ * ① 草稿与基线共享引用 → 恒不脏（保存永远点不动）；
+ * ② 两侧用不同规则规范化 → 恒脏（保存后仍显示未保存）。
+ */
+describe('isDraftDirty', () => {
+  it('对象草稿：未改动 → 不脏', () => {
+    const original = { title: 'T', actions: [{ label: 'A' }] };
+    expect(isDraftDirty('auto', original, deepClone(original))).toBe(false);
+  });
+
+  it('对象草稿：改字段 → 脏', () => {
+    const original = { title: 'T', actions: [{ label: 'A' }] };
+    const draft = deepClone(original);
+    draft.title = 'T2';
+    expect(isDraftDirty('auto', original, draft)).toBe(true);
+  });
+
+  it('对象草稿：改嵌套数组里的值 → 脏（浅比较会漏）', () => {
+    const original = { items: [{ name: 'n' }] };
+    const draft = deepClone(original);
+    draft.items[0].name = 'm';
+    expect(isDraftDirty('auto', original, draft)).toBe(true);
+  });
+
+  it('同一引用 → 不脏（这正是别名 bug 的表现，故草稿必须先 deepClone）', () => {
+    const original = { title: 'T' };
+    expect(isDraftDirty('auto', original, original)).toBe(false);
+  });
+
+  it('json 块：草稿是等价的 JSON 文本 → 不脏（缩进/空白差异不算改）', () => {
+    const original = { b: 2, a: 1 };
+    // 基线是对象、草稿是文本 —— 保存后正是这个状态
+    expect(isDraftDirty('json', original, formatJson(original))).toBe(false);
+    // 紧凑写法（无缩进）也应视为等价
+    expect(isDraftDirty('json', original, JSON.stringify(original))).toBe(false);
+  });
+
+  it('json 块：文本内容真的变了 → 脏', () => {
+    expect(isDraftDirty('json', { a: 1 }, '{"a":2}')).toBe(true);
+  });
+
+  it('json 块：仅调换键序 → 视为已改（比较的是文本，键序属于文本的一部分）', () => {
+    // 记录既有语义，避免以后误以为是 bug。真实流程不会触发：
+    // 高级模式的文本由 formatJson(基线) 生成，键序与基线一致。
+    expect(isDraftDirty('json', { b: 2, a: 1 }, '{"a":1,"b":2}')).toBe(true);
+  });
+
+  it('auto 块：草稿是等价的 JSON 文本 → 不脏（高级模式切回来不该误报）', () => {
+    const original = { title: 'T' };
+    expect(isDraftDirty('auto', original, formatJson(original))).toBe(false);
+  });
+
+  it('richtext：HTML 正文改一个字 → 脏；未改 → 不脏', () => {
+    const original = { content: '<p>正文</p>' };
+    expect(isDraftDirty('richtext', original, '<p>正文</p>')).toBe(false);
+    expect(isDraftDirty('richtext', original, '<p>正文！</p>')).toBe(true);
+  });
+
+  it('image：换图 → 脏', () => {
+    expect(isDraftDirty('image', { image: 'a.png' }, 'a.png')).toBe(false);
+    expect(isDraftDirty('image', { image: 'a.png' }, 'b.png')).toBe(true);
+  });
+
+  it('标量块：字符串内容 → 脏判断正常', () => {
+    expect(isDraftDirty('auto', '原文', '原文')).toBe(false);
+    expect(isDraftDirty('auto', '原文', '改过')).toBe(true);
+  });
+
+  it('基线缺失（null/undefined）与空草稿 → 不脏', () => {
+    expect(isDraftDirty('auto', null, null)).toBe(false);
+    expect(isDraftDirty('auto', undefined, null)).toBe(false);
+  });
+});
+
+describe('comparableValue', () => {
+  it('json 文本先解析回值再比较（避免「文本 vs 对象」永远不等）', () => {
+    expect(comparableValue('auto', '{"a":1}')).toBe(comparableValue('auto', { a: 1 }));
+  });
+
+  it('非 JSON 的普通字符串保持原样', () => {
+    expect(comparableValue('auto', '<p>x</p>')).toBe(JSON.stringify('<p>x</p>'));
   });
 });

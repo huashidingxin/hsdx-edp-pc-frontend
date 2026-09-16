@@ -5,7 +5,7 @@
  * 编排 7 个 composables + 6 个子组件
  * 通过 pageModel 切换 list / detail 渲染
  */
-import { computed, onMounted, provide, ref, useSlots, watch } from 'vue';
+import { computed, inject, onMounted, provide, ref, useSlots, watch } from 'vue';
 import { useRoute } from 'vue-router';
 
 import { cloneDeep, isEqual } from 'lodash-es';
@@ -76,6 +76,13 @@ const props = defineProps({
   },
   // 'more' 模式下，操作列单行最多显示的 inline 按钮数量（超出部分收进“更多”）
   maxInlineActions: { type: Number, default: 3 },
+
+  /**
+   * 宿主高度是否已「钉死」（抽屉/弹窗等）。
+   * 传 true 时表格撑满宿主高度、在表格内部滚动，分页器固定可见；
+   * 不传（默认）时保持页面级滚动，与历史行为一致。详见 CrudGrid 的 fillHeight 说明。
+   */
+  fillHeight: { type: Boolean, default: false },
 
   // 详情
   openMode: {
@@ -207,8 +214,25 @@ callbacks.deleteItem = detailApi.deleteItem;
 callbacks.openAuditDialog = detailApi.openAuditDialog;
 callbacks.audit = detailApi.audit;
 
+// ========================= 宿主上下文 =========================
+/**
+ * 宿主是否声明「我把内容高度钉死了」（典型：抽屉/弹窗）。
+ *
+ * 宿主 provide('crudTableFillHeight', true) 后，抽屉里嵌的**任何**列表都自动获得
+ * 「表格撑满宿主、在表格内部滚动、分页器固定可见」的行为，不需要每个视图各自传 prop。
+ * 与 useCrudTableRoute 的 isCrudTableNested 是同一套约定。
+ *
+ * 背景：抽屉把高度钉死，而 vxe 按内容自然高度渲染，超出的部分（含分页器）会被裁掉，
+ * 且祖先没有可滚动容器时用户永远够不到，表现为「不能翻页」。
+ * 独立页面高度是 auto，必须保持 vxe 默认，否则父子高度互相依赖会让表格塌缩。
+ */
+const hostPinsHeight = inject('crudTableFillHeight', false);
+
 // ========================= 计算属性 =========================
 const pageTitle = computed(() => props.title || route?.meta?.title || '');
+
+/** 显式 prop 优先（非抽屉的钉死宿主可自行声明），否则跟随宿主 provide。 */
+const effectiveFillHeight = computed(() => props.fillHeight || hostPinsHeight);
 
 const isListMode = computed(() => pageModel.value === 'list');
 const isPageDetailMode = computed(
@@ -509,6 +533,7 @@ defineExpose({
         :show-actions="showActions"
         :resolve-row-actions="actionsApi.resolveRowActions"
         :action-overflow="actionOverflow"
+        :fill-height="effectiveFillHeight"
         @cell-click="handleCellClick"
         @cell-dblclick="handleCellDblclick"
         @sort-change="handleSortChange"
@@ -700,7 +725,14 @@ defineExpose({
 .app-crud-table :deep(.crud-grid) {
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  /*
+   * 必须是 auto 而不是 hidden：抽屉等「高度已被钉死」的宿主里，.app-crud-table 被
+   * height:100% + overflow:hidden 限制在宿主高度内，而 vxe 表格是按内容自然高度渲染的，
+   * 于是超出部分被裁掉——分页器正好落在被裁掉的区域，且祖先都没有可滚动容器，用户永远够不到
+   * （表现为「不能翻页」）。改成 auto 后：宿主高度受限时这里出现滚动条、分页器可达；
+   * 独立页面（高度 auto）下高度等于内容高度，不产生溢出，行为不变。
+   */
+  overflow: auto;
   border-radius: 0 0 8px 8px;
 }
 

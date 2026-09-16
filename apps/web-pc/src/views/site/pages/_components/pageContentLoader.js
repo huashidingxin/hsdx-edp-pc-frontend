@@ -11,6 +11,7 @@
  * 组件只在最后一次性提交，不再有中间态。
  */
 import {
+  deepClone,
   describeStaticBlocks,
   getAtPath,
   groupByContentKey,
@@ -63,8 +64,12 @@ export function createContentLoader({ fetchSchema, fetchContent }) {
       const group = groups.find((item) => item.blocks.includes(descriptor));
       if (!group?.editable) continue;
       drafts[descriptor.blockName] = unwrap(
-        descriptor.editor?.type ?? 'json',
-        getAtPath(data[group.key], descriptor.path),
+        // 没有 editor 提示时用 'auto'：unwrap 的默认分支原样返回数据，
+        // 由 AutoFormValue 按数据形状生成图形表单（不再是裸 JSON 文本框）。
+        descriptor.editor?.type ?? 'auto',
+        // 必须先深拷贝：unwrap 的 default 分支是原样返回，草稿若与 contentData
+        // 基线共用同一个对象引用，改草稿等于改基线，isDirty 恒为 false、保存永远点不动。
+        deepClone(getAtPath(data[group.key], descriptor.path)),
       );
     }
 

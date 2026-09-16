@@ -6,7 +6,7 @@
  * 名称/类型/状态/域名 + 快捷入口（与应用强关联的设置一点即进，
  * 进入时写入当前应用 id，目标页沿用各自的应用上下文）。
  */
-import { computed, ref, onMounted } from 'vue';
+import { computed, ref, onMounted, provide } from 'vue';
 
 import { useAccess } from '@vben/access';
 
@@ -55,9 +55,7 @@ const SSL_OPTIONS = [
   { id: 1, name: '有效' },
   { id: 2, name: '过期' },
 ];
-const typeMap = { 1: '官网', 2: '小程序', 3: '公众号' };
 const typeColor = { 1: 'blue', 2: 'green', 3: 'purple' };
-const statusMap = { 0: '草稿', 1: '启用', 2: '停用' };
 const statusColor = { 0: 'default', 1: 'green', 2: 'red' };
 const sslMap = { 0: '未配置', 1: '有效', 2: '过期' };
 
@@ -120,6 +118,15 @@ const moduleMap = {
 const moduleDrawer = ref({ open: false, key: null, app: null });
 const moduleTitle = computed(() => moduleMap[moduleDrawer.value.key]?.title || '');
 const moduleWidth = computed(() => moduleMap[moduleDrawer.value.key]?.width || 1000);
+
+/**
+ * 抽屉把内容高度钉死了，告诉抽屉里的列表：撑满宿主、在表格内部滚动。
+ *
+ * 不这么做的话，vxe 会按内容自然高度渲染，超出抽屉的部分（包括分页器）被裁掉，
+ * 且祖先没有可滚动容器，用户永远够不到——表现为「不能翻页」。
+ * 由 AppCrudTable 注入消费，所以抽屉里嵌的每个列表都自动生效，无需逐个视图传参。
+ */
+provide('crudTableFillHeight', true);
 
 function openModule(key, app) {
   moduleDrawer.value = { open: true, key, app };
@@ -321,8 +328,8 @@ onMounted(async () => {
         <div v-for="app in applications" :key="app.id" class="app-card">
           <div class="card-head">
             <span class="card-name">{{ app.name }}</span>
-            <Tag :color="typeColor[app.type] || 'default'">{{ typeMap[app.type] || '-' }}</Tag>
-            <Tag :color="statusColor[app.status] || 'default'">{{ statusMap[app.status] || '-' }}</Tag>
+            <Tag :color="typeColor[app.type] || 'default'">{{ app.type_label || '-' }}</Tag>
+            <Tag :color="statusColor[app.status] || 'default'">{{ app.status_label || '-' }}</Tag>
           </div>
           <div class="card-meta">
             <span v-if="app.code" class="meta-code">{{ app.code }}</span>

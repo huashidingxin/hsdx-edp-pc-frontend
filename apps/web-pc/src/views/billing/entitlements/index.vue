@@ -4,7 +4,6 @@ import { ref } from 'vue';
 
 import { Tag } from 'antdv-next';
 
-const statusMap = { 1: '已启用', 0: '已停用' };
 
 const statusItems = [
   { id: 1, name: '已启用' },
@@ -76,7 +75,7 @@ function emptyText({ cellValue }) {
   >
     <template #default_enabled="{ row }">
       <Tag :color="row.enabled ? 'green' : 'default'">
-        {{ statusMap[row.enabled] || '-' }}
+        {{ row.enabled_label || '-' }}
       </Tag>
     </template>
   </AppCrudTable>

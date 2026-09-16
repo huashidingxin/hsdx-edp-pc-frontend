@@ -13,7 +13,6 @@ import LocaleManager from '../../content/_components/LocaleManager.vue';
 import FormSchemaDrawer from './_components/FormSchemaDrawer.vue';
 import { countFields } from './_components/formSchema.js';
 
-const statusMap = { 0: '停用', 1: '启用' };
 
 const localeOptions = ref([]);
 
@@ -163,7 +162,7 @@ onMounted(async () => {
       class="p-4"
     >
       <template #default_status="{ row }">
-        <Tag :color="row.status ? 'green' : 'default'">{{ statusMap[row.status] || '-' }}</Tag>
+        <Tag :color="row.status ? 'green' : 'default'">{{ row.status_label || '-' }}</Tag>
       </template>
 
       <template #field_fields_schema="{ modelValue, formValue }">

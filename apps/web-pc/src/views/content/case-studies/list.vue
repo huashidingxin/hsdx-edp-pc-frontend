@@ -12,7 +12,6 @@ import { useAppQueryFilter } from '../_components/useAppQueryFilter.js';
 
 import LocaleManager from '../_components/LocaleManager.vue';
 
-const statusMap = { 0: '草稿', 1: '已发布', 2: '已归档' };
 const statusColor = { 0: 'default', 1: 'green', 2: 'orange' };
 
 const categories = ref([]);
@@ -77,7 +76,6 @@ const filterFields = ref([
 ]);
 
 const formFields = ref([
-  { field: 'id', type: 'text', label: 'ID', span: 12, displayOnly: true },
   {
     field: 'category_id',
     type: 'select',
@@ -85,8 +83,8 @@ const formFields = ref([
     span: 12,
     attrs: { items: categories, fieldNames: { label: 'name', value: 'id' }, showSearch: true },
   },
-  { field: 'cover', type: 'text', label: '封面', span: 12, required: true },
-  { field: 'video', type: 'text', label: '视频地址', span: 12 },
+  { field: 'cover', type: 'file', label: '封面', span: 24, required: true },
+  { field: 'video', type: 'file', label: '视频地址', span: 24,attrs:{fileType:'video'} },
   { field: 'client', type: 'text', label: '客户', span: 12 },
   { field: 'industry', type: 'text', label: '行业', span: 12 },
   { field: 'location', type: 'text', label: '地点', span: 12 },
@@ -124,6 +122,7 @@ const gridColumns = ref([
     width: 110,
     slots: { default: 'default_category' },
   },
+  { field: 'cover', title: '封面', minWidth: 120, customRender:{type:'image'} },
   { field: 'industry', title: '行业', minWidth: 120, formatter: emptyText },
   { field: 'location', title: '地点', minWidth: 120, formatter: emptyText },
   {
@@ -238,7 +237,7 @@ onMounted(async () => {
       <Tag color="blue">{{ categories.find((c) => c.id === row.category_id)?.name || '-' }}</Tag>
     </template>
     <template #default_status="{ row }">
-      <Tag :color="statusColor[row.status] || 'default'">{{ statusMap[row.status] || '-' }}</Tag>
+      <Tag :color="statusColor[row.status] || 'default'">{{ row.status_label || '-' }}</Tag>
     </template>
 
     <template #default_published="{ row }">

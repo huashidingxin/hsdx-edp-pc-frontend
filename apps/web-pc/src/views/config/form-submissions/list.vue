@@ -13,7 +13,6 @@ const crudRef = ref(null);
 const formId = computed(() => Number(route.query.form_id) || null);
 const apiUrl = computed(() => `forms/${formId.value}/submissions`);
 
-const statusMap = { 0: '新提交', 1: '已读', 2: '已回复' };
 const statusColor = { 0: 'blue', 1: 'default', 2: 'green' };
 
 const statusItems = [
@@ -127,7 +126,7 @@ const actionsConfig = ref([
       class="p-4"
     >
       <template #default_status="{ row }">
-        <Tag :color="statusColor[row.status] || 'default'">{{ statusMap[row.status] || '-' }}</Tag>
+        <Tag :color="statusColor[row.status] || 'default'">{{ row.status_label || '-' }}</Tag>
       </template>
     </AppCrudTable>
     <div v-else class="p-8 text-center text-gray-400">请从表单列表进入提交记录</div>

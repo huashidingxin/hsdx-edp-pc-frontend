@@ -25,7 +25,6 @@ const TYPE_OPTIONS = [
   { id: 3, name: '自定义' },
   { id: 4, name: '记录' },
 ];
-const typeMap = { 1: '首页', 2: '标准', 3: '自定义', 4: '记录' };
 const typeColor = { 1: 'blue', 2: 'green', 3: 'purple', 4: 'orange' };
 
 const filterFields = ref([
@@ -178,7 +177,7 @@ watch(
     class="p-4"
   >
     <template #default_type="{ row }">
-      <Tag :color="typeColor[row.type] || 'default'">{{ typeMap[row.type] || '-' }}</Tag>
+      <Tag :color="typeColor[row.type] || 'default'">{{ row.type_label || '-' }}</Tag>
     </template>
     <template #default_locales="{ row }">
       <div class="flex flex-wrap gap-1">

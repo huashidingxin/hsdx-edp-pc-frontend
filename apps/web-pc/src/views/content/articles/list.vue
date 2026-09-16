@@ -14,7 +14,7 @@ import LocaleManager from '../_components/LocaleManager.vue';
 
 
 const formatMap = { article: '文章', video: '视频' };
-const statusMap = { 0: '草稿', 1: '已发布', 2: '已归档' };
+// 状态文案直接读后端 status_label（单一来源），颜色映射留在前端。
 const statusColor = { 0: 'default', 1: 'green', 2: 'orange' };
 
 const categories = ref([]);
@@ -237,7 +237,12 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div>
+  <!--
+    h-full 仅在抽屉嵌入时加：抽屉把高度钉死，需要高度链一路撑满，
+    表格才能在内部滚动、分页器固定可见。独立页面必须保持 auto，
+    否则表格被钉在视口高度里，页面级滚动失效。
+  -->
+  <div :class="embedded ? 'h-full' : ''">
   <AppCrudTable
     ref="crudRef"
     api-url="articles"
@@ -285,7 +290,7 @@ onMounted(async () => {
     </template>
     <template #default_status="{ row }">
       <Tag :color="statusColor[row.status] || 'default'">
-        {{ statusMap[row.status] || '-' }}
+        {{ row.status_label || '-' }}
       </Tag>
     </template>
     <template #default_published="{ row }">

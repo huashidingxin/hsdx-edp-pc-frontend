@@ -11,7 +11,6 @@ const detailOpen = ref(false);
 const detailData = ref(null);
 const detailLoading = ref(false);
 
-const statusMap = { 1: '进行中', 0: '已关闭' };
 const statusColor = { 1: 'green', 0: 'default' };
 
 const filterFields = ref([]);
@@ -95,7 +94,7 @@ const actionsConfig = ref([
     >
       <template #default_status="{ row }">
         <Tag :color="statusColor[row.status] || 'default'">
-          {{ statusMap[row.status] || '-' }}
+          {{ row.status_label || '-' }}
         </Tag>
       </template>
     </AppCrudTable>
@@ -111,7 +110,7 @@ const actionsConfig = ref([
         <div class="flex items-center gap-2 text-xs text-gray-500">
           <span>访客：{{ detailData.visitor_id || '-' }}</span>
           <Tag :color="statusColor[detailData.status] || 'default'">
-            {{ statusMap[detailData.status] || '-' }}
+            {{ detailData.status_label || '-' }}
           </Tag>
         </div>
         <div

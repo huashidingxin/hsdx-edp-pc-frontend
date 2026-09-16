@@ -69,9 +69,16 @@ vi.mock('antdv-next', async () => {
     Space: stub('Space'),
   };
 });
-vi.mock('vue-router', () => ({
-  useRoute: () => ({ meta: {}, query: {} }),
-}));
+vi.mock('vue-router', () => {
+  const chain = () => ({ beforeEach: vi.fn(), afterEach: vi.fn(), push: vi.fn(), replace: vi.fn() });
+  return {
+    useRoute: () => ({ meta: {}, query: {} }),
+    useRouter: () => chain(),
+    createRouter: () => chain(),
+    createWebHistory: () => ({}),
+    createWebHashHistory: () => ({}),
+  };
+});
 vi.mock('../composables/useCrudTablePermission.js', () => ({
   useCrudTablePermission: () => ({ checkPermission: () => true }),
 }));

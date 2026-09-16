@@ -22,7 +22,6 @@ import LocaleManager from '../_components/LocaleManager.vue';
  */
 const CONTENT_KIND = 'honor';
 
-const statusMap = { 0: '草稿', 1: '已发布', 2: '已归档' };
 const statusColor = { 0: 'default', 1: 'green', 2: 'orange' };
 
 const categories = ref([]);
@@ -265,7 +264,7 @@ onMounted(async () => {
       <span v-else>-</span>
     </template>
     <template #default_status="{ row }">
-      <Tag :color="statusColor[row.status] || 'default'">{{ statusMap[row.status] || '-' }}</Tag>
+      <Tag :color="statusColor[row.status] || 'default'">{{ row.status_label || '-' }}</Tag>
     </template>
 
     <template #default_published="{ row }">

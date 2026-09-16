@@ -25,7 +25,6 @@ const typeOptions = [
   { id: 4, name: '图库' },
   { id: 5, name: '案例' },
 ];
-const typeMap = { 2: '文章', 3: '产品', 4: '图库', 5: '案例' };
 
 /**
  * 图片型内容类型（仅「图库」分类使用）：
@@ -246,7 +245,12 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div>
+  <!--
+    h-full 仅在抽屉嵌入时加：抽屉把高度钉死，需要高度链一路撑满，
+    表格才能在内部滚动、分页器固定可见。独立页面必须保持 auto，
+    否则表格被钉在视口高度里，页面级滚动失效。
+  -->
+  <div :class="embedded ? 'h-full' : ''">
   <AppCrudTable
     ref="crudRef"
     api-url="categories"
@@ -284,8 +288,8 @@ onMounted(async () => {
       </span>
     </template>
     <template #default_type="{ row }">
-      <Tag :color="typeMap[row.type] === '文章' ? 'green' : 'blue'">
-        {{ typeMap[row.type] || '-' }}
+      <Tag :color="row.type === 2 ? 'green' : 'blue'">
+        {{ row.type_label || '-' }}
       </Tag>
     </template>
     <template #default_content_types="{ row }">

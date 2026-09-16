@@ -10,22 +10,25 @@
  *   config.path，再整份 PUT 回去 —— 多个块共用同一 content_key 的不同 path 时，
  *   保存一个不会删掉其他路径；未列入 editor.fields 的已有字段也原样保留。
  * - 接口：GET/PUT `/pages/{page}/content/{locale}/{contentKey}`（body `{ data }`）。
+ *
+ * 编辑控件：editor 提示是可选的，**没有提示也必须能图形化编辑**。
+ * image/images/richtext/video 用专用控件；其余（card/cards/json/无提示）一律用
+ * AutoFormValue 按**数据形状**自动生成表单，另给每块一个「高级（JSON）」开关兜底。
  */
-import { computed, ref, watch } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 
 import { useAccess } from '@vben/access';
 
 import {
   Alert,
   Button,
-  Card,
+  Collapse,
+  CollapsePanel,
   Drawer,
   Empty,
   Input,
   Select,
-  Space,
   Spin,
-  Switch,
   Tag,
   message,
 } from 'antdv-next';
@@ -35,15 +38,21 @@ import { requestClient } from '#/api/request';
 import AppEditor from '#/components/app-editor/index.vue';
 import AppUpload from '#/components/AppUpload.vue';
 
+import AutoFormValue from './AutoFormValue.vue';
+import { looksLikeJsonText } from './pageContentAutoForm';
 import {
-  CARD_FIELD_KINDS,
+  deepClone,
+  formatJson,
   getAtPath,
+  isDraftDirty,
   parseJsonText,
   rewrap,
   setAtPath,
-  unwrap,
 } from './pageContentModel';
 import { createContentLoader } from './pageContentLoader';
+
+/** 有专用控件的 editor.type；其余走自动表单。 */
+const DEDICATED_EDITOR_TYPES = ['image', 'images', 'richtext', 'video'];
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -68,6 +77,13 @@ const contentData = ref({});
 const drafts = ref({});
 /** 块名 → 展示用元信息（editor.type 等） */
 const blockMeta = ref({});
+/**
+ * 处于「高级（JSON）」模式的块：{ [blockName]: true }。
+ *
+ * 默认全部走图形表单；只有用户主动切到高级模式，才把该块降级为裸 JSON 文本框。
+ * 用 reactive 对象而不是 Set：模板里按块名取布尔值最直接。
+ */
+const jsonMode = reactive({});
 /** 加载序号：并发/重入 load() 时只允许最新一次回写状态与清 loading。 */
 let loadSeq = 0;
 /**
@@ -90,6 +106,27 @@ const readOnlyBlocks = computed(() =>
 const hasAnyBlock = computed(
   () => staticBlocks.value.length > 0 || readOnlyBlocks.value.length > 0,
 );
+
+/** 可编辑分组（有 content_key、且块属于当前页）。 */
+const editableGroups = computed(() =>
+  groups.value.filter((group) => group.editable),
+);
+/** 可编辑块总数。 */
+const editableBlockCount = computed(() =>
+  editableGroups.value.reduce((sum, group) => sum + group.blocks.length, 0),
+);
+/** 未保存的块数：工具条据此提示，避免用户以为「没改动」。 */
+const dirtyCount = computed(() =>
+  editableGroups.value
+    .flatMap((group) => group.blocks)
+    .filter((block) => isDirty(block.blockName)).length,
+);
+/**
+ * 手风琴当前展开的块名。
+ * 一个页面常有 4-8 个静态块，全部展开会变成一堵没有重点的表单墙，
+ * 所以默认全部收起、一次只展开一个（accordion），把注意力收敛到正在编辑的块上。
+ */
+const activeBlockKey = ref('');
 
 function resetState() {
   schemaRow.value = null;
@@ -215,11 +252,14 @@ async function saveBlock(blockName) {
   const group = groupOfBlock(blockName);
   if (!group?.editable) return;
 
-  const editorType = descriptor.editor?.type ?? 'json';
+  const editorType = descriptor.editor?.type ?? 'auto';
   let value = drafts.value[blockName];
 
-  if (editorType === 'json') {
-    if (typeof value === 'string') {
+  // 只有「用户在高级模式里手写的 JSON 文本」才需要解析。
+  // 不能见到字符串就 parse：像 about-*.body 这类块的数据本身就是一段 HTML 字符串，
+  // 硬解析会报「JSON 格式错误」，导致该块永远保存不了。
+  if (typeof value === 'string' && looksLikeJsonText(value)) {
+    if (jsonMode[blockName] || editorType === 'json') {
       const parsed = parseJsonText(value);
       if (!parsed.ok) {
         message.error(`JSON 格式错误：${parsed.error}`);
@@ -240,9 +280,13 @@ async function saveBlock(blockName) {
       { data: nextData },
     );
     contentData.value = { ...contentData.value, [group.key]: nextData };
-    if (editorType === 'json' && typeof value === 'object') {
-      drafts.value[blockName] = JSON.stringify(value, null, 2);
-    }
+    // 保存后基线里存的就是刚才那份草稿对象（setAtPath 把 value 按引用挂上去）。
+    // 必须让草稿与基线重新脱钩，否则「改草稿 = 改基线」的别名问题会在第一次保存后复发：
+    // isDirty 再次恒为 false，第二次编辑保存按钮又点不动了。
+    drafts.value[blockName] =
+      jsonMode[blockName] && typeof value === 'object'
+        ? JSON.stringify(value, null, 2)
+        : deepClone(value);
     message.success(`「${descriptor.label}」已保存并生效`);
     emit('refresh');
   } catch {
@@ -252,46 +296,58 @@ async function saveBlock(blockName) {
   }
 }
 
-/** 卡片字段：只渲染 editor.fields 声明的项，其余字段原样保留。 */
-function cardFields(descriptor) {
-  return Object.entries(descriptor.editor?.fields ?? {}).map(([field, meta]) => ({
-    field,
-    label: meta?.label || field,
-    kind: CARD_FIELD_KINDS[field] ?? 'text',
-  }));
+/** 该块是否用专用控件（image/images/richtext/video）；其余走自动表单。 */
+function hasDedicatedEditor(block) {
+  return DEDICATED_EDITOR_TYPES.includes(block.editor?.type);
 }
 
-function addCard(blockName, descriptor) {
-  const blank = {};
-  for (const { field } of cardFields(descriptor)) {
-    blank[field] = CARD_FIELD_KINDS[field] === 'images' || CARD_FIELD_KINDS[field] === 'tags' ? [] : '';
+/** 该块当前是否处于高级（JSON）模式。 */
+function isJsonMode(blockName) {
+  return jsonMode[blockName] === true;
+}
+
+/**
+ * 切换高级（JSON）模式。
+ * - 开启：把草稿序列化成文本，供 textarea 直接编辑。
+ * - 关闭：文本确实是 JSON 就解析回对象（解析失败则拒绝关闭并提示），
+ *   否则（例如正文 HTML）保持字符串原样 —— 那种块的「数据」本来就是一段文本。
+ */
+function toggleJsonMode(blockName) {
+  if (jsonMode[blockName]) {
+    const text = drafts.value[blockName];
+    if (typeof text === 'string' && looksLikeJsonText(text)) {
+      const parsed = parseJsonText(text);
+      if (!parsed.ok) {
+        message.error(`JSON 格式错误，无法切回图形编辑：${parsed.error}`);
+        return;
+      }
+      drafts.value[blockName] = parsed.value;
+    }
+    jsonMode[blockName] = false;
+    return;
   }
-  drafts.value[blockName] = [...(drafts.value[blockName] ?? []), blank];
-}
 
-function removeCard(blockName, index) {
-  const list = [...(drafts.value[blockName] ?? [])];
-  list.splice(index, 1);
-  drafts.value[blockName] = list;
-}
-
-function moveCard(blockName, index, delta) {
-  const list = [...(drafts.value[blockName] ?? [])];
-  const target = index + delta;
-  if (target < 0 || target >= list.length) return;
-  [list[index], list[target]] = [list[target], list[index]];
-  drafts.value[blockName] = list;
-}
-
-/** 展示用文本：对象 → 格式化 JSON，文本原样返回。 */
-function formatJson(value) {
-  if (typeof value === 'string') return value;
-  if (value === null || value === undefined) return '';
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return '';
+  if (typeof drafts.value[blockName] !== 'string') {
+    drafts.value[blockName] = formatJson(drafts.value[blockName]);
   }
+  jsonMode[blockName] = true;
+}
+
+/** 块头展示的编辑方式标签（让用户一眼看出这块是表单还是 JSON）。 */
+function blockModeLabel(block) {
+  const type = block.editor?.type;
+  if (type === 'image') return '单图';
+  if (type === 'images') return '图片集';
+  if (type === 'richtext') return '富文本';
+  if (type === 'video') return '视频';
+  if (isJsonMode(block.blockName)) return 'JSON（高级）';
+
+  const value = drafts.value[block.blockName];
+  if (Array.isArray(value)) return `列表 ${value.length} 项`;
+  if (value !== null && typeof value === 'object') {
+    return `对象 ${Object.keys(value).length} 字段`;
+  }
+  return '文本';
 }
 
 /**
@@ -304,26 +360,22 @@ function jsonText(blockName) {
 }
 
 /**
- * 脏值比较：json 块的基线是对象、草稿在用户编辑后是文本，
- * 必须统一成文本再比，否则 json 块永远显示为「已修改」。
+ * 该块是否已被修改（决定「保存」是否可点）。
+ *
+ * 比较逻辑放在 `pageContentModel.isDraftDirty` 里：它是纯函数、可单测，
+ * 而这里曾经因为「两侧用不同规则规范化」出过 bug（保存后仍显示未保存）。
  */
-function comparableValue(editorType, value) {
-  return editorType === 'json'
-    ? formatJson(value)
-    : JSON.stringify(value ?? null);
-}
-
 function isDirty(blockName) {
   const descriptor = blockMeta.value[blockName];
   if (!descriptor) return false;
   const group = groupOfBlock(blockName);
   if (!group?.editable) return false;
-  const editorType = descriptor.editor?.type ?? 'json';
+  // 兜底必须与 pageContentLoader / saveBlock 一致（都是 'auto'）：
+  // 没有 editor 提示的块草稿是**对象**，若这里按 'json' 格式化，
+  // 会与基线用不同规则序列化，比较结果不可信。
+  const editorType = descriptor.editor?.type ?? 'auto';
   const original = getAtPath(contentData.value[group.key], descriptor.path);
-  return (
-    comparableValue(editorType, unwrap(editorType, original)) !==
-    comparableValue(editorType, drafts.value[blockName])
-  );
+  return isDraftDirty(editorType, original, drafts.value[blockName]);
 }
 
 watch(
@@ -353,18 +405,24 @@ watch(locale, (next, previous) => {
     title="页面内容"
     @update:open="(v) => emit('update:open', v)"
   >
-    <div class="mb-4 flex flex-wrap items-center gap-3">
-      <span class="text-sm text-gray-600">页面</span>
+    <!-- 工具条：钉在顶部。长页面滚动时语言切换 / 重新加载 / 未保存计数始终可见 -->
+    <div
+      class="sticky top-0 z-10 -mx-6 -mt-6 mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-gray-100 bg-white px-6 py-3"
+    >
       <Tag color="blue">{{ page?.code || '-' }}</Tag>
-      <span class="text-sm text-gray-600">语言</span>
+      <span class="text-xs text-gray-400">语言</span>
       <Select
         v-model:value="locale"
         :options="localeOptions.map((item) => ({ label: item, value: item }))"
-        style="width: 140px"
+        size="small"
+        style="width: 130px"
       />
-      <Button :loading="loading" @click="load">重新加载</Button>
-      <span v-if="!canWrite" class="text-xs text-gray-500">
-        当前账号无 cms.page.write 权限，仅可查看
+      <Button size="small" :loading="loading" @click="load">重新加载</Button>
+
+      <span class="ml-auto flex items-center gap-2 text-xs text-gray-500">
+        <span v-if="editableBlockCount">共 {{ editableBlockCount }} 个可编辑块</span>
+        <Tag v-if="dirtyCount" color="orange">{{ dirtyCount }} 个未保存</Tag>
+        <span v-if="!canWrite" class="text-gray-400">无 cms.page.write 权限，仅可查看</span>
       </span>
     </div>
 
@@ -390,46 +448,58 @@ watch(locale, (next, previous) => {
       />
 
       <template v-else-if="!loading">
-        <Card
-          v-for="group in groups.filter((item) => item.editable)"
+        <section
+          v-for="group in editableGroups"
           :key="group.key"
-          class="mb-4"
-          size="small"
+          class="mb-6 last:mb-0"
         >
-          <template #title>
-            <span class="text-sm">
-              内容键
-              <Tag color="geekblue">{{ group.contentKey }}</Tag>
-              <span class="text-xs text-gray-500">
-                （本页 · {{ locale }}）
-              </span>
+          <header class="mb-2 flex items-center gap-2">
+            <span class="text-sm font-medium text-gray-700">内容键</span>
+            <Tag color="geekblue">{{ group.contentKey }}</Tag>
+            <span class="text-xs text-gray-400">
+              {{ group.blocks.length }} 个块 · 本页 · {{ locale }}
             </span>
-          </template>
+          </header>
 
-          <div
-            v-for="block in group.blocks"
-            :key="block.blockName"
-            class="mb-6 border-b border-gray-100 pb-4 last:mb-0 last:border-b-0 last:pb-0"
-          >
-            <div class="mb-2 flex items-center justify-between">
-              <span class="text-sm font-medium text-gray-800">
-                {{ block.label }}
-                <Tag class="ml-2">{{ block.editor?.type || 'json' }}</Tag>
-                <span class="ml-1 text-xs text-gray-400">
-                  {{ block.blockName }} · path: {{ block.path.length ? block.path.join('.') : '(整份)' }}
+          <Collapse v-model:activeKey="activeBlockKey" accordion>
+            <CollapsePanel
+              v-for="block in group.blocks"
+              :key="block.blockName"
+            >
+              <template #header>
+                <span class="flex flex-wrap items-center gap-2">
+                  <span class="font-medium text-gray-800">{{ block.label }}</span>
+                  <Tag>{{ blockModeLabel(block) }}</Tag>
+                  <Tag v-if="isDirty(block.blockName)" color="orange">未保存</Tag>
                 </span>
-              </span>
-              <Button
-                v-if="canWrite"
-                type="primary"
-                size="small"
-                :disabled="!isDirty(block.blockName)"
-                :loading="savingBlock === block.blockName"
-                @click="saveBlock(block.blockName)"
-              >
-                保存
-              </Button>
-            </div>
+              </template>
+              <template #extra>
+                <span class="flex items-center gap-2">
+                  <!-- 高级模式开关：默认图形表单，需要时降级为裸 JSON -->
+                  <Button
+                    v-if="!hasDedicatedEditor(block)"
+                    type="link"
+                    size="small"
+                    @click.stop="toggleJsonMode(block.blockName)"
+                  >
+                    {{ isJsonMode(block.blockName) ? '返回表单' : '高级（JSON）' }}
+                  </Button>
+                  <Button
+                    v-if="canWrite"
+                    type="primary"
+                    size="small"
+                    :disabled="!isDirty(block.blockName)"
+                    :loading="savingBlock === block.blockName"
+                    @click.stop="saveBlock(block.blockName)"
+                  >
+                    保存
+                  </Button>
+                </span>
+              </template>
+
+              <p class="mb-3 text-xs text-gray-400">
+                {{ block.blockName }} · path: {{ block.path.length ? block.path.join('.') : '(整份)' }}
+              </p>
 
             <!-- image：单图 -->
             <AppUpload
@@ -474,139 +544,30 @@ watch(locale, (next, previous) => {
               />
             </div>
 
-            <!-- card：单条图文 -->
-            <div
-              v-else-if="
-                block.editor?.type === 'card' && objectDraft(block.blockName)
-              "
-              class="flex flex-col gap-3"
-            >
-              <div
-                v-for="item in cardFields(block)"
-                :key="item.field"
-                class="flex flex-col gap-1"
-              >
-                <span class="text-xs text-gray-500">{{ item.label }}</span>
-                <AppEditor
-                  v-if="item.kind === 'richtext'"
-                  v-model="drafts[block.blockName][item.field]"
-                  :disabled="!canWrite"
-                />
-                <AppUpload
-                  v-else-if="item.kind === 'image'"
-                  v-model="drafts[block.blockName][item.field]"
-                  :disabled="!canWrite"
-                  file-type="image"
-                />
-                <AppUpload
-                  v-else-if="item.kind === 'images'"
-                  v-model="drafts[block.blockName][item.field]"
-                  :disabled="!canWrite"
-                  file-type="image"
-                  multiple
-                />
-                <Select
-                  v-else-if="item.kind === 'tags'"
-                  v-model:value="drafts[block.blockName][item.field]"
-                  :disabled="!canWrite"
-                  mode="tags"
-                  placeholder="回车添加标签"
-                  style="width: 100%"
-                />
-                <Input
-                  v-else
-                  v-model:value="drafts[block.blockName][item.field]"
-                  :disabled="!canWrite"
-                />
-              </div>
-            </div>
-
-            <!-- cards：图文列表 -->
-            <div
-              v-else-if="block.editor?.type === 'cards'"
-              class="flex flex-col gap-3"
-            >
-              <Card
-                v-for="(item, index) in drafts[block.blockName] || []"
-                :key="index"
-                size="small"
-                class="bg-gray-50"
-              >
-                <div class="mb-2 flex items-center justify-between">
-                  <span class="text-xs text-gray-500">第 {{ index + 1 }} 项</span>
-                  <Space v-if="canWrite">
-                    <Button size="small" @click="moveCard(block.blockName, index, -1)">
-                      上移
-                    </Button>
-                    <Button size="small" @click="moveCard(block.blockName, index, 1)">
-                      下移
-                    </Button>
-                    <Button
-                      danger
-                      size="small"
-                      @click="removeCard(block.blockName, index)"
-                    >
-                      删除
-                    </Button>
-                  </Space>
-                </div>
-                <div class="flex flex-col gap-3">
-                  <div
-                    v-for="field in cardFields(block)"
-                    :key="field.field"
-                    class="flex flex-col gap-1"
-                  >
-                    <span class="text-xs text-gray-500">{{ field.label }}</span>
-                    <AppEditor
-                      v-if="field.kind === 'richtext'"
-                      v-model="item[field.field]"
-                      :disabled="!canWrite"
-                    />
-                    <AppUpload
-                      v-else-if="field.kind === 'image'"
-                      v-model="item[field.field]"
-                      :disabled="!canWrite"
-                      file-type="image"
-                    />
-                    <AppUpload
-                      v-else-if="field.kind === 'images'"
-                      v-model="item[field.field]"
-                      :disabled="!canWrite"
-                      file-type="image"
-                      multiple
-                    />
-                    <Select
-                      v-else-if="field.kind === 'tags'"
-                      v-model:value="item[field.field]"
-                      :disabled="!canWrite"
-                      mode="tags"
-                      placeholder="回车添加标签"
-                      style="width: 100%"
-                    />
-                    <Input
-                      v-else
-                      v-model:value="item[field.field]"
-                      :disabled="!canWrite"
-                    />
-                  </div>
-                </div>
-              </Card>
-              <Button v-if="canWrite" @click="addCard(block.blockName, block)">
-                新增一项
-              </Button>
-            </div>
-
-            <!-- json / 无 editor：通用 JSON 兜底 -->
+            <!-- 高级（JSON）：仅在用户主动降级该块时出现 -->
             <textarea
-              v-else
+              v-else-if="isJsonMode(block.blockName)"
               :value="jsonText(block.blockName)"
               spellcheck="false"
               :disabled="!canWrite"
-              class="h-40 w-full resize-y rounded border border-gray-200 bg-gray-50 p-3 font-mono text-xs leading-5"
+              class="h-64 w-full resize-y rounded border border-gray-200 bg-gray-50 p-3 font-mono text-xs leading-5"
               @input="(e) => (drafts[block.blockName] = e.target.value)"
             ></textarea>
-          </div>
-        </Card>
+
+            <!--
+              其余块：按**数据形状**自动生成图形表单。
+              覆盖 card / cards / 显式 json / 没有 editor 提示的块 —— 真实数据里
+              107 个静态块有 45 个没有提示，以前这些块只能编辑裸 JSON，非技术人员无法操作。
+            -->
+            <AutoFormValue
+              v-else
+              :parent="drafts"
+              :field-key="block.blockName"
+              :disabled="!canWrite"
+            />
+            </CollapsePanel>
+          </Collapse>
+        </section>
 
         <Alert
           v-if="readOnlyBlocks.length"

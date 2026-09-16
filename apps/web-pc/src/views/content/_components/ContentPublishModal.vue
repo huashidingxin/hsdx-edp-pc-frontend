@@ -22,7 +22,6 @@ const props = defineProps({
 
 const emit = defineEmits(['update:open', 'saved']);
 
-const typeMap = { 1: '官网', 2: '小程序', 3: '公众号' };
 const typeColor = { 1: 'blue', 2: 'green', 3: 'purple' };
 
 const checked = ref([]);
@@ -135,7 +134,7 @@ async function save() {
             :color="typeColor[app.type] || 'default'"
             class="m-0"
           >
-            {{ typeMap[app.type] || '' }}
+            {{ app.type_label || '' }}
           </Tag>
           <span v-if="app.code" class="publish-code">{{ app.code }}</span>
         </span>

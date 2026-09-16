@@ -168,4 +168,97 @@ describe('pageContentLoader', () => {
       }
     }
   });
+
+  /**
+   * 回归：草稿与基线**不能共享引用**。
+   *
+   * `unwrap` 的 default 分支原样返回入参，所以不深拷贝的话 `drafts[name]`
+   * 与 `data[key]` 里的值就是同一个对象。用户改草稿 = 改基线，
+   * 于是 `isDirty` 恒为 false、保存按钮永远点不动（浏览器实测复现过）。
+   */
+  it('草稿是基线的深拷贝，改草稿不会污染基线', async () => {
+    const { loader } = makeLoader();
+    const { drafts, data } = await loader.load(ctx);
+    // intro 的 path 是 ['intro'] → 草稿就是那个子对象
+    const baseline = data['home::home'].intro;
+
+    expect(drafts.intro).not.toBe(baseline);
+    expect(drafts.intro).toEqual(baseline);
+
+    drafts.intro.title = '改过了';
+    expect(baseline.title).toBe('I');
+  });
+
+  it('路径为空的块：草稿是整份内容的副本，同样不共享引用', async () => {
+    const { loader } = makeLoader();
+    const { drafts, data } = await loader.load(ctx);
+    const baseline = data['home::home'];
+
+    // hero 没有 path → 草稿是整份 data
+    expect(drafts.hero).toEqual(CONTENT);
+    expect(drafts.hero).not.toBe(baseline);
+
+    drafts.hero.hero.title = '改过了';
+    expect(baseline.hero.title).toBe('H');
+  });
+
+  it('嵌套的对象/数组也被深拷贝隔离（浅拷贝会漏掉）', async () => {
+    const nested = {
+      hero: {
+        title: 'H',
+        actions: [{ label: '提交', href: '/a' }],
+        items: [{ name: 'n', tags: ['x'] }],
+      },
+    };
+    const { loader } = makeLoader({
+      fetchSchema: vi.fn(async () => ({
+        schema: {
+          blocks: {
+            hero: {
+              provider: 'static_content',
+              enabled: true,
+              // 带 path，草稿才是那个嵌套对象本身
+              config: { content_key: 'home', path: ['hero'] },
+            },
+          },
+        },
+      })),
+      fetchContent: vi.fn(async () => nested),
+    });
+
+    const { drafts, data } = await loader.load(ctx);
+    const baseline = data['home::home'].hero;
+
+    // 没有 editor 提示 → 'auto' → 原样对象，但必须是副本
+    expect(drafts.hero).not.toBe(baseline);
+    expect(drafts.hero.actions[0]).not.toBe(baseline.actions[0]);
+    expect(drafts.hero.items[0].tags).not.toBe(baseline.items[0].tags);
+
+    drafts.hero.actions[0].label = '改了';
+    drafts.hero.items[0].tags.push('y');
+    expect(baseline.actions[0].label).toBe('提交');
+    expect(baseline.items[0].tags).toEqual(['x']);
+  });
+
+  it('没有 editor 提示的块，草稿是对象本身而不是 JSON 文本', async () => {
+    const { loader } = makeLoader({
+      fetchSchema: vi.fn(async () => ({
+        schema: {
+          blocks: {
+            intro: {
+              provider: 'static_content',
+              enabled: true,
+              config: { content_key: 'home', path: ['intro'] },
+            },
+          },
+        },
+      })),
+    });
+
+    const { drafts } = await loader.load(ctx);
+
+    // 这是图形表单的前提：草稿必须是可递归渲染的对象
+    expect(typeof drafts.intro).toBe('object');
+    expect(drafts.intro).toEqual({ title: 'I' });
+  });
 });
