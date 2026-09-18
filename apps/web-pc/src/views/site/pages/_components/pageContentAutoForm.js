@@ -51,7 +51,7 @@ export const FIELD_LABELS = {
   href: '链接',
   url: '链接',
   link: '链接',
-  target: '打开方式',
+  target: '跳转页面',
   slug: '标识',
   key: '标识',
   code: '编码',
@@ -203,6 +203,73 @@ export function isHtmlLike(value) {
   return typeof value === 'string' && HTML_RE.test(value);
 }
 
+/** 媒体控件类型：只有这三种会被「值变成中转态时保持控件」的逻辑保护。 */
+export const MEDIA_KINDS = new Set(['image', 'images', 'video']);
+
+/**
+ * 是否是上传控件回传的「待上传条目」。
+ *
+ * `AppUpload` 对**还没传到服务器**的文件回传的是对象而不是字符串：
+ * `{ url: 'blob:…', file: File | { name, size, type, category } }`。
+ * 它不是业务数据，不能按普通对象推断控件 —— 否则用户刚拖一张图进来，
+ * 图片控件就变成 `file` + `url` 两个输入框，预览和上传入口全部消失。
+ */
+export function isUploadItem(value) {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    typeof value.url === 'string' &&
+    'file' in value
+  );
+}
+
+/**
+ * 值是否处于「上传中转态」：刚删完（null / 空串 / 空数组），或刚选好本地文件（待上传条目）。
+ * 中转态下不能按形状重新推断控件，否则上传控件会当场降级成文本/对象表单。
+ */
+export function isUploadPlaceholder(value) {
+  if (value === null || value === undefined || value === '') return true;
+  // 空数组的 every() 也是 true：删光所有图之后同样是中转态。
+  if (Array.isArray(value)) return value.every(isUploadItem);
+
+  return isUploadItem(value);
+}
+
+/** 待上传条目该用哪种媒体控件：键名提示优先，其次看条目自身的文件名/类型。 */
+export function uploadItemKind(value, key = '') {
+  const hint = SCALAR_KEY_KINDS[key] ?? ARRAY_KEY_HINTS[key];
+  if (hint) return hint;
+  const file = value?.file;
+  const name = String(
+    (file && typeof file === 'object' && 'name' in file ? file.name : '') ||
+      value?.name ||
+      value?.url ||
+      '',
+  );
+  if (isVideoPath(name) || /^video\//i.test(String(file?.type ?? ''))) {
+    return 'video';
+  }
+
+  return 'image';
+}
+
+/**
+ * 结合「上一次用过的媒体控件」决定最终控件。
+ *
+ * 为什么需要这一次记忆：值处于上传中转态时，只靠键名提示不够 —— 没有键名提示的媒体字段
+ * （如 `banner_img`）本来是按扩展名推断成上传控件的，值一变空就会退回文本框，用户再也传不了图。
+ * 这里改为「保持上次的媒体控件」；普通字段（上一次不是媒体）完全不受影响。
+ */
+export function resolveFieldKind(key, value, previousMediaKind = '') {
+  const inferred = fieldKind(key, value);
+  if (MEDIA_KINDS.has(inferred)) return inferred;
+
+  return previousMediaKind && isUploadPlaceholder(value)
+    ? previousMediaKind
+    : inferred;
+}
+
 /**
  * 推断一个字段该用什么控件。
  *
@@ -240,13 +307,22 @@ export function fieldKind(key, value) {
       // 全是图片路径 → 图片集合；否则 → 标签
       return value.every((item) => isImagePath(item)) ? 'images' : 'tags';
     }
+    // 待上传条目数组（AppUpload 多选回传的对象）：保持多图控件，
+    // 不能落到「条目列表」—— 那样每张图会变成 file/链接 两个输入框。
+    if (value.every(isUploadItem)) return ARRAY_KEY_HINTS[key] ?? 'images';
     return 'list';
   }
 
-  if (value !== null && typeof value === 'object') return 'object';
+  if (value !== null && typeof value === 'object') {
+    // 单个待上传条目：不是业务对象，按键名/条目自身回到媒体控件。
+    if (isUploadItem(value)) return uploadItemKind(value, key);
+    return 'object';
+  }
 
-  // null / undefined：给一个普通文本框，让用户先填内容
-  return 'text';
+  // null / undefined：删除媒体后 AppUpload 单文件回传的是 null（`arr[0] || null`），
+  // 这里必须沿用键名提示 —— 否则用户点一下控件上的「删除」图标，上传控件会当场退化成
+  // 文本框，之后再也传不了图。没有键名提示时才给普通文本框，让用户先填内容。
+  return SCALAR_KEY_KINDS[key] ?? 'text';
 }
 
 /** 生成与 value 同形状的空值（新增条目时用）。 */

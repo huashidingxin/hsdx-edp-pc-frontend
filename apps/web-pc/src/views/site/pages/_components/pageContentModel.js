@@ -45,6 +45,7 @@ export const EDITOR_FIELDS = {
     'images',
     'video',
     'tags',
+    'target',
   ],
   cards: [
     'title',
@@ -55,6 +56,7 @@ export const EDITOR_FIELDS = {
     'images',
     'video',
     'tags',
+    'target',
   ],
   json: [],
 };

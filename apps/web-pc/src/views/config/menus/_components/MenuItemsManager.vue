@@ -322,6 +322,19 @@ async function onDrop(info) {
 const editingOpen = ref(false);
 const editingId = ref(null); // null=新增
 const saving = ref(false);
+/** Mega 菜单的 Featured 图片上传控件（AppUpload 不自动上传，保存前要手动 flush）。 */
+const featuredUploadRef = ref(null);
+
+/**
+ * AppUpload 有意不自动上传：选中的文件先以 `{ url: 'blob:...', file: File }` 挂在表单上，
+ * 必须在**真正保存那一刻**调用 upload()（同 AppCrudTable / LocaleTabsEditor 的约定），
+ * 否则 meta.featured.image 里会写进 blob 地址甚至整个 FileItem 对象。
+ */
+async function flushFeaturedUpload() {
+  if (typeof featuredUploadRef.value?.upload === 'function') {
+    await featuredUploadRef.value.upload();
+  }
+}
 const form = reactive({
   parent_id: ROOT_KEY,
   /** 多语言标题：[{locale, title}]，LocaleTabsEditor 双向绑定 */
@@ -517,13 +530,15 @@ function buildPayload() {
 async function saveItem() {
   const menuId = props.menu?.id;
   if (!menuId) return;
-  const payload = buildPayload();
-  if (!payload) {
-    message.error(metaJsonError.value || '保存失败');
-    return;
-  }
   saving.value = true;
   try {
+    // 先把待上传的 Featured 图片传完，再组装 payload —— 否则拿到的是 blob 地址/FileItem。
+    await flushFeaturedUpload();
+    const payload = buildPayload();
+    if (!payload) {
+      message.error(metaJsonError.value || '保存失败');
+      return;
+    }
     if (editingId.value) {
       await requestClient.patch(
         `/menus/${menuId}/items/${editingId.value}`,
@@ -797,6 +812,7 @@ function onPageSelected(value) {
             <div v-if="form.variant === 'mega'" class="grid grid-cols-2 gap-3">
               <FormItem label="Featured 图片" class="col-span-2">
                 <AppUpload
+                  :ref="featuredUploadRef"
                   v-model="form.featured.image"
                   file-type="image"
                   :multiple="false"

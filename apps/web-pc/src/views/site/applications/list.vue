@@ -7,8 +7,10 @@
  * 进入时写入当前应用 id，目标页沿用各自的应用上下文）。
  */
 import { computed, ref, onMounted, provide } from 'vue';
+import { useRouter } from 'vue-router';
 
 import { useAccess } from '@vben/access';
+import { useCurrentAppStore } from '#/store/current-app';
 
 import {
   Button,
@@ -128,6 +130,39 @@ const moduleWidth = computed(() => moduleMap[moduleDrawer.value.key]?.width || 1
  */
 provide('crudTableFillHeight', true);
 
+const router = useRouter();
+const currentAppStore = useCurrentAppStore();
+
+function enterWorkspace(app) {
+  currentAppStore.selectApp(app.id);
+  message.success(`已切换至应用工作区：${app.name}`);
+  router.push('/site/pages');
+}
+
+function navigateModule(key, app) {
+  currentAppStore.selectApp(app.id);
+  const routeMap = {
+    pages: '/site/pages',
+    menus: '/config/menus',
+    settings: '/config/settings',
+    'ui-strings': '/config/ui-strings',
+    files: '/config/files',
+    articles: '/content/articles',
+    products: '/content/products',
+    categories: '/content/categories',
+  };
+  if (routeMap[key]) {
+    router.push({
+      path: routeMap[key],
+      query: ['articles', 'products', 'categories'].includes(key)
+        ? { application_id: app.id }
+        : {},
+    });
+  } else {
+    openModule(key, app);
+  }
+}
+
 function openModule(key, app) {
   moduleDrawer.value = { open: true, key, app };
 }
@@ -216,6 +251,7 @@ async function saveForm() {
     }
     formOpen.value = false;
     await load();
+    await currentAppStore.loadApplications(true);
   } catch (error) {
     console.error(error);
   } finally {
@@ -228,6 +264,7 @@ async function removeApp(app) {
     await new Resource('applications').destroy(app.id);
     message.success('应用已删除');
     await load();
+    await currentAppStore.loadApplications(true);
   } catch (error) {
     console.error(error);
   }
@@ -330,6 +367,7 @@ onMounted(async () => {
             <span class="card-name">{{ app.name }}</span>
             <Tag :color="typeColor[app.type] || 'default'">{{ app.type_label || '-' }}</Tag>
             <Tag :color="statusColor[app.status] || 'default'">{{ app.status_label || '-' }}</Tag>
+            <Tag v-if="currentAppStore.currentAppId === app.id" color="processing">当前工作区</Tag>
           </div>
           <div class="card-meta">
             <span v-if="app.code" class="meta-code">{{ app.code }}</span>
@@ -348,7 +386,7 @@ onMounted(async () => {
               size="small"
               type="link"
               class="entry-btn"
-              @click="openModule(link.key, app)"
+              @click="navigateModule(link.key, app)"
             >
               {{ link.label }}
             </Button>
@@ -361,7 +399,7 @@ onMounted(async () => {
               size="small"
               type="link"
               class="entry-btn"
-              @click="openModule(link.key, app)"
+              @click="navigateModule(link.key, app)"
             >
               {{ link.label }}
             </Button>
@@ -371,6 +409,13 @@ onMounted(async () => {
           </div>
 
           <div class="card-foot">
+            <Button
+              size="small"
+              :type="currentAppStore.currentAppId === app.id ? 'default' : 'primary'"
+              @click="enterWorkspace(app)"
+            >
+              {{ currentAppStore.currentAppId === app.id ? '已在当前工作区' : '进入工作区' }}
+            </Button>
             <Button v-if="canEdit" size="small" @click="openEdit(app)">编辑</Button>
             <Popconfirm title="确定删除该应用吗？其页面/菜单/设置将一并删除。" @confirm="removeApp(app)">
               <Button v-if="canDelete" size="small" danger>删除</Button>

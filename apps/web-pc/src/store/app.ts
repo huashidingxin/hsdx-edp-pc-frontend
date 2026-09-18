@@ -1,11 +1,8 @@
-import { useAccessStore, useTabbarStore, useUserStore } from '@vben/stores';
+import { useAccessStore } from '@vben/stores';
 
 import { defineStore } from 'pinia';
 
 import Resource from '#/api/resource';
-import { resetRoutes, router } from '#/router';
-import { generateAccess } from '#/router/access';
-import { accessRoutes } from '#/router/routes';
 
 interface ProjectRole {
   id?: number | string;

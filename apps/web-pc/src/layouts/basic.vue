@@ -2,7 +2,6 @@
 import type { FormProps } from 'antdv-next';
 
 import { computed, reactive, ref, watch } from 'vue';
-import { useRoute } from 'vue-router';
 
 import { AuthenticationLoginExpiredModal } from '@vben/common-ui';
 import { useWatermark } from '@vben/hooks';
@@ -13,20 +12,14 @@ import { useAccessStore, useUserStore } from '@vben/stores';
 import { Form, FormItem, InputPassword, message, Modal } from 'antdv-next';
 
 import { changePasswordApi } from '#/api';
-import AppProject from '#/components/AppProject.vue';
-import { useAppStore, useAuthStore } from '#/store';
+import AppWorkspaceSelector from '#/components/AppWorkspaceSelector.vue';
+import { useAuthStore } from '#/store';
 import LoginForm from '#/views/_core/authentication/login.vue';
 
 const userStore = useUserStore();
 const authStore = useAuthStore();
 const accessStore = useAccessStore();
-const appStore = useAppStore();
-const route = useRoute();
 const { destroyWatermark, updateWatermark } = useWatermark();
-
-const isProjectMenu = computed(() =>
-  route.matched.some((record) => record.meta?.isProjectMenu === true),
-);
 
 const passwordFormRef = ref();
 const passwordModalOpen = ref(false);
@@ -70,10 +63,11 @@ const avatar = computed(() => {
 });
 
 const currentRoleName = computed(() => {
-  const role = (appStore.defaultProject as any)?.role;
-  if (!role) return '';
-  if (typeof role === 'string') return role;
-  return role.display_name || role.name || '';
+  const roles = userStore.userInfo?.roles;
+  if (Array.isArray(roles) && roles.length) {
+    return roles.map((r: any) => r.display_name || r.name || r).join(', ');
+  }
+  return userStore.userInfo?.role_name || userStore.userInfo?.role || '';
 });
 
 async function handleLogout() {
@@ -137,7 +131,7 @@ watch(
 <template>
   <BasicLayout @clear-preferences-and-logout="handleLogout" @logout="handleLogout">
     <template #header-left-1>
-      <AppProject v-if="isProjectMenu" />
+      <AppWorkspaceSelector />
     </template>
     <template #user-dropdown>
       <UserDropdown

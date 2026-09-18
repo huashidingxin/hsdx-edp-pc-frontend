@@ -9,9 +9,13 @@ import {
   fieldLabel,
   isHtmlLike,
   isImagePath,
+  isUploadItem,
+  isUploadPlaceholder,
   isVideoPath,
   looksLikeJsonText,
+  resolveFieldKind,
   summarize,
+  uploadItemKind,
 } from '../pageContentAutoForm';
 
 describe('fieldLabel', () => {
@@ -27,7 +31,7 @@ describe('fieldLabel', () => {
     expect(fieldLabel('intro')).toBe('导语');
     expect(fieldLabel('variant')).toBe('样式');
     expect(fieldLabel('code')).toBe('编码');
-    expect(fieldLabel('target')).toBe('打开方式');
+    expect(fieldLabel('target')).toBe('跳转页面');
     expect(fieldLabel('tabs')).toBe('标签页');
     expect(fieldLabel('activeTab')).toBe('当前标签');
     expect(fieldLabel('contact')).toBe('联系方式');
@@ -253,5 +257,91 @@ describe('fieldKind 的键名兜底（值为空时仍选对媒体控件）', () 
   it('无提示的普通键不受影响', () => {
     expect(fieldKind('title', '')).toBe('text');
     expect(fieldKind('someKey', '')).toBe('text');
+  });
+
+  /**
+   * 回归：点 AppUpload 上的「删除」图标后控件不能再变回文本框。
+   *
+   * 单文件删除时 AppUpload 回传的是 `null`（`props.multiple ? arr : arr[0] || null`），
+   * 旧实现对 null 一律兜底成 text → 控件当场从上传框变成输入框，用户无法再传图。
+   */
+  it('删除媒体后的 null/undefined 仍保持上传控件', () => {
+    for (const key of ['image', 'image1', 'image2', 'image3', 'img', 'photo', 'pic', 'cover', 'logo', 'icon', 'thumb', 'poster', 'banner', 'background', 'bg', 'avatar', 'qrcode', 'title_image']) {
+      expect(fieldKind(key, null), `${key} = null`).toBe('image');
+    }
+    for (const key of ['video', 'video_url', 'video_src', 'video_path', 'video_file']) {
+      expect(fieldKind(key, null), `${key} = null`).toBe('video');
+    }
+    expect(fieldKind('image', undefined)).toBe('image');
+    expect(fieldKind('video_poster', null)).toBe('image');
+  });
+
+  it('没有键名提示的键收到 null/undefined 仍是文本框', () => {
+    expect(fieldKind('title', null)).toBe('text');
+    expect(fieldKind('someKey', undefined)).toBe('text');
+    expect(fieldKind('imageAlt', null)).toBe('text');
+  });
+});
+
+/**
+ * 回归：拖拽/选择本地文件后 AppUpload 回传的是**对象**（`{ url: 'blob:…', file }`）。
+ * 旧实现把它按普通对象推断 → 图片控件当场变成 `file` + `链接` 两个输入框，
+ * 预览与上传入口一起消失（用户截图反馈的实际现象）。
+ */
+describe('上传中转态的控件保持', () => {
+  const pendingImage = {
+    url: 'blob:http://localhost:5999/d8794f86-fbc0-433b-890c-13ce9b5e7cdf',
+    file: { name: 'photo.png', size: 1024, type: 'image/png' },
+  };
+  const pendingVideo = {
+    url: 'blob:http://localhost:5999/abc',
+    file: { name: 'clip.mp4', size: 2048, type: 'video/mp4' },
+  };
+
+  it('isUploadItem 只认 { url, file } 的上传条目，不误判业务对象', () => {
+    expect(isUploadItem(pendingImage)).toBe(true);
+    expect(isUploadItem({ url: '/products/1', alt: '图' })).toBe(false);
+    expect(isUploadItem('image/a.png')).toBe(false);
+    expect(isUploadItem([])).toBe(false);
+  });
+
+  it('单图键 + 待上传条目 → 仍是图片控件，不会变成对象表单', () => {
+    expect(fieldKind('image2', pendingImage)).toBe('image');
+    expect(fieldKind('cover', pendingImage)).toBe('image');
+  });
+
+  it('视频键 + 待上传条目 → 视频控件', () => {
+    expect(fieldKind('video', pendingVideo)).toBe('video');
+    expect(uploadItemKind(pendingVideo, '')).toBe('video');
+  });
+
+  it('多图键 + 待上传条目数组 → images，而不是「条目列表」', () => {
+    expect(fieldKind('images', [pendingImage])).toBe('images');
+    expect(fieldKind('images', [pendingImage, pendingVideo])).toBe('images');
+  });
+
+  it('无键名提示时按条目自身的文件名/类型兜底', () => {
+    expect(uploadItemKind(pendingImage, 'custom_media')).toBe('image');
+    expect(uploadItemKind(pendingVideo, 'custom_media')).toBe('video');
+  });
+
+  it('isUploadPlaceholder 覆盖「刚删完」与「刚选好文件」两种中转态', () => {
+    expect(isUploadPlaceholder(null)).toBe(true);
+    expect(isUploadPlaceholder('')).toBe(true);
+    expect(isUploadPlaceholder([])).toBe(true);
+    expect(isUploadPlaceholder(pendingImage)).toBe(true);
+    expect(isUploadPlaceholder([pendingImage])).toBe(true);
+    expect(isUploadPlaceholder('image/a.png')).toBe(false);
+    expect(isUploadPlaceholder({ title: 't' })).toBe(false);
+  });
+
+  it('resolveFieldKind 在值变成中转态时保持上一次的媒体控件', () => {
+    // 没有键名提示的媒体字段：先按扩展名推断成上传控件，删空后必须还是上传控件
+    expect(resolveFieldKind('banner_img', 'image/a.png')).toBe('image');
+    expect(resolveFieldKind('banner_img', null, 'image')).toBe('image');
+    expect(resolveFieldKind('banner_img', pendingImage, 'image')).toBe('image');
+    // 普通字段不受影响
+    expect(resolveFieldKind('title', null, '')).toBe('text');
+    expect(resolveFieldKind('rows', [], '')).toBe('list');
   });
 });

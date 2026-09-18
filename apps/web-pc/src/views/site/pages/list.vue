@@ -7,7 +7,7 @@ import { Tag } from 'antdv-next';
 
 import { setCurrentApplicationId } from '#/api/application-context';
 
-import PageContentManager from './_components/PageContentManager.vue';
+import PageStudioDrawer from './_components/PageStudioDrawer.vue';
 
 const router = useRouter();
 
@@ -100,13 +100,14 @@ const gridColumns = ref([
 const formData = ref(null);
 const crudRef = ref(null);
 
-// 页面内容抽屉：按块编辑 page_contents.data（静态数据），保存立即生效。
-const contentOpen = ref(false);
-const contentRow = ref(null);
+const studioOpen = ref(false);
+const studioRow = ref(null);
+const studioTab = ref('content');
 
-function openContent(row) {
-  contentRow.value = row;
-  contentOpen.value = true;
+function openStudio(row, tab = 'content') {
+  studioRow.value = row;
+  studioTab.value = tab;
+  studioOpen.value = true;
 }
 
 /** 抽屉内改了页面语言（title/slug）时刷新列表，保证「语言」列不过期。 */
@@ -116,23 +117,36 @@ function refreshList() {
 
 const actionsConfig = ref([
   {
+    key: 'manage_studio',
+    label: '页面工作台',
+    icon: 'lucide:palette',
+    permission: 'edit',
+    onClick: (row) => openStudio(row, 'content'),
+    order: 30,
+  },
+  {
     key: 'manage_content',
-    label: '页面内容',
+    label: '图文装修',
     icon: 'mdi--text-box-edit-outline',
     permission: 'edit',
-    onClick: (row) => openContent(row),
+    onClick: (row) => openStudio(row, 'content'),
     order: 34,
   },
   {
     key: 'manage_schema',
-    label: '数据 Schema',
+    label: '数据规则',
     icon: 'mdi--code-json',
     permission: 'edit',
-    onClick: (row) => {
-      // 用路由跳转而非 window.location，避免整页刷新丢失当前应用上下文
-      router.push(`/site/page-data-schema/${row.id}`);
-    },
+    onClick: (row) => openStudio(row, 'schema'),
     order: 35,
+  },
+  {
+    key: 'manage_seo',
+    label: 'SEO 设置',
+    icon: 'lucide:globe',
+    permission: 'edit',
+    onClick: (row) => openStudio(row, 'seo'),
+    order: 36,
   },
 ]);
 
@@ -170,8 +184,8 @@ watch(
     :open-mode="{ create: 'modal', detail: 'modal' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
     :actions-config="actionsConfig"
-    :inline-actions="['view', 'edit', 'manage_content', 'manage_schema', 'delete']"
-    :max-inline-actions="5"
+    :inline-actions="['manage_studio', 'view', 'edit', 'delete']"
+    :max-inline-actions="4"
     permission-name="cms.page"
     title="页面管理"
     class="p-4"
@@ -191,10 +205,54 @@ watch(
       </div>
     </template>
   </AppCrudTable>
+  <div class="site-pages-page">
+    <AppCrudTable
+      ref="crudRef"
+      api-url="pages"
+      v-model="formData"
+      :filter-fields="filterFields"
+      :fields="formFields"
+      :grid-options="{
+        columns: gridColumns,
+        showOverflow: false,
+        columnConfig: { resizable: true },
+      }"
+      :open-mode="{ create: 'modal', detail: 'modal' }"
+      :form-attrs="{ layout: 'vertical', size: 'medium' }"
+      :actions-config="actionsConfig"
+      :inline-actions="['manage_studio', 'view', 'edit', 'delete']"
+      :max-inline-actions="4"
+      permission-name="cms.page"
+      title="页面管理"
+      class="p-4"
+    >
+      <template #default_type="{ row }">
+        <Tag :color="typeColor[row.type] || 'default'">{{ row.type_label || '-' }}</Tag>
+      </template>
+      <template #default_locales="{ row }">
+        <div class="flex flex-wrap gap-1">
+          <Tag
+            v-for="l in row.locales || []"
+            :key="l.locale"
+          >
+            {{ l.locale }}：{{ l.title || l.slug || l.locale }}
+          </Tag>
+          <span v-if="!row.locales?.length">-</span>
+        </div>
+      </template>
+    </AppCrudTable>
 
-  <PageContentManager
-    v-model:open="contentOpen"
-    :page="contentRow"
+  <PageStudioDrawer
+    v-model:open="studioOpen"
+    :page="studioRow"
+    :initial-tab="studioTab"
     @refresh="refreshList"
   />
+    <PageStudioDrawer
+      v-model:open="studioOpen"
+      :page="studioRow"
+      :initial-tab="studioTab"
+      @refresh="refreshList"
+    />
+  </div>
 </template>

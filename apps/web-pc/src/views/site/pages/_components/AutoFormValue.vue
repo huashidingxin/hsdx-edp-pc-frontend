@@ -11,6 +11,10 @@
  * `parent` 就是 PageContentManager 的 `drafts[blockName]`（reactive 深代理），
  * 因此编辑立刻反映到草稿，`isDirty` 与「按块保存」无需改动即可工作。
  * 若在此处 copy 一份局部状态，保存时还得合回去，容易丢字段——所以有意不这么做。
+ *
+ * 上传约定：媒体控件用 `AppUpload`，它**不自动上传**。选中的文件先以
+ * `{ url: 'blob:...', file: File }` 落在草稿里，必须由使用页在**真正保存那一刻**
+ * 调用本组件暴露的 `upload()`（见 defineExpose），否则 PUT 出去的是 blob 地址。
  */
 import { computed } from 'vue';
 
@@ -33,7 +37,8 @@ import {
   blankItemFor,
   describeArray,
   describeObject,
-  fieldKind,
+  MEDIA_KINDS,
+  resolveFieldKind,
   summarize,
 } from './pageContentAutoForm';
 
@@ -63,7 +68,25 @@ const model = computed({
   },
 });
 
-const kind = computed(() => fieldKind(String(props.fieldKey), value.value));
+/**
+ * 上一次真正推断出来的媒体控件。
+ *
+ * 值处于上传中转态时（刚删完的 null/''/[]，或刚拖完文件时 AppUpload 回传的
+ * `{ url: 'blob:…', file }`）不能按形状重新推断：没有键名提示的媒体字段会从
+ * 上传控件掉回文本框/对象表单，用户再也传不了图。这里记住上一次的媒体控件沿用。
+ */
+let previousMediaKind = '';
+
+const kind = computed(() => {
+  const resolved = resolveFieldKind(
+    String(props.fieldKey),
+    value.value,
+    previousMediaKind,
+  );
+  if (MEDIA_KINDS.has(resolved)) previousMediaKind = resolved;
+
+  return resolved;
+});
 
 /** object 分支的字段描述（list 里的每个条目自己再算一遍）。 */
 const childFields = computed(() => describeObject(value.value));
@@ -71,6 +94,37 @@ const childFields = computed(() => describeObject(value.value));
 const arrayInfo = computed(() => describeArray(value.value));
 
 const tooDeep = computed(() => props.depth >= MAX_DEPTH);
+
+/**
+ * 本字段树下的上传目标：媒体控件（AppUpload）与子节点（AutoFormValue）都暴露 `upload()`。
+ *
+ * ref 回调按 key 缓存复用：每次渲染换一个新函数会让 Vue 对旧 ref 走一次 set(null)、
+ * 再对新 ref 走 set(el)，白抖一轮（极端情况下会把刚登记的实例删掉）。
+ */
+const uploadTargets = new Map();
+const uploadRefCallbacks = new Map();
+
+function uploadRef(key) {
+  if (!uploadRefCallbacks.has(key)) {
+    uploadRefCallbacks.set(key, (el) => {
+      if (el) uploadTargets.set(key, el);
+      else uploadTargets.delete(key);
+    });
+  }
+
+  return uploadRefCallbacks.get(key);
+}
+
+/** 递归上传本字段树下所有待上传文件；没有待上传文件时是空操作。 */
+async function upload() {
+  const tasks = [];
+  for (const target of uploadTargets.values()) {
+    if (typeof target?.upload === 'function') tasks.push(target.upload());
+  }
+  await Promise.all(tasks);
+}
+
+defineExpose({ upload });
 
 function addItem() {
   const list = Array.isArray(model.value) ? [...model.value] : [];
@@ -126,6 +180,7 @@ function itemLabel(item, index) {
     <!-- 图片 -->
     <AppUpload
       v-else-if="kind === 'image'"
+      :ref="uploadRef('@self')"
       v-model="model"
       :disabled="disabled"
       file-type="image"
@@ -134,6 +189,7 @@ function itemLabel(item, index) {
     <!-- 图片集合 -->
     <AppUpload
       v-else-if="kind === 'images'"
+      :ref="uploadRef('@self')"
       v-model="model"
       :disabled="disabled"
       file-type="image"
@@ -143,6 +199,7 @@ function itemLabel(item, index) {
     <!-- 视频（真实数据里 image2 曾存过 .mp4；空值靠键名提示） -->
     <AppUpload
       v-else-if="kind === 'video'"
+      :ref="uploadRef('@self')"
       v-model="model"
       :disabled="disabled"
       file-type="video"
@@ -185,6 +242,7 @@ function itemLabel(item, index) {
       <AutoFormValue
         v-for="field in childFields"
         :key="field.key"
+        :ref="uploadRef(field.key)"
         :parent="value"
         :field-key="field.key"
         :label="field.label"
@@ -232,6 +290,7 @@ function itemLabel(item, index) {
           <AutoFormValue
             v-for="field in describeObject(item)"
             :key="field.key"
+            :ref="uploadRef(`@item:${index}:${field.key}`)"
             :parent="item"
             :field-key="field.key"
             :label="field.label"
@@ -243,6 +302,7 @@ function itemLabel(item, index) {
         <!-- 标量条目：直接给一个控件 -->
         <AutoFormValue
           v-else
+          :ref="uploadRef(`@item:${index}`)"
           :parent="value"
           :field-key="index"
           :disabled="disabled"

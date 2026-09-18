@@ -14,8 +14,13 @@
  * 编辑控件：editor 提示是可选的，**没有提示也必须能图形化编辑**。
  * image/images/richtext/video 用专用控件；其余（card/cards/json/无提示）一律用
  * AutoFormValue 按**数据形状**自动生成表单，另给每块一个「高级（JSON）」开关兜底。
+ *
+ * 上传（重要）：`AppUpload` 有意**不自动上传**（同 AppCrudTable / LocaleTabsEditor /
+ * SubmissionEdit 的约定）—— 选中的文件先以 `{ url: 'blob:...', file: File }` 挂在草稿上。
+ * 所以必须由本页在**真正保存那一刻**（saveBlock）先 flush 该块的上传控件，
+ * 否则 PUT 出去的是 blob 地址而不是素材 URL。
  */
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 
 import { useAccess } from '@vben/access';
 
@@ -57,9 +62,11 @@ const DEDICATED_EDITOR_TYPES = ['image', 'images', 'richtext', 'video'];
 const props = defineProps({
   open: { type: Boolean, default: false },
   page: { type: Object, default: null },
+  embed: { type: Boolean, default: false },
+  currentLocale: { type: String, default: '' },
 });
 
-const emit = defineEmits(['update:open', 'refresh']);
+const emit = defineEmits(['update:open', 'refresh', 'switch-tab']);
 
 const { hasAccessByCodes } = useAccess();
 
@@ -177,7 +184,11 @@ const contentLoader = createContentLoader({
     });
     const items = response?.items ?? response ?? [];
 
-    return items.find((item) => item.locale === loc) ?? null;
+    return (
+      items.find((item) => item.locale === loc) ??
+      items.find((item) => item.locale?.toLowerCase() === loc?.toLowerCase()) ??
+      null
+    );
   },
   fetchContent: async ({ pageId: id, locale: loc, contentKey }) => {
     const response = await requestClient.get(
@@ -235,6 +246,36 @@ function groupOfBlock(blockName) {
 }
 
 /**
+ * 块名 → 该块的上传刷新目标。
+ *
+ * 一个块最多一个上传控件：专用分支（image/images/video）是 `AppUpload`，
+ * 其余分支是 `AutoFormValue`（它会把整棵子树的上传控件递归暴露出来）。
+ * 两者都暴露 `upload()`，这里不必区分。
+ *
+ * ref 回调按块名缓存复用：每次渲染换新函数会让 Vue 对旧 ref 走一次 set(null)、
+ * 再对新 ref 走 set(el)，白抖一轮（极端情况下会把刚登记的实例删掉）。
+ */
+const uploadTargets = new Map();
+const uploadRefCallbacks = new Map();
+
+function blockUploadRef(blockName) {
+  if (!uploadRefCallbacks.has(blockName)) {
+    uploadRefCallbacks.set(blockName, (el) => {
+      if (el) uploadTargets.set(blockName, el);
+      else uploadTargets.delete(blockName);
+    });
+  }
+
+  return uploadRefCallbacks.get(blockName);
+}
+
+/** 保存前先把该块的待上传文件传完（AppUpload 不自动上传，见文件头注释）。 */
+async function flushBlockUploads(blockName) {
+  const target = uploadTargets.get(blockName);
+  if (typeof target?.upload === 'function') await target.upload();
+}
+
+/**
  * card / video 分支要求草稿是「对象」。缺失或形状不符时返回 null，
  * 模板据此退回 JSON 兜底 —— 保证渲染期永远不会对 undefined 取属性。
  */
@@ -253,28 +294,34 @@ async function saveBlock(blockName) {
   if (!group?.editable) return;
 
   const editorType = descriptor.editor?.type ?? 'auto';
-  let value = drafts.value[blockName];
-
-  // 只有「用户在高级模式里手写的 JSON 文本」才需要解析。
-  // 不能见到字符串就 parse：像 about-*.body 这类块的数据本身就是一段 HTML 字符串，
-  // 硬解析会报「JSON 格式错误」，导致该块永远保存不了。
-  if (typeof value === 'string' && looksLikeJsonText(value)) {
-    if (jsonMode[blockName] || editorType === 'json') {
-      const parsed = parseJsonText(value);
-      if (!parsed.ok) {
-        message.error(`JSON 格式错误：${parsed.error}`);
-        return;
-      }
-      value = parsed.value;
-    }
-  }
-
-  const raw = getAtPath(contentData.value[group.key], descriptor.path);
-  const nextValue = rewrap(editorType, raw, value);
-  const nextData = setAtPath(contentData.value[group.key], descriptor.path, nextValue);
-
   savingBlock.value = blockName;
   try {
+    // AppUpload 不自动上传：真正保存这一刻先把该块的待上传文件传完，
+    // 草稿里才会是持久化 URL（上传失败会在 AppUpload 内提示并抛出，这里不继续 PUT，
+    // 避免把 blob 地址写进库）。
+    await flushBlockUploads(blockName);
+
+    // 草稿必须在 flush 之后取：上传成功后 v-model 会把新 URL 回写到草稿上。
+    let value = drafts.value[blockName];
+
+    // 只有「用户在高级模式里手写的 JSON 文本」才需要解析。
+    // 不能见到字符串就 parse：像 about-*.body 这类块的数据本身就是一段 HTML 字符串，
+    // 硬解析会报「JSON 格式错误」，导致该块永远保存不了。
+    if (typeof value === 'string' && looksLikeJsonText(value)) {
+      if (jsonMode[blockName] || editorType === 'json') {
+        const parsed = parseJsonText(value);
+        if (!parsed.ok) {
+          message.error(`JSON 格式错误：${parsed.error}`);
+          return;
+        }
+        value = parsed.value;
+      }
+    }
+
+    const raw = getAtPath(contentData.value[group.key], descriptor.path);
+    const nextValue = rewrap(editorType, raw, value);
+    const nextData = setAtPath(contentData.value[group.key], descriptor.path, nextValue);
+
     await requestClient.put(
       `/pages/${pageId.value}/content/${locale.value}/${group.contentKey}`,
       { data: nextData },
@@ -290,7 +337,7 @@ async function saveBlock(blockName) {
     message.success(`「${descriptor.label}」已保存并生效`);
     emit('refresh');
   } catch {
-    // 请求层已提示后端错误
+    // 上传失败与请求错误已分别在 AppUpload / 请求层提示
   } finally {
     savingBlock.value = '';
   }
@@ -379,14 +426,30 @@ function isDirty(blockName) {
 }
 
 watch(
-  () => [props.open, props.page?.id],
-  ([open]) => {
+  () => [props.open, props.page?.id, props.currentLocale],
+  ([open, _id, curLoc]) => {
     if (open) {
-      locale.value = '';
+      if (curLoc && typeof curLoc === 'string') {
+        locale.value = curLoc;
+        expectedLocale.value = curLoc;
+      } else {
+        locale.value = '';
+      }
       load();
     }
   },
+  { immediate: true },
 );
+
+onMounted(() => {
+  if (props.open && !schemaRow.value && !loading.value) {
+    if (props.currentLocale && typeof props.currentLocale === 'string') {
+      locale.value = props.currentLocale;
+      expectedLocale.value = props.currentLocale;
+    }
+    load();
+  }
+});
 
 watch(locale, (next, previous) => {
   if (!props.open || !next || next === previous) return;
@@ -395,18 +458,32 @@ watch(locale, (next, previous) => {
   if (next === expectedLocale.value) return;
   load();
 });
+
+defineExpose({
+  load,
+  locale,
+  localeOptions,
+});
 </script>
 
 <template>
-  <Drawer
-    :open="open"
-    :width="920"
-    destroy-on-close
-    title="页面内容"
+  <component
+    :is="embed ? 'div' : Drawer"
+    v-bind="
+      embed
+        ? { class: 'page-content-embedded' }
+        : {
+            open,
+            width: 1080,
+            destroyOnClose: true,
+            title: '页面内容',
+          }
+    "
     @update:open="(v) => emit('update:open', v)"
   >
-    <!-- 工具条：钉在顶部。长页面滚动时语言切换 / 重新加载 / 未保存计数始终可见 -->
+    <!-- 工具条：独立抽屉模式钉在顶部；嵌入模式提供精简状态栏 -->
     <div
+      v-if="!embed"
       class="sticky top-0 z-10 -mx-6 -mt-6 mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-gray-100 bg-white px-6 py-3"
     >
       <Tag color="blue">{{ page?.code || '-' }}</Tag>
@@ -426,16 +503,35 @@ watch(locale, (next, previous) => {
       </span>
     </div>
 
+    <!-- 嵌入模式工具条 -->
+    <div
+      v-else
+      class="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 pb-2 text-xs text-gray-500"
+    >
+      <div class="flex items-center gap-2">
+        <Tag color="blue">{{ page?.code || '-' }}</Tag>
+        <span v-if="editableBlockCount" class="text-gray-600">
+          共 {{ editableBlockCount }} 个可编辑静态块
+        </span>
+        <Tag v-if="dirtyCount" color="orange">{{ dirtyCount }} 个未保存</Tag>
+        <span v-if="!canWrite" class="text-gray-400">无 cms.page.write 权限，仅可查看</span>
+      </div>
+      <Button size="small" :loading="loading" @click="load">
+        刷新内容
+      </Button>
+    </div>
+
     <Spin :spinning="loading">
       <Empty v-if="!loading && !schemaRow" description="该页面尚未配置数据来源">
         <Button
-          type="link"
+          type="primary"
           @click="
-            pageId &&
-              $router.push(`/site/page-data-schema/${pageId}`)
+            embed
+              ? emit('switch-tab', 'schema')
+              : (pageId && $router.push(`/site/page-data-schema/${pageId}`))
           "
         >
-          去配置页面数据
+          去配置数据规则
         </Button>
       </Empty>
 
@@ -444,8 +540,14 @@ watch(locale, (next, previous) => {
         type="info"
         show-icon
         message="该页面未配置静态数据块"
-        description="当前页面的数据来源里没有 provider=static_content 的块。若需要编辑静态图文，请先在「页面数据 Schema」中新增静态块并配置 editor 提示。"
-      />
+        description="当前页面的数据来源里没有 provider=static_content 的块。若需要编辑静态图文，请先在「数据规则 (Schema)」中新增静态块并配置 editor 提示。"
+      >
+        <template #action v-if="embed">
+          <Button size="small" type="primary" @click="emit('switch-tab', 'schema')">
+            去配置静态块
+          </Button>
+        </template>
+      </Alert>
 
       <template v-else-if="!loading">
         <section
@@ -504,6 +606,7 @@ watch(locale, (next, previous) => {
             <!-- image：单图 -->
             <AppUpload
               v-if="block.editor?.type === 'image'"
+              :ref="blockUploadRef(block.blockName)"
               v-model="drafts[block.blockName]"
               :disabled="!canWrite"
               file-type="image"
@@ -512,6 +615,7 @@ watch(locale, (next, previous) => {
             <!-- images：图片集合 -->
             <AppUpload
               v-else-if="block.editor?.type === 'images'"
+              :ref="blockUploadRef(block.blockName)"
               v-model="drafts[block.blockName]"
               :disabled="!canWrite"
               file-type="image"
@@ -538,6 +642,7 @@ watch(locale, (next, previous) => {
                 placeholder="视频地址"
               />
               <AppUpload
+                :ref="blockUploadRef(block.blockName)"
                 v-model="drafts[block.blockName].image"
                 :disabled="!canWrite"
                 file-type="image"
@@ -558,9 +663,11 @@ watch(locale, (next, previous) => {
               其余块：按**数据形状**自动生成图形表单。
               覆盖 card / cards / 显式 json / 没有 editor 提示的块 —— 真实数据里
               107 个静态块有 45 个没有提示，以前这些块只能编辑裸 JSON，非技术人员无法操作。
+              该组件把整棵子树的上传控件递归暴露为 upload()，保存前由本页统一 flush。
             -->
             <AutoFormValue
               v-else
+              :ref="blockUploadRef(block.blockName)"
               :parent="drafts"
               :field-key="block.blockName"
               :disabled="!canWrite"
@@ -585,5 +692,5 @@ watch(locale, (next, previous) => {
         </Alert>
       </template>
     </Spin>
-  </Drawer>
+  </component>
 </template>
