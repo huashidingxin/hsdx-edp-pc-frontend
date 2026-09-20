@@ -245,12 +245,13 @@ onMounted(async () => {
 </script>
 
 <template>
-  <!--
+
+  <div :class="embedded ? 'h-full' : ''">
+      <!--
     h-full 仅在抽屉嵌入时加：抽屉把高度钉死，需要高度链一路撑满，
     表格才能在内部滚动、分页器固定可见。独立页面必须保持 auto，
     否则表格被钉在视口高度里，页面级滚动失效。
   -->
-  <div :class="embedded ? 'h-full' : ''">
   <AppCrudTable
     ref="crudRef"
     api-url="categories"
