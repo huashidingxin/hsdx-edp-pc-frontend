@@ -2,7 +2,15 @@ import type { RequestClientConfig } from '@vben/request';
 
 import { requestClient } from './request';
 
-const request = requestClient.request;
+/**
+ * 不能在模块顶层解构 `requestClient.request`：
+ * 本文件经由 #/store(current-app.ts) 与 ./request 形成循环导入，
+ * 生产打包后本模块可能先于 request.ts 求值，届时 requestClient 仍是 undefined，
+ * 顶层解构会抛 "Cannot read properties of undefined (reading 'request')"。
+ * 这里改为调用时才解引用。
+ */
+const request = (...args: Parameters<typeof requestClient.request>) =>
+  requestClient.request(...args);
 
 /**
  * Simple RESTful resource class

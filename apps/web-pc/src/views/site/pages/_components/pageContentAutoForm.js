@@ -5,14 +5,25 @@
  * （app 2 / 3 / 4 是 100%）没有 editor 提示，于是内容抽屉只能退回裸 JSON 文本框 ——
  * 非技术人员无法操作。
  *
- * 这里改为**按数据本身的形状推断控件**，不再依赖 editor 提示：
+ * 因此这里分两级：
+ *   1. **块级 `editor.fields` 声明优先**（`editorFieldList` / `describeDeclaredFields`）：
+ *      声明了哪些字段就只展示哪些、顺序与 label 全按声明，不再猜。
+ *   2. 没有声明时**按数据本身的形状推断控件**（`fieldKind` 等）：
  *   - 对象        → 分组，逐键渲染
  *   - 对象数组    → 可增删/排序的条目列表，每个条目按键渲染
- *   - 字符串数组  → 标签输入（若全是图片路径则为图片集合）
+ *   - 字符串数组  → 标签输入（若全是图片路径则为图片集合；长文本段落则为多行文本列表）
  *   - 图片路径串  → 图片上传
  *   - HTML 串     → 富文本
  *   - 长文本      → 多行文本
  *   - 数字/布尔   → 数字框 / 开关
+ *
+ * **字段键名属于全局规范，与它落在哪个块类型（image / video / card / cards / 无提示）无关**：
+ * 同一个键在任何类型、任何层级下都必须是同一个控件——
+ *   - `image` / `image2` / `cover` / `logo` … → 图片上传（`SCALAR_KEY_KINDS`）
+ *   - `video` / `video_url` …                → 视频上传
+ *   - `content`                              → 富文本
+ * 历史上的反例：`video` 块里的 `video` 字段被渲染成单行文本框、`content` 值为纯文本时
+ * 退化成文本框 —— 都不允许再出现。
  *
  * 实测覆盖的真实形状举例：
  *   home-hero    { image, scrim, title, actions:[{…}], eyebrow, summary, autoplay:bool, imageAlt }
@@ -43,7 +54,7 @@ export const FIELD_LABELS = {
   logo: 'Logo',
   cover: '封面',
   poster: '视频封面',
-  video: '视频地址',
+  video: '视频',
   video_poster: '视频封面',
   featured_video: '精选视频',
   autoplay: '自动播放',
@@ -102,6 +113,44 @@ export const FIELD_LABELS = {
   service_consult: '服务咨询',
   en: '英文',
   en_subtitle: '英文副标题',
+  // 以下为皓飞（app111）等站的真实键：企业栏目、段落数组与媒体字段
+  paragraphs: '段落',
+  points: '要点',
+  notes: '说明',
+  photos: '照片',
+  photo_list: '照片',
+  manual_images: '宣传册图片',
+  hotlines: '联系电话',
+  brochure: '宣传册',
+  brochure_title: '宣传册标题',
+  qrLabel: '二维码说明',
+  qr_image: '二维码图片',
+  map_image: '地图图片',
+  topImage: '顶部图片',
+  topText: '顶部文字',
+  iconHover: '悬停图标',
+  lead: '引导语',
+  leadSub: '引导语（补充）',
+  introTitle: '导语标题',
+  introText: '导语正文',
+  counters: '数据统计',
+  unit: '单位',
+  line1: '名称',
+  line2: '单位',
+  jobs: '招聘岗位',
+  jobsTitle: '岗位标题',
+  recruitment: '招聘',
+  moreSlug: '更多跳转',
+  rd: '研发中心',
+  equipment: '设备介绍',
+  innovation: '技术与创新',
+  productTech: '产品技术研发',
+  cases: '案例',
+  display: '产品展示',
+  scale: '企业规模',
+  honor: '企业荣誉',
+  overview: '企业概况',
+  article_id: '关联文章 ID',
 };
 
 const IMAGE_EXT_RE = /\.(avif|bmp|gif|jpe?g|png|svg|webp)(\?|#|$)/i;
@@ -121,18 +170,36 @@ const ARRAY_KEY_HINTS = {
   images: 'images',
   gallery: 'images',
   image_list: 'images',
+  // 图片数组（皓飞 rd.photos / 宣传册内页等）
+  photos: 'images',
+  photo_list: 'images',
+  manual_images: 'images',
+  // 长文本段落数组：多行文本列表，避免长段落被塞进单行标签输入
+  paragraphs: 'paragraphs',
+  points: 'paragraphs',
+  notes: 'paragraphs',
 };
 
+/** 纯字符串数组里，超过该长度的条目按「段落」而不是「标签」处理。 */
+const PARAGRAPH_TEXT = 40;
+
 /**
- * 标量键名提示：**值为空**或**看不出扩展名**时，靠键名选对媒体控件。
+ * 标量键名提示：**值为空**或**看不出扩展名**时，靠键名选对媒体控件
+ * （富文本键 `content` 是例外：任何值都按富文本处理）。
  *
  * 为什么需要：全租户真实数据里有 7 处 `image` / `image2` 是空串，
  * 没有扩展名可判断 → 原先退化成普通文本框，非技术人员**没法上传**。
  *
  * 只列明确的键名，不做「包含 image 就算图片」这种模糊匹配 ——
  * 那会把 `image_alt`（说明文字）、`video_poster`（图片）判错。
+ *
+ * 这张表就是**字段键 → 控件的唯一规范**：不论字段来自 image / video / card / cards
+ * 还是没有任何 editor 提示的块，命中同一个键就得到同一个控件。
  */
 const SCALAR_KEY_KINDS = {
+  // 平台约定键：card/cards 的 content、richtext 块的 content。
+  // **值哪怕是纯文本也必须是富文本控件**（详见 fieldKind 里对 richtext 的处理）。
+  content: 'richtext',
   image: 'image',
   image1: 'image',
   image2: 'image',
@@ -153,6 +220,14 @@ const SCALAR_KEY_KINDS = {
   bg: 'image',
   qrcode: 'image',
   qr_code: 'image',
+  qr_image: 'image',
+  qrImage: 'image',
+  map_image: 'image',
+  topImage: 'image',
+  mobile_image: 'image',
+  iconHover: 'image',
+  hover_image: 'image',
+  brochure_image: 'image',
   title_image: 'image',
   titleimage: 'image',
   video_poster: 'image',
@@ -275,10 +350,11 @@ export function resolveFieldKind(key, value, previousMediaKind = '') {
  *
  * 判断优先级：**值的证据 > 键名提示**。值的扩展名/HTML 特征足以定性时就用值；
  * 只有值本身没信息量（空串、看不出扩展名的短路径）才退回键名提示。
+ * 唯一例外是富文本键 `content`：它是平台约定键，无论当前值是什么都必须是富文本控件。
  *
  * @param {string} key 字段名（用于标签与少量语义判断）
  * @param {*} value 当前值（形状是主要依据）
- * @returns {'boolean'|'number'|'image'|'images'|'video'|'richtext'|'textarea'|'tags'|'object'|'list'|'text'}
+ * @returns {'boolean'|'number'|'image'|'images'|'video'|'richtext'|'textarea'|'tags'|'paragraphs'|'object'|'list'|'text'}
  */
 export function fieldKind(key, value) {
   if (typeof value === 'boolean') return 'boolean';
@@ -288,8 +364,12 @@ export function fieldKind(key, value) {
     if (isImagePath(value)) return 'image';
     if (isVideoPath(value)) return 'video';
     if (isHtmlLike(value)) return 'richtext';
-    // 空串或像路径但看不出类型 → 键名兜底（否则空的 image 字段只能填文本，无法上传）
     const hint = SCALAR_KEY_KINDS[key];
+    // 富文本键（content）**无条件**生效：正文类字段不管是空串、纯文本还是 HTML，
+    // 都必须是富文本控件；曾经「纯文本 content 退化成单行文本框」是缺陷而非特性。
+    if (hint === 'richtext') return 'richtext';
+    // 其余键名兜底只在「值本身没有信息量」时接管（空串，或像路径但看不出类型），
+    // 否则空的 image 字段只能填文本、无法上传。
     if (hint && (value.trim() === '' || isPathLike(value))) return hint;
     if (value.length > LONG_TEXT) return 'textarea';
     return 'text';
@@ -304,8 +384,12 @@ export function fieldKind(key, value) {
     // 空数组无从推断条目形状，交给调用方按「空列表」渲染（可新增）。
     if (value.length === 0) return 'list';
     if (strings) {
-      // 全是图片路径 → 图片集合；否则 → 标签
-      return value.every((item) => isImagePath(item)) ? 'images' : 'tags';
+      // 全是图片路径 → 图片集合
+      if (value.every((item) => isImagePath(item))) return 'images';
+      // 长文本段落（paragraphs/points 等，可能没有键名提示）→ 多行文本列表，
+      // 不能落进标签 chip 输入：一段 300 字的正文在单行输入框里没法编辑。
+      if (value.some((item) => item.trim().length > PARAGRAPH_TEXT)) return 'paragraphs';
+      return 'tags';
     }
     // 待上传条目数组（AppUpload 多选回传的对象）：保持多图控件，
     // 不能落到「条目列表」—— 那样每张图会变成 file/链接 两个输入框。
@@ -322,7 +406,10 @@ export function fieldKind(key, value) {
   // null / undefined：删除媒体后 AppUpload 单文件回传的是 null（`arr[0] || null`），
   // 这里必须沿用键名提示 —— 否则用户点一下控件上的「删除」图标，上传控件会当场退化成
   // 文本框，之后再也传不了图。没有键名提示时才给普通文本框，让用户先填内容。
-  return SCALAR_KEY_KINDS[key] ?? 'text';
+  //
+  // 数组类键名提示（images / tags …）在这里同样适用：`editor.fields` 声明了 `images`
+  // 但数据里还没有这个键时，若不兜住就会退化成文本框，用户没法上传图集。
+  return SCALAR_KEY_KINDS[key] ?? ARRAY_KEY_HINTS[key] ?? 'text';
 }
 
 /** 生成与 value 同形状的空值（新增条目时用）。 */
@@ -347,6 +434,72 @@ export function blankLike(value) {
 export function blankItemFor(list) {
   if (Array.isArray(list) && list.length > 0) return blankLike(list[0]);
   return '';
+}
+
+/**
+ * 把块级 `editor.fields` 规范成 `[{key, label}]`。
+ *
+ * 语义（docs/saas-website-api.md §1.2A）：这是**管理端编辑提示**，声明该块在内容
+ * 编辑页要展示哪些字段、用什么名字展示。因此它决定两件事：
+ *   1. 展示集合与顺序以声明为准，不再由数据形状决定；
+ *   2. label 以声明为准，不再走 FIELD_LABELS 词典猜测。
+ *
+ * 返回 `null` 表示「没有可用声明」，调用方退回按数据形状推断
+ * （真实数据里大量静态块没有 editor.fields）。
+ */
+export function editorFieldList(editor) {
+  const fields = editor?.fields;
+  if (fields === null || typeof fields !== 'object' || Array.isArray(fields)) {
+    return null;
+  }
+  const list = [];
+  for (const [key, meta] of Object.entries(fields)) {
+    if (typeof key !== 'string' || key === '') continue;
+    const label = typeof meta?.label === 'string' ? meta.label.trim() : '';
+    if (label === '') continue;
+    list.push({ key, label });
+  }
+
+  return list.length > 0 ? list : null;
+}
+
+/** 声明字段的空白值：按键名提示决定形状（图片集/标签给数组，开关给布尔）。 */
+export function blankFieldValue(key) {
+  const kind = fieldKind(key, undefined);
+  if (kind === 'images' || kind === 'tags' || kind === 'list') return [];
+  if (kind === 'boolean') return false;
+  if (kind === 'number') return 0;
+  if (kind === 'object') return {};
+
+  return '';
+}
+
+/**
+ * 按声明生成对象字段描述：**只含声明的键**，顺序与 label 全部来自声明。
+ *
+ * 数据里存在、但未声明的键不会出现在表单里，也**不会从草稿里消失** ——
+ * 表单只读写声明键、从不删键，保存时整份草稿写回，未声明字段原样保留（不丢数据）。
+ */
+export function describeDeclaredFields(value, fields) {
+  const source =
+    value !== null && typeof value === 'object' && !Array.isArray(value)
+      ? value
+      : {};
+
+  return fields.map((field) => ({
+    key: field.key,
+    label: field.label,
+    kind: fieldKind(field.key, source[field.key]),
+    value: source[field.key],
+  }));
+}
+
+/** 按声明字段生成「新增条目」的空白对象（不照抄第一项，避免带出未声明键）。 */
+export function blankItemForFields(fields) {
+  const blank = {};
+  for (const field of fields) blank[field.key] = blankFieldValue(field.key);
+
+  return blank;
 }
 
 /**

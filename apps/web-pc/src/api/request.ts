@@ -15,8 +15,11 @@ import { useAccessStore } from '@vben/stores';
 
 import { message } from 'antdv-next';
 
-import { useAuthStore } from '#/store';
-
+// 注意：不要静态导入 #/store（useAuthStore）。
+// #/store/current-app.ts → #/api/resource → ./request 已构成循环导入，
+// 静态引入会让打包器把本模块与 resource.ts 拆进同一 chunk 后重排求值顺序，
+// 生产环境触发 "Cannot read properties of undefined (reading 'request')"。
+// doReAuthenticate 运行时才需要 store，改为动态导入。
 import { getCurrentApplicationId } from './application-context';
 import { refreshTokenApi } from './core';
 
@@ -34,6 +37,7 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
   async function doReAuthenticate() {
     console.warn('Access token or refresh token is invalid or expired. ');
     const accessStore = useAccessStore();
+    const { useAuthStore } = await import('#/store');
     const authStore = useAuthStore();
     accessStore.setAccessToken(null);
     if (

@@ -61,17 +61,9 @@ export const EDITOR_FIELDS = {
   json: [],
 };
 
-/** 卡片约定字段 → 编辑控件类型。 */
-export const CARD_FIELD_KINDS = {
-  title: 'text',
-  subtitle: 'text',
-  content: 'richtext',
-  image: 'image',
-  image2: 'image',
-  images: 'images',
-  video: 'video',
-  tags: 'tags',
-};
+// 注：字段键 → 编辑控件的映射只有一份规范，在 pageContentAutoForm.js 的
+// `SCALAR_KEY_KINDS`（对所有 editor.type 一致生效）。这里不再放第二张表，
+// 避免同名字段在不同块类型下出现不同控件（例如 `video` 在 video 块里变成文本框）。
 
 const BLOCK_NAME_RE = /^[a-z][a-z0-9_-]*$/;
 

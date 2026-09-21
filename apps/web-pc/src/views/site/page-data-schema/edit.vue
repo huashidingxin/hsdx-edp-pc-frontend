@@ -445,7 +445,16 @@ onMounted(async () => {
           <template #title>
             <span class="text-sm">
               数据块
-              <Tag color="geekblue">{{ row.name || '(未命名)' }}</Tag>
+              <Tag color="geekblue">
+                {{ (row.editorEnabled && row.editor?.label) || row.name || '(未命名)' }}
+              </Tag>
+              <!-- 启用 editor 提示后以 label 为主标题，块名作为技术标识保留在旁 -->
+              <span
+                v-if="row.editorEnabled && row.editor?.label && row.name"
+                class="ml-1 text-xs text-gray-400"
+              >
+                {{ row.name }}
+              </span>
             </span>
           </template>
           <template #extra>

@@ -12,8 +12,12 @@
  * - 接口：GET/PUT `/pages/{page}/content/{locale}/{contentKey}`（body `{ data }`）。
  *
  * 编辑控件：editor 提示是可选的，**没有提示也必须能图形化编辑**。
- * image/images/richtext/video 用专用控件；其余（card/cards/json/无提示）一律用
- * AutoFormValue 按**数据形状**自动生成表单，另给每块一个「高级（JSON）」开关兜底。
+ * - 块声明了 `editor.fields` 时：字段集合、顺序、label **全部以声明为准**；声明未包含的
+ *   已有字段不展示，但保留在草稿里、保存时原样写回（不丢数据）。
+ * - image/images/richtext/video 用专用控件；其余（card/cards/json/无提示）用
+ *   AutoFormValue 按**数据形状**自动生成表单，另给每块一个「高级（JSON）」开关兜底。
+ * - 字段键的控件由 `pageContentAutoForm` 的键名规范统一决定（与块类型无关）：
+ *   `image` / `image2` → 图片上传，`video` → 视频上传，`content` → 富文本。
  *
  * 上传（重要）：`AppUpload` 有意**不自动上传**（同 AppCrudTable / LocaleTabsEditor /
  * SubmissionEdit 的约定）—— 选中的文件先以 `{ url: 'blob:...', file: File }` 挂在草稿上。
@@ -31,7 +35,6 @@ import {
   CollapsePanel,
   Drawer,
   Empty,
-  Input,
   Select,
   Spin,
   Tag,
@@ -44,7 +47,7 @@ import AppEditor from '#/components/app-editor/index.vue';
 import AppUpload from '#/components/AppUpload.vue';
 
 import AutoFormValue from './AutoFormValue.vue';
-import { looksLikeJsonText } from './pageContentAutoForm';
+import { editorFieldList, looksLikeJsonText } from './pageContentAutoForm';
 import {
   deepClone,
   formatJson,
@@ -246,33 +249,44 @@ function groupOfBlock(blockName) {
 }
 
 /**
- * 块名 → 该块的上传刷新目标。
+ * 块名 → 该块下所有上传刷新目标（`Map<块名, Map<槽位, 实例>>`）。
  *
- * 一个块最多一个上传控件：专用分支（image/images/video）是 `AppUpload`，
- * 其余分支是 `AutoFormValue`（它会把整棵子树的上传控件递归暴露出来）。
- * 两者都暴露 `upload()`，这里不必区分。
+ * **一个块可能有多个上传控件**：`video` 块既有视频（`video` 键）又有封面（`image` 键），
+ * 两个都是 `AppUpload`。所以按「块名 + 槽位」登记，保存时把该块全部槽位一起 flush。
+ * 其余分支是 `AutoFormValue`（它把整棵子树的上传控件递归暴露成单个 `upload()`）。
  *
- * ref 回调按块名缓存复用：每次渲染换新函数会让 Vue 对旧 ref 走一次 set(null)、
- * 再对新 ref 走 set(el)，白抖一轮（极端情况下会把刚登记的实例删掉）。
+ * ref 回调按「块名 + 槽位」缓存复用：每次渲染换新函数会让 Vue 对旧 ref 走一次
+ * set(null)、再对新 ref 走 set(el)，白抖一轮（极端情况下会把刚登记的实例删掉）。
  */
 const uploadTargets = new Map();
 const uploadRefCallbacks = new Map();
 
-function blockUploadRef(blockName) {
-  if (!uploadRefCallbacks.has(blockName)) {
-    uploadRefCallbacks.set(blockName, (el) => {
-      if (el) uploadTargets.set(blockName, el);
-      else uploadTargets.delete(blockName);
+function blockUploadRef(blockName, slot = 'main') {
+  const key = `${blockName}::${slot}`;
+  if (!uploadRefCallbacks.has(key)) {
+    uploadRefCallbacks.set(key, (el) => {
+      let slots = uploadTargets.get(blockName);
+      if (!slots) {
+        slots = new Map();
+        uploadTargets.set(blockName, slots);
+      }
+      if (el) slots.set(slot, el);
+      else slots.delete(slot);
     });
   }
 
-  return uploadRefCallbacks.get(blockName);
+  return uploadRefCallbacks.get(key);
 }
 
-/** 保存前先把该块的待上传文件传完（AppUpload 不自动上传，见文件头注释）。 */
+/** 保存前先把该块所有待上传文件传完（AppUpload 不自动上传，见文件头注释）。 */
 async function flushBlockUploads(blockName) {
-  const target = uploadTargets.get(blockName);
-  if (typeof target?.upload === 'function') await target.upload();
+  const slots = uploadTargets.get(blockName);
+  if (!slots) return;
+  const tasks = [];
+  for (const target of slots.values()) {
+    if (typeof target?.upload === 'function') tasks.push(target.upload());
+  }
+  await Promise.all(tasks);
 }
 
 /**
@@ -343,6 +357,68 @@ async function saveBlock(blockName) {
   }
 }
 
+/**
+ * 该块 editor.fields 声明的字段（`[{key,label}]`；没有声明时为 null）。
+ * 交给 AutoFormValue 后，字段集合、顺序与 label 全部以声明为准。
+ */
+function blockFields(block) {
+  return editorFieldList(block.editor);
+}
+
+/** 取 editor.fields 里某字段的声明 label，没有声明时用兜底文案。 */
+function declaredLabel(block, fieldKey, fallback) {
+  const label = block.editor?.fields?.[fieldKey]?.label;
+
+  return typeof label === 'string' && label.trim() !== '' ? label.trim() : fallback;
+}
+
+/**
+ * 声明/配置与真实数据对不上时的提示文案（对得上返回空串）。
+ *
+ * 为什么必须有：2026-09-20 用真实库数据核过，**存量里已经存在的 editor.fields 声明与实际
+ * 数据并不匹配**（廊坊 home 页：`home-stats` 声明 title/content/subtitle，数据却是 label/value；
+ * `home-cta` 声明 title/target/content/subtitle，数据是 title/actions/summary）。
+ * 严格按声明渲染后，这些块会变成一组空字段，用户会以为「数据丢了」。
+ * 这里把情况说清楚并指路（改声明 / 切高级模式），而不是悄悄回退展示规则。
+ */
+function blockDataHint(block) {
+  const group = groupOfBlock(block.blockName);
+  if (!group?.editable) return '';
+  const value = drafts.value[block.blockName];
+  const raw = getAtPath(contentData.value[group.key], block.path);
+
+  const rawHasData =
+    Array.isArray(raw) && raw.length > 0
+      ? true
+      : raw !== null && typeof raw === 'object'
+        ? Object.keys(raw).length > 0
+        : false;
+  const draftEmpty = Array.isArray(value)
+    ? value.length === 0
+    : value === null ||
+      value === undefined ||
+      (typeof value === 'object' && Object.keys(value).length === 0);
+
+  // 数据不为空但表单读不出内容 → path 或 editor.type 与数据形状不符
+  if (rawHasData && draftEmpty) {
+    return '该块的「数据路径 / 控件类型」与现有数据结构不匹配：数据不为空，但表单读不出内容。请到「数据规则」检查 config.path 与 editor.type。';
+  }
+
+  const declared = blockFields(block);
+  if (!declared) return '';
+  const sample = Array.isArray(value) ? value[0] : value;
+  if (sample === null || typeof sample !== 'object' || Array.isArray(sample)) return '';
+  const dataKeys = Object.keys(sample);
+  if (dataKeys.length === 0) return '';
+  if (declared.some((field) => dataKeys.includes(field.key))) return '';
+
+  return `该块声明的字段（${declared
+    .map((field) => field.key)
+    .join('、')}）与现有数据的字段（${dataKeys.join(
+    '、',
+  )}）没有交集，下面会是一组空字段。请到「数据规则」修正声明，或用「高级（JSON）」编辑。`;
+}
+
 /** 该块是否用专用控件（image/images/richtext/video）；其余走自动表单。 */
 function hasDedicatedEditor(block) {
   return DEDICATED_EDITOR_TYPES.includes(block.editor?.type);
@@ -388,6 +464,10 @@ function blockModeLabel(block) {
   if (type === 'richtext') return '富文本';
   if (type === 'video') return '视频';
   if (isJsonMode(block.blockName)) return 'JSON（高级）';
+
+  // 有 editor.fields 声明时，表单字段就是声明的那几个（顺序/名称也来自声明）
+  const declared = blockFields(block);
+  if (declared) return `表单 ${declared.length} 字段`;
 
   const value = drafts.value[block.blockName];
   if (Array.isArray(value)) return `列表 ${value.length} 项`;
@@ -603,16 +683,26 @@ defineExpose({
                 {{ block.blockName }} · path: {{ block.path.length ? block.path.join('.') : '(整份)' }}
               </p>
 
-            <!-- image：单图 -->
-            <AppUpload
+            <!-- image：单图（editor.fields 声明了字段名称时一并展示） -->
+            <div
               v-if="block.editor?.type === 'image'"
-              :ref="blockUploadRef(block.blockName)"
-              v-model="drafts[block.blockName]"
-              :disabled="!canWrite"
-              file-type="image"
-            />
+              class="flex flex-col gap-1"
+            >
+              <span
+                v-if="declaredLabel(block, 'image', '')"
+                class="text-xs text-gray-500"
+              >
+                {{ declaredLabel(block, 'image', '') }}
+              </span>
+              <AppUpload
+                :ref="blockUploadRef(block.blockName)"
+                v-model="drafts[block.blockName]"
+                :disabled="!canWrite"
+                file-type="image"
+              />
+            </div>
 
-            <!-- images：图片集合 -->
+            <!-- images：图片集合（该类型不接受 fields 声明，整组用块 label） -->
             <AppUpload
               v-else-if="block.editor?.type === 'images'"
               :ref="blockUploadRef(block.blockName)"
@@ -622,31 +712,56 @@ defineExpose({
               multiple
             />
 
-            <!-- richtext：富文本 -->
-            <AppEditor
+            <!-- richtext：富文本（editor.fields 声明了字段名称时一并展示） -->
+            <div
               v-else-if="block.editor?.type === 'richtext'"
-              v-model="drafts[block.blockName]"
-              :disabled="!canWrite"
-            />
+              class="flex flex-col gap-1"
+            >
+              <span
+                v-if="declaredLabel(block, 'content', '')"
+                class="text-xs text-gray-500"
+              >
+                {{ declaredLabel(block, 'content', '') }}
+              </span>
+              <AppEditor
+                v-model="drafts[block.blockName]"
+                :disabled="!canWrite"
+              />
+            </div>
 
-            <!-- video：视频地址 + 封面 -->
+            <!--
+              video：视频 + 封面。
+              字段键规范与块类型无关（pageContentAutoForm.SCALAR_KEY_KINDS）：
+              `video` 键**一律是视频上传控件**，不再退化成文本框（曾经就是这样，用户没法传视频）。
+            -->
             <div
               v-else-if="
                 block.editor?.type === 'video' && objectDraft(block.blockName)
               "
               class="flex flex-col gap-3"
             >
-              <Input
-                v-model:value="drafts[block.blockName].video"
-                :disabled="!canWrite"
-                placeholder="视频地址"
-              />
-              <AppUpload
-                :ref="blockUploadRef(block.blockName)"
-                v-model="drafts[block.blockName].image"
-                :disabled="!canWrite"
-                file-type="image"
-              />
+              <div class="flex flex-col gap-1">
+                <span class="text-xs text-gray-500">
+                  {{ declaredLabel(block, 'video', '视频') }}
+                </span>
+                <AppUpload
+                  :ref="blockUploadRef(block.blockName, 'video')"
+                  v-model="drafts[block.blockName].video"
+                  :disabled="!canWrite"
+                  file-type="video"
+                />
+              </div>
+              <div class="flex flex-col gap-1">
+                <span class="text-xs text-gray-500">
+                  {{ declaredLabel(block, 'image', '视频封面') }}
+                </span>
+                <AppUpload
+                  :ref="blockUploadRef(block.blockName, 'cover')"
+                  v-model="drafts[block.blockName].image"
+                  :disabled="!canWrite"
+                  file-type="image"
+                />
+              </div>
             </div>
 
             <!-- 高级（JSON）：仅在用户主动降级该块时出现 -->
@@ -660,18 +775,27 @@ defineExpose({
             ></textarea>
 
             <!--
-              其余块：按**数据形状**自动生成图形表单。
+              其余块：有 editor.fields 声明时按声明渲染字段，否则按**数据形状**自动生成表单。
               覆盖 card / cards / 显式 json / 没有 editor 提示的块 —— 真实数据里
               107 个静态块有 45 个没有提示，以前这些块只能编辑裸 JSON，非技术人员无法操作。
               该组件把整棵子树的上传控件递归暴露为 upload()，保存前由本页统一 flush。
             -->
-            <AutoFormValue
-              v-else
-              :ref="blockUploadRef(block.blockName)"
-              :parent="drafts"
-              :field-key="block.blockName"
-              :disabled="!canWrite"
-            />
+            <div v-else class="flex flex-col gap-3">
+              <!-- 声明与数据对不上时先讲清楚，否则用户会以为「数据丢了」 -->
+              <Alert
+                v-if="blockDataHint(block)"
+                type="warning"
+                show-icon
+                :message="blockDataHint(block)"
+              />
+              <AutoFormValue
+                :ref="blockUploadRef(block.blockName)"
+                :parent="drafts"
+                :field-key="block.blockName"
+                :fields="blockFields(block)"
+                :disabled="!canWrite"
+              />
+            </div>
             </CollapsePanel>
           </Collapse>
         </section>

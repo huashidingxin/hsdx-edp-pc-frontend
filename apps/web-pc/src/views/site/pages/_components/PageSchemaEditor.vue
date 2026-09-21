@@ -306,6 +306,22 @@ function editorSupportsFields(row) {
   return !['images', 'json'].includes(row.editor?.type ?? 'json');
 }
 
+/** card/cards 必须声明字段（协议 §1.2A），表单里给个显式提醒。 */
+function editorFieldsRequired(row) {
+  return ['card', 'cards'].includes(row.editor?.type ?? '');
+}
+
+/**
+ * 切换控件类型后剔除不在新类型白名单里的字段。
+ * 留着会让保存被后端 422 拒绝（StaticBlockEditor 只认该类型支持的键）。
+ */
+function pruneEditorFields(row) {
+  const allowed = EDITOR_FIELDS[row.editor?.type] ?? [];
+  row.editor.fields = (row.editor?.fields ?? []).filter((item) =>
+    allowed.includes(item.key),
+  );
+}
+
 watch(
   () => [props.pageId, props.locale, props.pageCode],
   () => {
@@ -382,7 +398,16 @@ watch(
               <span class="font-medium text-sm text-gray-800">
                 #{{ index + 1 }}
               </span>
-              <Tag color="geekblue">{{ row.name || '(未命名块)' }}</Tag>
+              <Tag color="geekblue">
+                {{ (row.editorEnabled && row.editor?.label) || row.name || '(未命名块)' }}
+              </Tag>
+              <!-- 启用 editor 提示后以 label 为主标题，块名作为技术标识保留在旁 -->
+              <span
+                v-if="row.editorEnabled && row.editor?.label && row.name"
+                class="text-xs text-gray-400"
+              >
+                {{ row.name }}
+              </span>
               <Tag :color="row.provider === 'model' ? 'purple' : 'cyan'">
                 {{ row.provider }}
               </Tag>
@@ -517,6 +542,7 @@ watch(
                       v-model:value="row.editor.type"
                       :options="EDITOR_TYPE_OPTIONS"
                       class="w-full"
+                      @change="pruneEditorFields(row)"
                     />
                   </div>
                   <div>
@@ -526,6 +552,57 @@ watch(
                       placeholder="例如：主页轮播横幅"
                     />
                   </div>
+                </div>
+
+                <!-- 字段展示声明：内容编辑页按这里的字段名与显示名称渲染（协议 §1.2A editor.fields） -->
+                <div v-if="row.editorEnabled && editorSupportsFields(row)" class="mt-3">
+                  <div class="mb-1 flex items-center justify-between">
+                    <span class="text-xs font-medium text-gray-700">
+                      字段展示（字段名 → 显示名称）
+                    </span>
+                    <Button size="small" type="link" @click="addEditorField(row)">
+                      + 添加字段
+                    </Button>
+                  </div>
+                  <p class="mb-2 text-xs text-gray-400">
+                    内容编辑页只展示这里声明的字段，展示顺序与显示名称都以声明为准；
+                    未声明的已有字段不会出现在表单里（数据仍原样保留）。
+                  </p>
+
+                  <div
+                    v-for="(field, fieldIndex) in row.editor.fields"
+                    :key="fieldIndex"
+                    class="mb-2 flex items-center gap-2"
+                  >
+                    <Select
+                      v-model:value="field.key"
+                      :options="editorFieldOptions(row)"
+                      placeholder="字段名"
+                      class="w-40 shrink-0"
+                    />
+                    <Input
+                      v-model:value="field.label"
+                      placeholder="显示名称，如「特点标题」"
+                    />
+                    <Button
+                      danger
+                      size="small"
+                      type="link"
+                      @click="removeEditorField(row, fieldIndex)"
+                    >
+                      删除
+                    </Button>
+                  </div>
+
+                  <span v-if="!row.editor?.fields?.length" class="text-xs text-gray-400">
+                    未声明字段：内容编辑页将按数据形状自动推断字段与名称
+                  </span>
+                  <span
+                    v-else-if="editorFieldsRequired(row)"
+                    class="text-xs text-gray-400"
+                  >
+                    card / cards 类型必须声明字段，否则保存会被拒绝
+                  </span>
                 </div>
               </div>
             </div>

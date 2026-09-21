@@ -4,6 +4,7 @@ import {
   blankItemFor,
   blankLike,
   describeArray,
+  describeDeclaredFields,
   describeObject,
   fieldKind,
   fieldLabel,
@@ -40,6 +41,14 @@ describe('fieldLabel', () => {
     expect(fieldLabel('address')).toBe('地址');
     expect(fieldLabel('steps')).toBe('步骤');
     expect(fieldLabel('benefits')).toBe('优势');
+  });
+
+  it('皓飞（app111）等站点的真实键也有中文标签', () => {
+    expect(fieldLabel('paragraphs')).toBe('段落');
+    expect(fieldLabel('hotlines')).toBe('联系电话');
+    expect(fieldLabel('topImage')).toBe('顶部图片');
+    expect(fieldLabel('qrLabel')).toBe('二维码说明');
+    expect(fieldLabel('moreSlug')).toBe('更多跳转');
   });
 
   it('未命中时回退原名，不猜也不丢信息', () => {
@@ -103,6 +112,25 @@ describe('fieldKind：按数据形状推断控件', () => {
     expect(fieldKind('tags', [])).toBe('tags');
     expect(fieldKind('images', [])).toBe('images');
     expect(fieldKind('rows', [])).toBe('list');
+  });
+
+  it('长文本段落数组 → paragraphs（不是单行标签输入）', () => {
+    // 皓飞 technology / products 的 paragraphs / points：一段上百字，
+    // 落进 Select mode="tags" 的单行 chip 就没法编辑了。
+    const paragraph =
+      '皓飞检测室，根据生产线产品类型不同，设有 3 个检测实验室，依据检验标准、仪器设备与岗位职责划分执行全流程检测。';
+    expect(fieldKind('paragraphs', [paragraph, paragraph])).toBe('paragraphs');
+    // 没有键名提示时也按长度判定（真实数据里的 lines / 自定义键）
+    expect(fieldKind('lines', [paragraph])).toBe('paragraphs');
+    // 短标签仍然走标签输入
+    expect(fieldKind('tags', ['数字创意', 'AI网站'])).toBe('tags');
+  });
+
+  it('段落 / 图片数组的空数组靠键名提示兜底', () => {
+    expect(fieldKind('paragraphs', [])).toBe('paragraphs');
+    expect(fieldKind('points', [])).toBe('paragraphs');
+    expect(fieldKind('photos', [])).toBe('images');
+    expect(fieldKind('manual_images', [])).toBe('images');
   });
 
   it('对象数组 → list（条目形状各自推断）', () => {
@@ -237,6 +265,13 @@ describe('fieldKind 的键名兜底（值为空时仍选对媒体控件）', () 
     expect(fieldKind('video_poster', '')).toBe('image');
   });
 
+  it('皓飞等站点的高频媒体键：空值也保持上传控件', () => {
+    for (const key of ['topImage', 'map_image', 'qr_image', 'qrImage', 'iconHover', 'mobile_image', 'brochure_image']) {
+      expect(fieldKind(key, ''), `${key} 空值`).toBe('image');
+      expect(fieldKind(key, null), `${key} = null`).toBe('image');
+    }
+  });
+
   it('imageAlt / image_alt 是说明文字，不该变成上传控件', () => {
     expect(fieldKind('imageAlt', '')).toBe('text');
     expect(fieldKind('image_alt', '')).toBe('text');
@@ -280,6 +315,61 @@ describe('fieldKind 的键名兜底（值为空时仍选对媒体控件）', () 
     expect(fieldKind('title', null)).toBe('text');
     expect(fieldKind('someKey', undefined)).toBe('text');
     expect(fieldKind('imageAlt', null)).toBe('text');
+  });
+});
+
+/**
+ * 字段键规范是**全局**的：`image` / `image2` / `video` / `content` 无论落在哪个块类型
+ * （image、video、card、cards，还是完全没有 editor 提示的块）里，都必须是同一个控件。
+ *
+ * 回归（用户反馈）：
+ *  - `video` 块的 `video` 字段被渲染成单行文本框，用户没法上传视频；
+ *  - `content` 只有值恰好是 HTML 时才成为富文本，纯文本/空串会退化成单行文本框，
+ *    声明了 content 的 card/cards 块因此无法富文本编辑。
+ */
+describe('字段键规范与块类型无关', () => {
+  it('content 一律富文本：空串、纯文本、HTML、空值都一样', () => {
+    expect(fieldKind('content', '')).toBe('richtext');
+    expect(fieldKind('content', '一段没有标签的说明')).toBe('richtext');
+    expect(fieldKind('content', '<p>富文本</p>')).toBe('richtext');
+    expect(fieldKind('content', null)).toBe('richtext');
+    expect(fieldKind('content', undefined)).toBe('richtext');
+  });
+
+  it('同名字段在不同容器 / 层级下推断出同一控件', () => {
+    // 对象键（describeObject）与块级声明字段（describeDeclaredFields）共用 fieldKind，
+    // 两条路径都断言，避免将来只改其中一条。
+    const fromObject = Object.fromEntries(
+      describeObject({ image: '', image2: '', video: '', content: '' }).map((f) => [
+        f.key,
+        f.kind,
+      ]),
+    );
+    expect(fromObject).toEqual({
+      image: 'image',
+      image2: 'image',
+      video: 'video',
+      content: 'richtext',
+    });
+
+    const fromDeclared = Object.fromEntries(
+      describeDeclaredFields({}, [
+        { key: 'image', label: '配图' },
+        { key: 'image2', label: '配图 2' },
+        { key: 'video', label: '视频' },
+        { key: 'content', label: '说明' },
+      ]).map((f) => [f.key, f.kind]),
+    );
+    expect(fromDeclared).toEqual({
+      image: 'image',
+      image2: 'image',
+      video: 'video',
+      content: 'richtext',
+    });
+  });
+
+  it('值的证据仍然优先于键名（content 里存了 mp4 就是视频，不是富文本）', () => {
+    expect(fieldKind('content', 'image/d25dbc1d9a8e958b.mp4')).toBe('video');
   });
 });
 

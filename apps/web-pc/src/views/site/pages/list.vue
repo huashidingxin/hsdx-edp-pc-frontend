@@ -170,41 +170,6 @@ watch(
 </script>
 
 <template>
-  <AppCrudTable
-    ref="crudRef"
-    api-url="pages"
-    v-model="formData"
-    :filter-fields="filterFields"
-    :fields="formFields"
-    :grid-options="{
-      columns: gridColumns,
-      showOverflow: false,
-      columnConfig: { resizable: true },
-    }"
-    :open-mode="{ create: 'modal', detail: 'modal' }"
-    :form-attrs="{ layout: 'vertical', size: 'medium' }"
-    :actions-config="actionsConfig"
-    :inline-actions="['manage_studio', 'view', 'edit', 'delete']"
-    :max-inline-actions="4"
-    permission-name="cms.page"
-    title="页面管理"
-    class="p-4"
-  >
-    <template #default_type="{ row }">
-      <Tag :color="typeColor[row.type] || 'default'">{{ row.type_label || '-' }}</Tag>
-    </template>
-    <template #default_locales="{ row }">
-      <div class="flex flex-wrap gap-1">
-        <Tag
-          v-for="l in row.locales || []"
-          :key="l.locale"
-        >
-          {{ l.locale }}：{{ l.title || l.slug || l.locale }}
-        </Tag>
-        <span v-if="!row.locales?.length">-</span>
-      </div>
-    </template>
-  </AppCrudTable>
   <div class="site-pages-page">
     <AppCrudTable
       ref="crudRef"
@@ -242,12 +207,6 @@ watch(
       </template>
     </AppCrudTable>
 
-  <PageStudioDrawer
-    v-model:open="studioOpen"
-    :page="studioRow"
-    :initial-tab="studioTab"
-    @refresh="refreshList"
-  />
     <PageStudioDrawer
       v-model:open="studioOpen"
       :page="studioRow"

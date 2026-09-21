@@ -2,10 +2,12 @@
 /**
  * 通用 JSON → 图形表单（递归渲染单个字段）。
  *
- * 用途：页面静态内容编辑。静态块的 `editor` 提示是可选的，真实数据里 107 个静态块有 45 个
- * 没有提示，旧实现对这些块只给一个裸 JSON 文本框，非技术人员无法操作。
- * 这里改为按**数据形状**渲染控件：对象→分组、对象数组→可增删排序的条目、
- * 图片路径→上传、HTML→富文本、长文本→多行、数字/布尔→数字框/开关。
+ * 用途：页面静态内容编辑。字段集合与字段名称有两个来源，**块级 editor.fields 优先**：
+ *   1. 传入 `fields`（来自该块 editor.fields 的 [{key,label}]）时，本层对象/列表条目的
+ *      字段集合、顺序、label 全部以声明为准 —— 未声明的键不渲染（但保留在草稿里不删）。
+ *   2. 未传入时按**数据形状**推断：对象→分组、对象数组→可增删排序的条目、
+ *      图片路径→上传、HTML→富文本、长文本→多行、数字/布尔→数字框/开关，
+ *      label 走 FIELD_LABELS 词典。
  *
  * 绑定约定（重要）：组件不持有值的副本，直接读写 `parent[fieldKey]`。
  * `parent` 就是 PageContentManager 的 `drafts[blockName]`（reactive 深代理），
@@ -35,7 +37,9 @@ import AppEditor from '#/components/app-editor/index.vue';
 
 import {
   blankItemFor,
+  blankItemForFields,
   describeArray,
+  describeDeclaredFields,
   describeObject,
   MEDIA_KINDS,
   resolveFieldKind,
@@ -53,6 +57,13 @@ const props = defineProps({
   bare: { type: Boolean, default: false },
   /** 递归深度，防御异常数据无限嵌套。 */
   depth: { type: Number, default: 0 },
+  /**
+   * 该块 `editor.fields` 声明的字段（`[{key,label}]`，或 null/空表示没有声明）。
+   *
+   * 只作用于**本层**：本层是对象就按声明渲染它的键，本层是列表就按声明渲染每个条目。
+   * 有意不向下传递 —— 声明描述的是块内一层的字段，嵌套子结构仍按数据形状推断。
+   */
+  fields: { type: Array, default: null },
 });
 
 /** 递归上限：真实数据最深 3 层，6 层足够且能挡住环状/畸形数据。 */
@@ -88,8 +99,24 @@ const kind = computed(() => {
   return resolved;
 });
 
-/** object 分支的字段描述（list 里的每个条目自己再算一遍）。 */
-const childFields = computed(() => describeObject(value.value));
+/** 声明字段列表；为空表示该块没有 editor.fields 声明。 */
+const declared = computed(() =>
+  Array.isArray(props.fields) && props.fields.length > 0 ? props.fields : null,
+);
+
+/** object 分支的字段描述：有声明按声明（集合/顺序/label），否则按数据形状。 */
+const childFields = computed(() =>
+  declared.value
+    ? describeDeclaredFields(value.value, declared.value)
+    : describeObject(value.value),
+);
+
+/** list 分支里每个对象条目的字段描述，规则同 childFields。 */
+function itemFields(item) {
+  return declared.value
+    ? describeDeclaredFields(item, declared.value)
+    : describeObject(item);
+}
 
 const arrayInfo = computed(() => describeArray(value.value));
 
@@ -128,13 +155,24 @@ defineExpose({ upload });
 
 function addItem() {
   const list = Array.isArray(model.value) ? [...model.value] : [];
-  list.push(blankItemFor(list));
+  // 有声明时按声明生成空白条目：空列表照抄第一项会得到空串，
+  // 那样新增出来的是标量条目而不是对象条目。
+  list.push(
+    declared.value ? blankItemForFields(declared.value) : blankItemFor(list),
+  );
   model.value = list;
 }
 
 function removeItem(index) {
   const list = Array.isArray(model.value) ? [...model.value] : [];
   list.splice(index, 1);
+  model.value = list;
+}
+
+/** 段落列表新增一段（纯字符串数组，插入空串即可）。 */
+function addParagraph() {
+  const list = Array.isArray(model.value) ? [...model.value] : [];
+  list.push('');
   model.value = list;
 }
 
@@ -215,6 +253,39 @@ function itemLabel(item, index) {
       style="width: 100%"
     />
 
+    <!-- 长文本段落列表（paragraphs / points 等）：多行文本，可增删与排序 -->
+    <div v-else-if="kind === 'paragraphs'" class="flex flex-col gap-2">
+      <Empty v-if="!value || !value.length" description="暂无段落" />
+      <div
+        v-for="(item, index) in value"
+        :key="index"
+        class="flex items-start gap-2"
+      >
+        <TextArea
+          v-model:value="model[index]"
+          :rows="3"
+          :disabled="disabled"
+          style="flex: 1"
+        />
+        <Space v-if="!disabled" :size="4" direction="vertical">
+          <Button size="small" :disabled="index === 0" @click="moveItem(index, -1)">
+            上移
+          </Button>
+          <Button
+            size="small"
+            :disabled="index === value.length - 1"
+            @click="moveItem(index, 1)"
+          >
+            下移
+          </Button>
+          <Button danger size="small" @click="removeItem(index)">删除</Button>
+        </Space>
+      </div>
+      <Button v-if="!disabled" type="dashed" block @click="addParagraph">
+        新增一段
+      </Button>
+    </div>
+
     <!-- 富文本 -->
     <AppEditor
       v-else-if="kind === 'richtext'"
@@ -230,7 +301,7 @@ function itemLabel(item, index) {
       :rows="4"
     />
 
-    <!-- 对象：逐键渲染 -->
+    <!-- 对象：逐键渲染（有声明则只渲染声明的键） -->
     <div
       v-else-if="kind === 'object'"
       :class="
@@ -282,13 +353,13 @@ function itemLabel(item, index) {
           </Space>
         </template>
 
-        <!-- 对象条目：按条目自身的键渲染，不丢键 -->
+        <!-- 对象条目：按条目自身的键渲染（有声明则只渲染声明的键），不丢键 -->
         <div
           v-if="item !== null && typeof item === 'object' && !Array.isArray(item)"
           class="flex flex-col gap-3"
         >
           <AutoFormValue
-            v-for="field in describeObject(item)"
+            v-for="field in itemFields(item)"
             :key="field.key"
             :ref="uploadRef(`@item:${index}:${field.key}`)"
             :parent="item"
