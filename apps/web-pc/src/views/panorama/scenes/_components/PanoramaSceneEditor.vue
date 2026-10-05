@@ -192,7 +192,7 @@ function resetFromScene() {
     icon: item.icon || '',
     yaw: Number(item.yaw || 0),
     pitch: Number(item.pitch || 0),
-    size: Number(item.size || 32),
+    size: Number(item.size || 50),
     sort: Number(item.sort || 0),
   }));
 
@@ -397,7 +397,7 @@ function onViewerClick({ yaw, pitch }) {
     icon: '',
     yaw: normalizeYaw((yaw * 180) / Math.PI),
     pitch: clampPitch((pitch * 180) / Math.PI),
-    size: 32,
+    size: 50,
     sort: hotspots.value.length,
   };
 
@@ -610,7 +610,7 @@ function hotspotPayload() {
       icon: item.icon || null,
       yaw: normalizeYaw(Number(item.yaw)),
       pitch: clampPitch(Number(item.pitch)),
-      size: Number(item.size) || 32,
+      size: Number(item.size) || 50,
       sort: index,
     };
   });
