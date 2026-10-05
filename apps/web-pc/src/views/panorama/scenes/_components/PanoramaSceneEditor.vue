@@ -164,6 +164,9 @@ function resetFromScene() {
     title: item.title || '',
     content: item.content || '',
     target_scene_id: item.target_scene_id ?? null,
+    // 到达视角（scene 热点）：null = 沿用目标场景初始视角
+    target_yaw: item.target_yaw ?? null,
+    target_pitch: item.target_pitch ?? null,
     url: item.url || '',
     // 图集（仅 image 类型有意义）。老数据可能只有 url，这里归一化成数组，
     // 编辑器里只维护 urls 一处，保存时再回写 url = urls[0]。
@@ -578,6 +581,13 @@ function hotspotPayload() {
       title: item.title || null,
       content: item.content || null,
       target_scene_id: item.type === 'scene' ? item.target_scene_id : null,
+      // 到达视角只在 scene 类型上有意义；留空 = 沿用目标场景初始视角
+      target_yaw: item.type === 'scene' && item.target_yaw !== null && item.target_yaw !== undefined
+        ? normalizeYaw(Number(item.target_yaw))
+        : null,
+      target_pitch: item.type === 'scene' && item.target_pitch !== null && item.target_pitch !== undefined
+        ? clampPitch(Number(item.target_pitch))
+        : null,
       // url 恒等于图集第一张：老消费者只认 url，不能因为图集而读不到东西
       url: urls.length ? urls[0] : (item.url || null),
       urls: urls.length ? urls : null,
@@ -801,6 +811,17 @@ function onKeydown(event) {
                       placeholder="选择要跳转到的场景"
                     />
                   </div>
+                  <div class="pano-editor-row">
+                    <div class="pano-editor-field">
+                      <label>到达 yaw</label>
+                      <InputNumber v-model:value="item.target_yaw" size="small" :step="1" :min="-180" :max="180" placeholder="缺省" />
+                    </div>
+                    <div class="pano-editor-field">
+                      <label>到达 pitch</label>
+                      <InputNumber v-model:value="item.target_pitch" size="small" :step="1" :min="-90" :max="90" placeholder="缺省" />
+                    </div>
+                  </div>
+                  <p class="pano-editor-hint">到达视角 = 跳过去之后朝哪看；留空沿用目标场景自己的初始视角。</p>
                 </template>
 
                 <template v-else-if="item.type === 'info'">

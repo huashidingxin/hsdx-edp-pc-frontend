@@ -13,9 +13,9 @@
  *
  * 与 site/pages 同族：接口走 X-Application-Id 请求头，抽屉嵌入时以 appId 为准。
  */
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 
-import { Button, Empty, Modal, Progress, Tag, message } from 'antdv-next';
+import { Button, Empty, Form, Input, InputNumber, Modal, Progress, Switch, Tag, message } from 'antdv-next';
 
 import { upload } from '#/api';
 import {
@@ -51,6 +51,101 @@ const listFormat = (rows) => (Array.isArray(rows) ? rows.map(flattenScene) : row
 
 /** 切片是同步 GD 处理，大图可能远超默认 10s 超时。 */
 const TILE_TIMEOUT = 300_000;
+
+/* ===================== 漫游设置（应用级） ===================== */
+
+/**
+ * 应用级配置：自动旋转 / 背景音乐 / 陀螺仪 / 足迹 / 小行星 / ui 主题。
+ * 存 application_settings（group=panorama），GET/PUT 的形状与公开 API 的
+ * features + ui 一致 —— 管理端读到的就是「当前生效值」，缺省已填好。
+ */
+const settingsOpen = ref(false);
+const settingsSaving = ref(false);
+const settingsForm = reactive({
+  autorotate: true,
+  autorotate_speed: null,
+  bg_music: '',
+  gyro: false,
+  footmark: true,
+  littleplanet: true,
+  theme_primary: '',
+  theme_logo: '',
+  compass: true,
+  scenesBar: true,
+});
+
+async function openSettings() {
+  settingsOpen.value = true;
+  try {
+    const data = await requestClient.get('/panorama-scenes/settings');
+    settingsForm.autorotate = data?.autorotate ?? true;
+    settingsForm.autorotate_speed = data?.autorotate_speed ?? null;
+    settingsForm.bg_music = data?.bg_music || '';
+    settingsForm.gyro = Boolean(data?.gyro);
+    settingsForm.footmark = data?.footmark ?? true;
+    settingsForm.littleplanet = data?.littleplanet ?? true;
+    settingsForm.theme_primary = data?.ui?.theme?.primary || '';
+    settingsForm.theme_logo = data?.ui?.theme?.logo || '';
+    settingsForm.compass = data?.ui?.features?.compass ?? true;
+    settingsForm.scenesBar = data?.ui?.features?.scenesBar ?? true;
+  } catch {
+    message.error('读取漫游设置失败');
+  }
+}
+
+async function saveSettings() {
+  settingsSaving.value = true;
+  try {
+    await requestClient.put('/panorama-scenes/settings', {
+      autorotate: settingsForm.autorotate,
+      autorotate_speed: settingsForm.autorotate_speed ?? null,
+      bg_music: settingsForm.bg_music || null,
+      gyro: settingsForm.gyro,
+      footmark: settingsForm.footmark,
+      littleplanet: settingsForm.littleplanet,
+      ui: {
+        theme: {
+          primary: settingsForm.theme_primary || null,
+          logo: settingsForm.theme_logo || null,
+        },
+        features: {
+          compass: settingsForm.compass,
+          scenesBar: settingsForm.scenesBar,
+        },
+      },
+    });
+    message.success('已保存，播放页刷新后生效');
+    settingsOpen.value = false;
+  } catch {
+    message.error('保存漫游设置失败');
+  } finally {
+    settingsSaving.value = false;
+  }
+}
+
+/** 背景音乐上传：复用 panorama 上传场景，成功后回填地址。 */
+const musicInput = ref(null);
+const musicUploading = ref(false);
+
+function pickMusic() {
+  musicInput.value?.click();
+}
+
+async function onMusicPicked(event) {
+  const file = event.target.files?.[0];
+  event.target.value = '';
+  if (!file) return;
+
+  musicUploading.value = true;
+  try {
+    const url = await upload(file, { scene: 'panorama' });
+    if (url) settingsForm.bg_music = url;
+  } catch {
+    message.error('音乐上传失败');
+  } finally {
+    musicUploading.value = false;
+  }
+}
 
 const STATUS_OPTIONS = [
   { id: 1, name: '展示' },
@@ -108,6 +203,13 @@ const formFields = ref([
     span: 12,
     required: true,
     attrs: { placeholder: '如 一层大堂' },
+  },
+  {
+    field: 'group',
+    type: 'text',
+    label: '分组',
+    span: 12,
+    attrs: { placeholder: '播放页场景条按分组名归组；留空 = 未分组' },
   },
   {
     field: 'code',
@@ -170,6 +272,7 @@ const gridColumns = ref([
   { field: 'id', title: 'ID', width: 70 },
   { field: 'thumb', title: '缩略图', width: 96, slots: { default: 'default_thumb' } },
   { field: 'title', title: '场景名称', minWidth: 160 },
+  { field: 'group', title: '分组', width: 110 },
   { field: 'code', title: '编码', minWidth: 120 },
   // 原图尺寸单列一栏：非 2:1 的图会被切片时中心裁切，用户必须看得见这件事
   { field: 'source_width', title: '原图', width: 170, slots: { default: 'default_source' } },
@@ -583,6 +686,7 @@ watch(
       </template>
 
       <template #toolbar-append>
+        <Button class="mr-2" @click="openSettings">漫游设置</Button>
         <Button type="primary" ghost @click="openBatch">批量上传</Button>
       </template>
 
@@ -733,6 +837,74 @@ watch(
         共 {{ batchItems.length }} 张，已完成 {{ batchDoneCount }} 张。切片是服务端同步处理，
         图片越大耗时越久，请勿关闭窗口。
       </p>
+    </Modal>
+
+    <!-- 漫游设置：应用级配置（自动旋转/背景音乐/足迹/ui 主题），存 application_settings -->
+    <Modal
+      v-model:open="settingsOpen"
+      title="漫游设置"
+      :width="560"
+      :confirm-loading="settingsSaving"
+      ok-text="保存"
+      cancel-text="取消"
+      @ok="saveSettings"
+    >
+      <Form layout="vertical" class="mt-2">
+        <p class="mb-2 text-xs text-gray-400">播放能力</p>
+        <div class="grid grid-cols-2 gap-x-4">
+          <Form.Item label="自动旋转">
+            <Switch v-model:checked="settingsForm.autorotate" />
+          </Form.Item>
+          <Form.Item label="自动旋转速度（度/秒，留空用默认 3）">
+            <InputNumber
+              v-model:value="settingsForm.autorotate_speed"
+              class="w-full"
+              :min="0.1"
+              :max="30"
+              :step="0.5"
+              placeholder="3"
+            />
+          </Form.Item>
+          <Form.Item label="小行星开场（进入时俯瞰展开动画）">
+            <Switch v-model:checked="settingsForm.littleplanet" />
+          </Form.Item>
+          <Form.Item label="足迹（场景条标记已访问场景）">
+            <Switch v-model:checked="settingsForm.footmark" />
+          </Form.Item>
+          <Form.Item label="陀螺仪（移动端，需 HTTPS）">
+            <Switch v-model:checked="settingsForm.gyro" />
+          </Form.Item>
+          <Form.Item label="背景音乐地址（留空关闭）">
+            <div class="flex gap-2">
+              <Input v-model:value="settingsForm.bg_music" placeholder="https://… 或点「上传」" />
+              <Button :loading="musicUploading" @click="pickMusic">上传</Button>
+              <input
+                ref="musicInput"
+                type="file"
+                accept="audio/*"
+                class="hidden"
+                @change="onMusicPicked"
+              >
+            </div>
+          </Form.Item>
+        </div>
+
+        <p class="mb-2 mt-3 text-xs text-gray-400">外观（多租户差异化，播放页按此渲染）</p>
+        <div class="grid grid-cols-2 gap-x-4">
+          <Form.Item label="主题色">
+            <Input v-model:value="settingsForm.theme_primary" placeholder="#185fa5" />
+          </Form.Item>
+          <Form.Item label="品牌 logo 地址（替代顶部文字）">
+            <Input v-model:value="settingsForm.theme_logo" placeholder="https://…" />
+          </Form.Item>
+          <Form.Item label="罗盘">
+            <Switch v-model:checked="settingsForm.compass" />
+          </Form.Item>
+          <Form.Item label="场景条">
+            <Switch v-model:checked="settingsForm.scenesBar" />
+          </Form.Item>
+        </div>
+      </Form>
     </Modal>
   </div>
 </template>
