@@ -15,7 +15,7 @@
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 
-import { Button, Empty, Form, Input, InputNumber, Modal, Progress, Switch, Tag, message } from 'antdv-next';
+import { Button, Empty, Form, Input, InputNumber, Modal, Progress, Select, Switch, Tag, message } from 'antdv-next';
 
 import { upload } from '#/api';
 import {
@@ -55,9 +55,10 @@ const TILE_TIMEOUT = 300_000;
 /* ===================== 漫游设置（应用级） ===================== */
 
 /**
- * 应用级配置：自动旋转 / 背景音乐 / 陀螺仪 / 足迹 / 小行星 / ui 主题。
+ * 应用级配置：自动旋转 / 背景音乐 / 陀螺仪 / 足迹 / 小行星 / ui 主题 /
+ * 电子沙盘 / P2 零散（开场提示、滚动字幕、导航按钮、导览、过渡动画）。
  * 存 application_settings（group=panorama），GET/PUT 的形状与公开 API 的
- * features + ui 一致 —— 管理端读到的就是「当前生效值」，缺省已填好。
+ * features + ui + sand_table + extras 一致 —— 管理端读到的就是「当前生效值」。
  */
 const settingsOpen = ref(false);
 const settingsSaving = ref(false);
@@ -70,9 +71,22 @@ const settingsForm = reactive({
   littleplanet: true,
   theme_primary: '',
   theme_logo: '',
+  theme_loading_img: '',
   compass: true,
   scenesBar: true,
+  // ---- P2 零散（extras）----
+  transition: 'fade',
+  open_alert: '',
+  top_ad: '',
+  nav_links: [],
+  tour_guide: [],
 });
+
+const TRANSITION_OPTIONS = [
+  { value: 'fade', label: '淡入淡出' },
+  { value: 'black', label: '黑场' },
+  { value: 'white', label: '白场' },
+];
 
 async function openSettings() {
   settingsOpen.value = true;
@@ -86,8 +100,18 @@ async function openSettings() {
     settingsForm.littleplanet = data?.littleplanet ?? true;
     settingsForm.theme_primary = data?.ui?.theme?.primary || '';
     settingsForm.theme_logo = data?.ui?.theme?.logo || '';
+    settingsForm.theme_loading_img = data?.ui?.theme?.loading_img || '';
     settingsForm.compass = data?.ui?.features?.compass ?? true;
     settingsForm.scenesBar = data?.ui?.features?.scenesBar ?? true;
+    settingsForm.transition = data?.extras?.transition || 'fade';
+    settingsForm.open_alert = data?.extras?.open_alert || '';
+    settingsForm.top_ad = data?.extras?.top_ad || '';
+    settingsForm.nav_links = Array.isArray(data?.extras?.nav_links)
+      ? data.extras.nav_links.map((item) => ({ ...item }))
+      : [];
+    settingsForm.tour_guide = Array.isArray(data?.extras?.tour_guide)
+      ? data.extras.tour_guide.map((item) => ({ ...item }))
+      : [];
   } catch {
     message.error('读取漫游设置失败');
   }
@@ -107,19 +131,89 @@ async function saveSettings() {
         theme: {
           primary: settingsForm.theme_primary || null,
           logo: settingsForm.theme_logo || null,
+          loading_img: settingsForm.theme_loading_img || null,
         },
         features: {
           compass: settingsForm.compass,
           scenesBar: settingsForm.scenesBar,
         },
       },
+      // extras 各项整体覆盖；空值传 null = 关闭该能力
+      transition: settingsForm.transition,
+      open_alert: settingsForm.open_alert.trim() || null,
+      top_ad: settingsForm.top_ad.trim() || null,
+      nav_links: settingsForm.nav_links.length ? settingsForm.nav_links : null,
+      tour_guide: settingsForm.tour_guide.length ? settingsForm.tour_guide : null,
     });
     message.success('已保存，播放页刷新后生效');
     settingsOpen.value = false;
-  } catch {
-    message.error('保存漫游设置失败');
+  } catch (error) {
+    message.error(error?.message || '保存漫游设置失败');
   } finally {
     settingsSaving.value = false;
+  }
+}
+
+/* ---- 导航按钮 / 导览点 行编辑 ---- */
+
+function addNavLink() {
+  if (settingsForm.nav_links.length >= 6) {
+    message.warning('导航按钮最多 6 个');
+    return;
+  }
+  settingsForm.nav_links.push({ title: '', url: '' });
+}
+
+function removeNavLink(index) {
+  settingsForm.nav_links.splice(index, 1);
+}
+
+/** 导览点行可用的场景下拉（场景 code 是 tour_guide 的关联键）。 */
+const sceneCodeOptions = computed(() =>
+  allScenes.value.map((scene) => ({ value: scene.code, label: scene.title || scene.code })),
+);
+
+function addTourPoint() {
+  if (settingsForm.tour_guide.length >= 30) {
+    message.warning('导览点最多 30 个');
+    return;
+  }
+  settingsForm.tour_guide.push({ scene_code: undefined, yaw: 0, pitch: 0, hfov: null, stay: 4 });
+}
+
+function removeTourPoint(index) {
+  settingsForm.tour_guide.splice(index, 1);
+}
+
+/** 图片上传回填（骨架屏图等）：复用 panorama 上传场景。 */
+const imageInputEl = ref(null);
+const imageUploading = ref(false);
+/** 当前上传回填的目标字段：'loading' | 'sand' */
+let imagePickTarget = 'loading';
+
+function pickImage(target) {
+  imagePickTarget = target;
+  imageInputEl.value?.click();
+}
+
+async function onImagePicked(event) {
+  const file = event.target.files?.[0];
+  event.target.value = '';
+  if (!file) return;
+
+  imageUploading.value = true;
+  try {
+    const url = await upload(file, { scene: 'panorama' });
+    if (!url) return;
+    if (imagePickTarget === 'sand') {
+      sandForm.image = url;
+    } else {
+      settingsForm.theme_loading_img = url;
+    }
+  } catch {
+    message.error('图片上传失败');
+  } finally {
+    imageUploading.value = false;
   }
 }
 
@@ -146,6 +240,113 @@ async function onMusicPicked(event) {
     musicUploading.value = false;
   }
 }
+
+/* ===================== 电子沙盘（应用级） ===================== */
+
+/**
+ * 沙盘标点编辑：底图 + 每个场景一个定位点（百分比坐标）。
+ * points 存储形状是 { 场景code: {x,y,rotate,hlookat} }（键=场景 code），
+ * 编辑时转成行数组，保存时再转回对象。
+ */
+const sandOpen = ref(false);
+const sandSaving = ref(false);
+const sandForm = reactive({ open: true, image: '', points: [] });
+/** 点击底图记下的待落点坐标（百分比），选好场景后确认成行。 */
+const sandPending = ref(null);
+
+function openSand() {
+  sandOpen.value = true;
+  sandPending.value = null;
+  requestClient
+    .get('/panorama-scenes/settings')
+    .then((data) => {
+      sandForm.open = data?.sand_table?.open ?? true;
+      sandForm.image = data?.sand_table?.image || '';
+      sandForm.points = Object.entries(data?.sand_table?.points ?? {}).map(([code, point]) => ({
+        scene_code: code,
+        x: point?.x ?? 0,
+        y: point?.y ?? 0,
+        rotate: point?.rotate ?? 0,
+        hlookat: point?.hlookat ?? null,
+      }));
+    })
+    .catch(() => message.error('读取沙盘配置失败'));
+}
+
+async function saveSand() {
+  if (sandForm.image && sandForm.points.length === 0) {
+    message.warning('已设置底图但还没有标点；清空底图或添加标点后再保存');
+    return;
+  }
+
+  sandSaving.value = true;
+  try {
+    const points = {};
+    for (const point of sandForm.points) {
+      points[point.scene_code] = {
+        x: Math.round(point.x * 100) / 100,
+        y: Math.round(point.y * 100) / 100,
+        rotate: Math.round((point.rotate || 0) * 100) / 100,
+        hlookat: point.hlookat === null || point.hlookat === undefined ? null : Math.round(point.hlookat * 100) / 100,
+      };
+    }
+    await requestClient.put('/panorama-scenes/settings', {
+      sand_table: {
+        open: sandForm.open,
+        image: sandForm.image || null,
+        points: sandForm.image ? points : null,
+      },
+    });
+    message.success('沙盘已保存，播放页刷新后生效');
+    sandOpen.value = false;
+  } catch (error) {
+    message.error(error?.message || '保存沙盘失败');
+  } finally {
+    sandSaving.value = false;
+  }
+}
+
+/** 点击底图取坐标（百分比）。 */
+function onSandMapClick(event) {
+  const target = event.currentTarget;
+  const rect = target.getBoundingClientRect();
+  const x = ((event.clientX - rect.left) / rect.width) * 100;
+  const y = ((event.clientY - rect.top) / rect.height) * 100;
+  sandPending.value = {
+    x: Math.round(x * 10) / 10,
+    y: Math.round(y * 10) / 10,
+    scene_code: undefined,
+  };
+}
+
+function confirmSandPoint() {
+  const pending = sandPending.value;
+  if (!pending?.scene_code) {
+    message.warning('请先选择要标注的场景');
+    return;
+  }
+  if (sandForm.points.some((point) => point.scene_code === pending.scene_code)) {
+    message.warning('该场景已标过点，请直接在列表里调整坐标');
+    return;
+  }
+  sandForm.points.push({
+    scene_code: pending.scene_code,
+    x: pending.x,
+    y: pending.y,
+    rotate: 0,
+    hlookat: null,
+  });
+  sandPending.value = null;
+}
+
+function removeSandPoint(index) {
+  sandForm.points.splice(index, 1);
+}
+
+/** 沙盘行里可选的场景（排除已标注的）。 */
+const sandSceneOptions = computed(() =>
+  sceneCodeOptions.value.filter((option) => !sandForm.points.some((point) => point.scene_code === option.value)),
+);
 
 const STATUS_OPTIONS = [
   { id: 1, name: '展示' },
@@ -686,6 +887,7 @@ watch(
       </template>
 
       <template #toolbar-append>
+        <Button class="mr-2" @click="openSand">电子沙盘</Button>
         <Button class="mr-2" @click="openSettings">漫游设置</Button>
         <Button type="primary" ghost @click="openBatch">批量上传</Button>
       </template>
@@ -903,8 +1105,133 @@ watch(
           <Form.Item label="场景条">
             <Switch v-model:checked="settingsForm.scenesBar" />
           </Form.Item>
+          <Form.Item label="骨架屏图（进入播放页前的启动画面）">
+            <div class="flex gap-2">
+              <Input v-model:value="settingsForm.theme_loading_img" placeholder="https://… 或点「上传」" />
+              <Button :loading="imageUploading" @click="pickImage('loading')">上传</Button>
+            </div>
+          </Form.Item>
+        </div>
+
+        <p class="mb-2 mt-3 text-xs text-gray-400">提示与公告</p>
+        <div class="grid grid-cols-2 gap-x-4">
+          <Form.Item label="场景过渡动画">
+            <Select v-model:value="settingsForm.transition" :options="TRANSITION_OPTIONS" />
+          </Form.Item>
+          <Form.Item label="顶部滚动字幕（留空关闭）">
+            <Input v-model:value="settingsForm.top_ad" :maxlength="500" placeholder="欢迎光临××园区" />
+          </Form.Item>
+          <Form.Item label="开场提示（进入播放页弹窗，留空关闭）" class="col-span-2">
+            <Input.TextArea
+              v-model:value="settingsForm.open_alert"
+              :rows="3"
+              :maxlength="2000"
+              placeholder="支持换行；观众点「我知道了」后本次不再出现"
+            />
+          </Form.Item>
+        </div>
+
+        <p class="mb-2 mt-3 text-xs text-gray-400">导航按钮（播放页左下角，最多 6 个；留空行会被忽略）</p>
+        <div v-for="(link, index) in settingsForm.nav_links" :key="index" class="mb-2 flex gap-2">
+          <Input v-model:value="link.title" :maxlength="32" class="w-40" placeholder="名称" />
+          <Input v-model:value="link.url" placeholder="https://… 或 tel:…" />
+          <Button danger type="text" @click="removeNavLink(index)">删除</Button>
+        </div>
+        <Button size="small" @click="addNavLink">+ 添加导航按钮</Button>
+
+        <p class="mb-2 mt-3 text-xs text-gray-400">
+          一键导览（按顺序逐点飞行，每个点 = 场景 + 视角 + 停留秒数；留空的行会被忽略）
+        </p>
+        <div v-for="(point, index) in settingsForm.tour_guide" :key="index" class="mb-2 flex items-center gap-2">
+          <span class="w-5 text-xs text-gray-400">{{ index + 1 }}.</span>
+          <Select
+            v-model:value="point.scene_code"
+            class="w-44"
+            :options="sceneCodeOptions"
+            placeholder="场景"
+            show-search
+            option-filter-prop="label"
+          />
+          <InputNumber v-model:value="point.yaw" class="w-24" :min="-360" :max="360" placeholder="经度°" />
+          <InputNumber v-model:value="point.pitch" class="w-24" :min="-90" :max="90" placeholder="纬度°" />
+          <InputNumber v-model:value="point.stay" class="w-24" :min="1" :max="30" placeholder="停留s" />
+          <Button danger type="text" @click="removeTourPoint(index)">删除</Button>
+        </div>
+        <Button size="small" @click="addTourPoint">+ 添加导览点</Button>
+      </Form>
+    </Modal>
+
+    <!-- 电子沙盘：底图 + 场景标点（点击底图取坐标），存 application_settings.sand_table -->
+    <Modal
+      v-model:open="sandOpen"
+      title="电子沙盘"
+      :width="680"
+      :confirm-loading="sandSaving"
+      ok-text="保存"
+      cancel-text="取消"
+      @ok="saveSand"
+    >
+      <Form layout="vertical" class="mt-2">
+        <div class="flex items-end gap-4">
+          <Form.Item label="启用沙盘（播放页导航栏出现沙盘按钮）">
+            <Switch v-model:checked="sandForm.open" />
+          </Form.Item>
+          <Form.Item label="沙盘底图" class="flex-1">
+            <div class="flex gap-2">
+              <Input v-model:value="sandForm.image" placeholder="https://… 或点「上传」" />
+              <Button :loading="imageUploading" @click="pickImage('sand')">上传</Button>
+            </div>
+          </Form.Item>
         </div>
       </Form>
+
+      <template v-if="sandForm.image">
+        <p class="mb-1 text-xs text-gray-400">点击底图取坐标，选好场景后确认；标点即播放页里的场景定位点</p>
+        <div class="sand-map-wrap">
+          <img :src="sandForm.image" alt="沙盘底图" class="sand-map" @click="onSandMapClick" />
+          <span
+            v-for="point in sandForm.points"
+            :key="point.scene_code"
+            class="sand-marker"
+            :style="{ left: `${point.x}%`, top: `${point.y}%` }"
+          ></span>
+          <span
+            v-if="sandPending"
+            class="sand-marker sand-marker--pending"
+            :style="{ left: `${sandPending.x}%`, top: `${sandPending.y}%` }"
+          ></span>
+        </div>
+
+        <div v-if="sandPending" class="mt-2 flex items-center gap-2 rounded border border-blue-200 bg-blue-50 p-2">
+          <span class="text-xs">新标点 {{ sandPending.x }}%, {{ sandPending.y }}%</span>
+          <Select
+            v-model:value="sandPending.scene_code"
+            class="w-48"
+            :options="sandSceneOptions"
+            placeholder="选择场景"
+            show-search
+            option-filter-prop="label"
+          />
+          <Button type="primary" size="small" @click="confirmSandPoint">确认标点</Button>
+          <Button size="small" @click="sandPending = null">取消</Button>
+        </div>
+
+        <div v-if="sandForm.points.length" class="mt-3">
+          <p class="mb-1 text-xs text-gray-400">已标 {{ sandForm.points.length }} 个点</p>
+          <div v-for="(point, index) in sandForm.points" :key="point.scene_code" class="mb-2 flex items-center gap-2">
+            <span class="w-36 truncate text-xs" :title="point.scene_code">
+              {{ sceneCodeOptions.find((option) => option.value === point.scene_code)?.label || point.scene_code }}
+            </span>
+            <InputNumber v-model:value="point.x" class="w-24" :min="0" :max="100" placeholder="x%" />
+            <InputNumber v-model:value="point.y" class="w-24" :min="0" :max="100" placeholder="y%" />
+            <InputNumber v-model:value="point.rotate" class="w-24" :min="-360" :max="360" placeholder="旋转°" />
+            <InputNumber v-model:value="point.hlookat" class="w-28" :min="-360" :max="360" placeholder="到达视角°" />
+            <Button danger type="text" @click="removeSandPoint(index)">删除</Button>
+          </div>
+        </div>
+        <p v-else class="mt-2 text-xs text-gray-400">还没有标点，点击底图开始</p>
+      </template>
+      <p v-else class="text-xs text-gray-400">请先上传沙盘底图（园区/建筑平面图），再点击底图为各场景标点</p>
     </Modal>
   </div>
 </template>
@@ -1002,5 +1329,36 @@ watch(
 
 .ratio-warning-list li + li {
   margin-top: 2px;
+}
+
+/* 电子沙盘底图与标点 */
+.sand-map-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+
+.sand-map {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  cursor: crosshair;
+  border-radius: 6px;
+}
+
+.sand-marker {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: #1677ff;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 4px rgb(0 0 0 / 40%);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.sand-marker--pending {
+  background: #faad14;
 }
 </style>
