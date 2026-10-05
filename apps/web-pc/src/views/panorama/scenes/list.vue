@@ -38,6 +38,7 @@ import {
 } from '#/api/application-context';
 import { requestClient } from '#/api/request';
 import Resource from '#/api/resource';
+import AppUpload from '#/components/AppUpload.vue';
 import AppCrudTable from '#/components/app-crud-table/AppCrudTable.vue';
 
 import PanoramaSceneEditor from './_components/PanoramaSceneEditor.vue';
@@ -147,18 +148,19 @@ async function saveSettings() {
   }
   settingsSaving.value = true;
   try {
+    await flushUploads();
     await requestClient.put('/panorama-scenes/settings', {
       autorotate: settingsForm.autorotate,
       autorotate_speed: settingsForm.autorotate_speed ?? null,
-      bg_music: settingsForm.bg_music || null,
+      bg_music: asUrlString(settingsForm.bg_music),
       gyro: settingsForm.gyro,
       footmark: settingsForm.footmark,
       littleplanet: settingsForm.littleplanet,
       ui: {
         theme: {
           primary: settingsForm.theme_primary || null,
-          logo: settingsForm.theme_logo || null,
-          loading_img: settingsForm.theme_loading_img || null,
+          logo: asUrlString(settingsForm.theme_logo),
+          loading_img: asUrlString(settingsForm.theme_loading_img),
         },
         features: {
           compass: settingsForm.compass,
@@ -170,7 +172,9 @@ async function saveSettings() {
       open_alert: settingsForm.open_alert.trim() || null,
       top_ad: settingsForm.top_ad.trim() || null,
       nav_links: settingsForm.nav_links.filter((link) => link.title.trim() && link.url.trim()).length
-        ? settingsForm.nav_links.filter((link) => link.title.trim() && link.url.trim())
+        ? settingsForm.nav_links
+            .filter((link) => link.title.trim() && link.url.trim())
+            .map((link) => ({ ...link, icon: asUrlString(link.icon) }))
         : null,
       tour_guide: settingsForm.tour_guide.length ? settingsForm.tour_guide : null,
     });
@@ -197,14 +201,8 @@ function removeNavLink(index) {
   settingsForm.nav_links.splice(index, 1);
 }
 
-/** 导航按钮图标上传目标行（点「上传」先把行号记下来，文件选完回填）。 */
-let navIconTargetIndex = -1;
-
-function pickNavLinkIcon(index) {
-  navIconTargetIndex = index;
-  imageInputEl.value?.click();
-  imagePickTarget = 'nav-icon';
-}
+/** 导航按钮行的图标上传控件（每行一个 AppUpload，v-for 里用函数式 ref 收集）。 */
+const navIconRefs = ref([]);
 
 /** 导览点行可用的场景下拉（场景 code 是 tour_guide 的关联键）。 */
 const sceneCodeOptions = computed(() =>
@@ -240,66 +238,32 @@ function moveTourPoint(index, delta) {
   settingsForm.tour_guide.splice(target, 0, row);
 }
 
-/** 图片上传回填（骨架屏图 / 沙盘底图 / 导航按钮图标）。 */
-const imageInputEl = ref(null);
-const imageUploading = ref(false);
-/** 当前上传回填的目标：'loading' | 'sand' | 'nav-icon' */
-let imagePickTarget = 'loading';
+/* ---- 上传（AppUpload 不自动上传：选中文件先挂在表单上，保存那一刻 flush 成远程地址） ---- */
 
-function pickImage(target) {
-  imagePickTarget = target;
-  imageInputEl.value?.click();
-}
+const bgMusicUploadRef = ref(null);
+const logoUploadRef = ref(null);
+const loadingImgUploadRef = ref(null);
+const sandImageUploadRef = ref(null);
 
-async function onImagePicked(event) {
-  const file = event.target.files?.[0];
-  event.target.value = '';
-  if (!file) return;
-
-  imageUploading.value = true;
-  try {
-    const url = await upload(file, { scene: 'panorama' });
-    if (!url) return;
-    if (imagePickTarget === 'sand') {
-      sandForm.image = url;
-    } else if (imagePickTarget === 'nav-icon') {
-      if (settingsForm.nav_links[navIconTargetIndex]) {
-        settingsForm.nav_links[navIconTargetIndex].icon = url;
-      }
-    } else if (imagePickTarget === 'logo') {
-      settingsForm.theme_logo = url;
-    } else {
-      settingsForm.theme_loading_img = url;
+/** 把面板上所有待上传文件真正传出去（AppUpload 约定：save 前 flush）。 */
+async function flushUploads() {
+  const refs = [
+    bgMusicUploadRef.value,
+    logoUploadRef.value,
+    loadingImgUploadRef.value,
+    sandImageUploadRef.value,
+    ...navIconRefs.value,
+  ];
+  for (const instance of refs) {
+    if (typeof instance?.upload === 'function') {
+      await instance.upload();
     }
-  } catch {
-    message.error('图片上传失败');
-  } finally {
-    imageUploading.value = false;
   }
 }
 
-/** 背景音乐上传：复用 panorama 上传场景，成功后回填地址。 */
-const musicInput = ref(null);
-const musicUploading = ref(false);
-
-function pickMusic() {
-  musicInput.value?.click();
-}
-
-async function onMusicPicked(event) {
-  const file = event.target.files?.[0];
-  event.target.value = '';
-  if (!file) return;
-
-  musicUploading.value = true;
-  try {
-    const url = await upload(file, { scene: 'panorama' });
-    if (url) settingsForm.bg_music = url;
-  } catch {
-    message.error('音乐上传失败');
-  } finally {
-    musicUploading.value = false;
-  }
+/** AppUpload 的 v-model 在「已上传/已有地址」时是字符串，否则可能是 FileItem 对象 —— 落库前归一。 */
+function asUrlString(value) {
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
 }
 
 /* ===================== 电子沙盘（应用级） ===================== */
@@ -345,7 +309,9 @@ async function saveSand() {
     message.error('沙盘配置尚未读取成功，已阻止保存（避免用空值覆盖现有配置），请关闭后重试');
     return;
   }
-  if (sandForm.image && sandForm.points.length === 0) {
+  await flushUploads();
+  const sandImage = asUrlString(sandForm.image);
+  if (sandImage && sandForm.points.length === 0) {
     message.warning('已设置底图但还没有标点；清空底图或添加标点后再保存');
     return;
   }
@@ -364,8 +330,8 @@ async function saveSand() {
     await requestClient.put('/panorama-scenes/settings', {
       sand_table: {
         open: sandForm.open,
-        image: sandForm.image || null,
-        points: sandForm.image ? points : null,
+        image: sandImage,
+        points: sandImage ? points : null,
       },
     });
     message.success('沙盘已保存，播放页刷新后生效');
@@ -1153,18 +1119,13 @@ watch(
               <FormItem label="陀螺仪（手机）" extra="手机转动时镜头跟着转，需 HTTPS 环境">
                 <Switch v-model:checked="settingsForm.gyro" />
               </FormItem>
-              <FormItem label="背景音乐" extra="填地址或点上传；留空关闭">
-                <div class="flex gap-2">
-                  <Input v-model:value="settingsForm.bg_music" placeholder="https://… 或点「上传」" />
-                  <Button :loading="musicUploading" @click="pickMusic">上传</Button>
-                  <input
-                    ref="musicInput"
-                    type="file"
-                    accept="audio/*"
-                    class="hidden"
-                    @change="onMusicPicked"
-                  >
-                </div>
+              <FormItem label="背景音乐" extra="选择音频文件，保存时自动上传；不选则关闭">
+                <AppUpload
+                  ref="bgMusicUploadRef"
+                  v-model:value="settingsForm.bg_music"
+                  file-type="audio"
+                  scene="panorama"
+                />
               </FormItem>
             </div>
           </Form>
@@ -1181,16 +1142,22 @@ watch(
                 <Input v-model:value="settingsForm.theme_primary" placeholder="#185fa5" />
               </FormItem>
               <FormItem label="品牌 logo" extra="显示在左上角替代应用名文字">
-                <div class="flex gap-2">
-                  <Input v-model:value="settingsForm.theme_logo" placeholder="https://… 或点「上传」" />
-                  <Button :loading="imageUploading" @click="pickImage('logo')">上传</Button>
-                </div>
+                <AppUpload
+                  ref="logoUploadRef"
+                  v-model:value="settingsForm.theme_logo"
+                  file-type="image"
+                  scene="panorama"
+                  item-width="80px"
+                />
               </FormItem>
               <FormItem label="启动图" extra="播放页打开前显示的整屏图片（即加载画面）">
-                <div class="flex gap-2">
-                  <Input v-model:value="settingsForm.theme_loading_img" placeholder="https://… 或点「上传」" />
-                  <Button :loading="imageUploading" @click="pickImage('loading')">上传</Button>
-                </div>
+                <AppUpload
+                  ref="loadingImgUploadRef"
+                  v-model:value="settingsForm.theme_loading_img"
+                  file-type="image"
+                  scene="panorama"
+                  item-width="80px"
+                />
               </FormItem>
               <div class="grid grid-cols-2 gap-x-4">
                 <FormItem label="指北针" extra="右上角的小罗盘">
@@ -1231,14 +1198,15 @@ watch(
             <span class="text-xs text-gray-400">显示在播放页左下角，最多 6 个</span>
           </div>
           <div v-for="(link, index) in settingsForm.nav_links" :key="index" class="mb-2 flex items-center gap-2">
-            <span class="w-12 text-xs text-gray-400">图标</span>
-            <img
-              v-if="link.icon"
-              :src="link.icon"
-              alt=""
-              class="h-6 w-6 rounded object-contain"
+            <AppUpload
+              :ref="(el) => (navIconRefs[index] = el)"
+              v-model="link.icon"
+              file-type="image"
+              scene="panorama"
+              item-width="56px"
+              :aspect-ratio="1"
+              class="w-16 flex-none"
             />
-            <Button v-else size="small" @click="pickNavLinkIcon(index)">上传</Button>
             <Input v-model:value="link.title" :maxlength="32" class="w-36" placeholder="按钮文字，如 咨询热线" />
             <Input v-model:value="link.url" placeholder="网址 https://… 或电话 tel:…" />
             <Button danger type="text" @click="removeNavLink(index)">删除</Button>
@@ -1319,9 +1287,15 @@ watch(
           <span class="step-no">1</span>
           <span class="text-sm font-medium">上传平面底图</span>
         </div>
-        <div class="ml-6 flex gap-2">
-          <Input v-model:value="sandForm.image" class="flex-1" placeholder="https://… 或点「上传」" />
-          <Button :loading="imageUploading" @click="pickImage('sand')">上传</Button>
+        <div class="ml-6">
+          <AppUpload
+            ref="sandImageUploadRef"
+            v-model:value="sandForm.image"
+            file-type="image"
+            scene="panorama"
+            item-width="140px"
+          />
+          <p class="text-xs text-gray-400">建议用横版平面图（园区 / 楼宇俯视图）；也支持直接粘贴外部图片地址</p>
         </div>
       </div>
 
