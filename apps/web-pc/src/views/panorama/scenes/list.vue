@@ -450,10 +450,12 @@ const formFields = ref([
   },
   {
     field: 'group',
-    type: 'text',
+    type: 'autocomplete',
     label: '分组',
     span: 12,
-    attrs: { placeholder: '播放页场景条按分组名归组；留空 = 未分组' },
+    // attrs（含候选 options）由下方 watch(allScenes) 动态填充：
+    // 候选 = 当前应用全部场景的分组名去重，点选复用已有组（消除拼写碎组），
+    // 也允许自由输入新组名（老平台是「弹窗新建分组 + 点选分配」两步，这里合一步）。
   },
   {
     field: 'code',
@@ -511,6 +513,31 @@ const formFields = ref([
   },
   { field: 'updated_at', type: 'datetime', label: '更新时间', span: 12, displayOnly: true },
 ]);
+
+/**
+ * 分组候选随列表动态刷新：取当前应用全部场景的分组名去重（保首次出现顺序）。
+ * 用 AutoComplete 而非 Select —— 既要能点选已有组复用（消除拼写碎组），
+ * 也要能输入新组名（首次给某场景分组时下拉里还没有它）。
+ */
+watch(
+  allScenes,
+  (rows) => {
+    const field = formFields.value.find((item) => item.field === 'group');
+    if (!field) return;
+    const names = [];
+    for (const scene of rows) {
+      if (scene.group && !names.includes(scene.group)) names.push(scene.group);
+    }
+    field.attrs = {
+      placeholder: '选择已有分组或输入新分组；留空 = 未分组',
+      options: names.map((name) => ({ value: name, label: name })),
+      fieldNames: { label: 'label', value: 'value' },
+      filterOption: true,
+      backfill: true,
+    };
+  },
+  { immediate: true },
+);
 
 const gridColumns = ref([
   { field: 'id', title: 'ID', width: 70 },
