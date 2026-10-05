@@ -128,6 +128,8 @@ const HOTSPOT_ICONS = {
   'arrow-down': { label: '向下 / 下楼', src: '/panorama-icons/arrow-down.png', animated: true },
   'arrow-left': { label: '向左', src: '/panorama-icons/arrow-left.png', animated: true },
   'arrow-right': { label: '向右', src: '/panorama-icons/arrow-right.png', animated: true },
+  'arrow-up-left': { label: '左上 / 左前方', src: '/panorama-icons/arrow-up-left.png', animated: true },
+  'arrow-up-right': { label: '右上 / 右前方', src: '/panorama-icons/arrow-up-right.png', animated: true },
   plane: { label: '飞机（常用于标航拍场景）', src: '/panorama-icons/plane.png', animated: true },
 };
 
