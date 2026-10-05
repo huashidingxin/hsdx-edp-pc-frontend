@@ -15,7 +15,21 @@
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 
-import { Button, Empty, Form, Input, InputNumber, Modal, Progress, Select, Switch, Tag, message } from 'antdv-next';
+import {
+  Button,
+  Empty,
+  Form,
+  FormItem,
+  Input,
+  InputNumber,
+  Modal,
+  Progress,
+  Select,
+  Switch,
+  Tabs,
+  Tag,
+  message,
+} from 'antdv-next';
 
 import { upload } from '#/api';
 import {
@@ -62,6 +76,13 @@ const TILE_TIMEOUT = 300_000;
  */
 const settingsOpen = ref(false);
 const settingsSaving = ref(false);
+/** 漫游设置分页签：一个 Modal 塞五个区块没法看，按「体验 / 外观 / 公告 / 导览」拆开 */
+const settingsTab = ref('experience');
+/**
+ * 读取成功才允许保存：读取失败时表单里是「默认值」而不是「现有配置」，
+ * 此时保存会把配置清空（真实发生过的事故），必须拦下。
+ */
+const settingsLoaded = ref(false);
 const settingsForm = reactive({
   autorotate: true,
   autorotate_speed: null,
@@ -90,8 +111,10 @@ const TRANSITION_OPTIONS = [
 
 async function openSettings() {
   settingsOpen.value = true;
+  settingsLoaded.value = false;
   try {
     const data = await requestClient.get('/panorama-scenes/settings');
+    settingsLoaded.value = true;
     settingsForm.autorotate = data?.autorotate ?? true;
     settingsForm.autorotate_speed = data?.autorotate_speed ?? null;
     settingsForm.bg_music = data?.bg_music || '';
@@ -118,6 +141,10 @@ async function openSettings() {
 }
 
 async function saveSettings() {
+  if (!settingsLoaded.value) {
+    message.error('漫游设置尚未读取成功，已阻止保存（避免用空值覆盖现有配置），请关闭后重试');
+    return;
+  }
   settingsSaving.value = true;
   try {
     await requestClient.put('/panorama-scenes/settings', {
@@ -138,11 +165,13 @@ async function saveSettings() {
           scenesBar: settingsForm.scenesBar,
         },
       },
-      // extras 各项整体覆盖；空值传 null = 关闭该能力
+      // extras 各项整体覆盖；空值传 null = 关闭该能力；导航按钮丢弃没填完的行
       transition: settingsForm.transition,
       open_alert: settingsForm.open_alert.trim() || null,
       top_ad: settingsForm.top_ad.trim() || null,
-      nav_links: settingsForm.nav_links.length ? settingsForm.nav_links : null,
+      nav_links: settingsForm.nav_links.filter((link) => link.title.trim() && link.url.trim()).length
+        ? settingsForm.nav_links.filter((link) => link.title.trim() && link.url.trim())
+        : null,
       tour_guide: settingsForm.tour_guide.length ? settingsForm.tour_guide : null,
     });
     message.success('已保存，播放页刷新后生效');
@@ -161,17 +190,35 @@ function addNavLink() {
     message.warning('导航按钮最多 6 个');
     return;
   }
-  settingsForm.nav_links.push({ title: '', url: '' });
+  settingsForm.nav_links.push({ title: '', url: '', icon: null });
 }
 
 function removeNavLink(index) {
   settingsForm.nav_links.splice(index, 1);
 }
 
+/** 导航按钮图标上传目标行（点「上传」先把行号记下来，文件选完回填）。 */
+let navIconTargetIndex = -1;
+
+function pickNavLinkIcon(index) {
+  navIconTargetIndex = index;
+  imageInputEl.value?.click();
+  imagePickTarget = 'nav-icon';
+}
+
 /** 导览点行可用的场景下拉（场景 code 是 tour_guide 的关联键）。 */
 const sceneCodeOptions = computed(() =>
   allScenes.value.map((scene) => ({ value: scene.code, label: scene.title || scene.code })),
 );
+
+/** 场景 code → 缩略图地址（沙盘/导览列表里帮用户认场景）。 */
+const sceneThumbByCode = computed(() => {
+  const map = {};
+  for (const scene of allScenes.value) {
+    map[scene.code] = scene.thumb || scene.image || '';
+  }
+  return map;
+});
 
 function addTourPoint() {
   if (settingsForm.tour_guide.length >= 30) {
@@ -185,10 +232,18 @@ function removeTourPoint(index) {
   settingsForm.tour_guide.splice(index, 1);
 }
 
-/** 图片上传回填（骨架屏图等）：复用 panorama 上传场景。 */
+/** 上移 / 下移导览点：列表顺序就是播放页的飞行顺序。 */
+function moveTourPoint(index, delta) {
+  const target = index + delta;
+  if (target < 0 || target >= settingsForm.tour_guide.length) return;
+  const [row] = settingsForm.tour_guide.splice(index, 1);
+  settingsForm.tour_guide.splice(target, 0, row);
+}
+
+/** 图片上传回填（骨架屏图 / 沙盘底图 / 导航按钮图标）。 */
 const imageInputEl = ref(null);
 const imageUploading = ref(false);
-/** 当前上传回填的目标字段：'loading' | 'sand' */
+/** 当前上传回填的目标：'loading' | 'sand' | 'nav-icon' */
 let imagePickTarget = 'loading';
 
 function pickImage(target) {
@@ -207,6 +262,12 @@ async function onImagePicked(event) {
     if (!url) return;
     if (imagePickTarget === 'sand') {
       sandForm.image = url;
+    } else if (imagePickTarget === 'nav-icon') {
+      if (settingsForm.nav_links[navIconTargetIndex]) {
+        settingsForm.nav_links[navIconTargetIndex].icon = url;
+      }
+    } else if (imagePickTarget === 'logo') {
+      settingsForm.theme_logo = url;
     } else {
       settingsForm.theme_loading_img = url;
     }
@@ -250,16 +311,22 @@ async function onMusicPicked(event) {
  */
 const sandOpen = ref(false);
 const sandSaving = ref(false);
+/** 读取成功才允许保存（同 settingsLoaded：防止读取失败时用空表单覆盖配置）。 */
+const sandLoaded = ref(false);
 const sandForm = reactive({ open: true, image: '', points: [] });
 /** 点击底图记下的待落点坐标（百分比），选好场景后确认成行。 */
 const sandPending = ref(null);
+/** 当前查看的标点（清单悬停时底图上的圆点同步高亮）。 */
+const sandSelectedCode = ref(null);
 
 function openSand() {
   sandOpen.value = true;
   sandPending.value = null;
+  sandLoaded.value = false;
   requestClient
     .get('/panorama-scenes/settings')
     .then((data) => {
+      sandLoaded.value = true;
       sandForm.open = data?.sand_table?.open ?? true;
       sandForm.image = data?.sand_table?.image || '';
       sandForm.points = Object.entries(data?.sand_table?.points ?? {}).map(([code, point]) => ({
@@ -274,6 +341,10 @@ function openSand() {
 }
 
 async function saveSand() {
+  if (!sandLoaded.value) {
+    message.error('沙盘配置尚未读取成功，已阻止保存（避免用空值覆盖现有配置），请关闭后重试');
+    return;
+  }
   if (sandForm.image && sandForm.points.length === 0) {
     message.warning('已设置底图但还没有标点；清空底图或添加标点后再保存');
     return;
@@ -1047,191 +1118,309 @@ watch(
       title="漫游设置"
       :width="560"
       :confirm-loading="settingsSaving"
+      :ok-button-props="{ disabled: !settingsLoaded }"
       ok-text="保存"
       cancel-text="取消"
       @ok="saveSettings"
     >
-      <Form layout="vertical" class="mt-2">
-        <p class="mb-2 text-xs text-gray-400">播放能力</p>
-        <div class="grid grid-cols-2 gap-x-4">
-          <Form.Item label="自动旋转">
-            <Switch v-model:checked="settingsForm.autorotate" />
-          </Form.Item>
-          <Form.Item label="自动旋转速度（度/秒，留空用默认 3）">
-            <InputNumber
-              v-model:value="settingsForm.autorotate_speed"
-              class="w-full"
-              :min="0.1"
-              :max="30"
-              :step="0.5"
-              placeholder="3"
-            />
-          </Form.Item>
-          <Form.Item label="小行星开场（进入时俯瞰展开动画）">
-            <Switch v-model:checked="settingsForm.littleplanet" />
-          </Form.Item>
-          <Form.Item label="足迹（场景条标记已访问场景）">
-            <Switch v-model:checked="settingsForm.footmark" />
-          </Form.Item>
-          <Form.Item label="陀螺仪（移动端，需 HTTPS）">
-            <Switch v-model:checked="settingsForm.gyro" />
-          </Form.Item>
-          <Form.Item label="背景音乐地址（留空关闭）">
-            <div class="flex gap-2">
-              <Input v-model:value="settingsForm.bg_music" placeholder="https://… 或点「上传」" />
-              <Button :loading="musicUploading" @click="pickMusic">上传</Button>
-              <input
-                ref="musicInput"
-                type="file"
-                accept="audio/*"
-                class="hidden"
-                @change="onMusicPicked"
-              >
+      <Tabs v-model:activeKey="settingsTab" size="small" class="mt-1">
+        <!-- ===== 页签 1：播放体验 ===== -->
+        <Tabs.TabPane key="experience" tab="播放体验">
+          <p class="mb-3 text-xs text-gray-400">
+            控制观众进入播放页后的自动行为，全部即时生效，不用改场景数据。
+          </p>
+          <Form layout="vertical">
+            <div class="grid grid-cols-2 gap-x-4">
+              <FormItem label="自动旋转" extra="无人操作时镜头缓慢自转，拖动即停">
+                <Switch v-model:checked="settingsForm.autorotate" />
+              </FormItem>
+              <FormItem label="自动旋转速度（度/秒）" extra="不填用默认 3，一圈约 2 分钟">
+                <InputNumber
+                  v-model:value="settingsForm.autorotate_speed"
+                  class="w-full"
+                  :min="0.1"
+                  :max="30"
+                  :step="0.5"
+                  placeholder="3"
+                />
+              </FormItem>
+              <FormItem label="小行星开场" extra="进入时从高空俯瞰展开成全景（约 2 秒）">
+                <Switch v-model:checked="settingsForm.littleplanet" />
+              </FormItem>
+              <FormItem label="足迹" extra="看过的场景在底部场景条上描一圈主题色">
+                <Switch v-model:checked="settingsForm.footmark" />
+              </FormItem>
+              <FormItem label="陀螺仪（手机）" extra="手机转动时镜头跟着转，需 HTTPS 环境">
+                <Switch v-model:checked="settingsForm.gyro" />
+              </FormItem>
+              <FormItem label="背景音乐" extra="填地址或点上传；留空关闭">
+                <div class="flex gap-2">
+                  <Input v-model:value="settingsForm.bg_music" placeholder="https://… 或点「上传」" />
+                  <Button :loading="musicUploading" @click="pickMusic">上传</Button>
+                  <input
+                    ref="musicInput"
+                    type="file"
+                    accept="audio/*"
+                    class="hidden"
+                    @change="onMusicPicked"
+                  >
+                </div>
+              </FormItem>
             </div>
-          </Form.Item>
-        </div>
+          </Form>
+        </Tabs.TabPane>
 
-        <p class="mb-2 mt-3 text-xs text-gray-400">外观（多租户差异化，播放页按此渲染）</p>
-        <div class="grid grid-cols-2 gap-x-4">
-          <Form.Item label="主题色">
-            <Input v-model:value="settingsForm.theme_primary" placeholder="#185fa5" />
-          </Form.Item>
-          <Form.Item label="品牌 logo 地址（替代顶部文字）">
-            <Input v-model:value="settingsForm.theme_logo" placeholder="https://…" />
-          </Form.Item>
-          <Form.Item label="罗盘">
-            <Switch v-model:checked="settingsForm.compass" />
-          </Form.Item>
-          <Form.Item label="场景条">
-            <Switch v-model:checked="settingsForm.scenesBar" />
-          </Form.Item>
-          <Form.Item label="骨架屏图（进入播放页前的启动画面）">
-            <div class="flex gap-2">
-              <Input v-model:value="settingsForm.theme_loading_img" placeholder="https://… 或点「上传」" />
-              <Button :loading="imageUploading" @click="pickImage('loading')">上传</Button>
+        <!-- ===== 页签 2：界面外观 ===== -->
+        <Tabs.TabPane key="appearance" tab="界面外观">
+          <p class="mb-3 text-xs text-gray-400">
+            播放页顶栏与控件的样子。主题色、logo、启动图支持每个应用单独设置。
+          </p>
+          <Form layout="vertical">
+            <div class="grid grid-cols-2 gap-x-4">
+              <FormItem label="主题色" extra="按钮、足迹圈、罗盘等控件的颜色，如 #185fa5">
+                <Input v-model:value="settingsForm.theme_primary" placeholder="#185fa5" />
+              </FormItem>
+              <FormItem label="品牌 logo" extra="显示在左上角替代应用名文字">
+                <div class="flex gap-2">
+                  <Input v-model:value="settingsForm.theme_logo" placeholder="https://… 或点「上传」" />
+                  <Button :loading="imageUploading" @click="pickImage('logo')">上传</Button>
+                </div>
+              </FormItem>
+              <FormItem label="启动图" extra="播放页打开前显示的整屏图片（即加载画面）">
+                <div class="flex gap-2">
+                  <Input v-model:value="settingsForm.theme_loading_img" placeholder="https://… 或点「上传」" />
+                  <Button :loading="imageUploading" @click="pickImage('loading')">上传</Button>
+                </div>
+              </FormItem>
+              <div class="grid grid-cols-2 gap-x-4">
+                <FormItem label="指北针" extra="右上角的小罗盘">
+                  <Switch v-model:checked="settingsForm.compass" />
+                </FormItem>
+                <FormItem label="场景条" extra="底部的场景缩略图列表">
+                  <Switch v-model:checked="settingsForm.scenesBar" />
+                </FormItem>
+              </div>
             </div>
-          </Form.Item>
-        </div>
+          </Form>
+        </Tabs.TabPane>
 
-        <p class="mb-2 mt-3 text-xs text-gray-400">提示与公告</p>
-        <div class="grid grid-cols-2 gap-x-4">
-          <Form.Item label="场景过渡动画">
-            <Select v-model:value="settingsForm.transition" :options="TRANSITION_OPTIONS" />
-          </Form.Item>
-          <Form.Item label="顶部滚动字幕（留空关闭）">
-            <Input v-model:value="settingsForm.top_ad" :maxlength="500" placeholder="欢迎光临××园区" />
-          </Form.Item>
-          <Form.Item label="开场提示（进入播放页弹窗，留空关闭）" class="col-span-2">
-            <Input.TextArea
-              v-model:value="settingsForm.open_alert"
-              :rows="3"
-              :maxlength="2000"
-              placeholder="支持换行；观众点「我知道了」后本次不再出现"
+        <!-- ===== 页签 3：公告与导航按钮 ===== -->
+        <Tabs.TabPane key="notice" tab="公告与导航">
+          <p class="mb-3 text-xs text-gray-400">
+            想告诉观众的话、以及固定入口按钮。不填的内容播放页里就不出现。
+          </p>
+          <Form layout="vertical">
+            <FormItem label="开场提示（弹窗公告）" extra="观众进入播放页时弹出的文字说明，点「我知道了」关闭；留空不弹">
+              <Input.TextArea
+                v-model:value="settingsForm.open_alert"
+                :rows="3"
+                :maxlength="2000"
+                placeholder="例如：欢迎参观线上展馆，建议使用电脑端获得最佳体验。"
+              />
+            </FormItem>
+            <FormItem label="顶部滚动字幕" extra="屏幕顶部横向滚动的文字；留空关闭">
+              <Input v-model:value="settingsForm.top_ad" :maxlength="500" placeholder="例如：欢迎光临××园区" />
+            </FormItem>
+            <FormItem label="场景切换动画" extra="场景之间怎么过渡">
+              <Select v-model:value="settingsForm.transition" :options="TRANSITION_OPTIONS" class="w-48" />
+            </FormItem>
+          </Form>
+
+          <div class="mb-2 mt-2 flex items-center justify-between">
+            <span class="text-sm">导航按钮</span>
+            <span class="text-xs text-gray-400">显示在播放页左下角，最多 6 个</span>
+          </div>
+          <div v-for="(link, index) in settingsForm.nav_links" :key="index" class="mb-2 flex items-center gap-2">
+            <span class="w-12 text-xs text-gray-400">图标</span>
+            <img
+              v-if="link.icon"
+              :src="link.icon"
+              alt=""
+              class="h-6 w-6 rounded object-contain"
             />
-          </Form.Item>
-        </div>
+            <Button v-else size="small" @click="pickNavLinkIcon(index)">上传</Button>
+            <Input v-model:value="link.title" :maxlength="32" class="w-36" placeholder="按钮文字，如 咨询热线" />
+            <Input v-model:value="link.url" placeholder="网址 https://… 或电话 tel:…" />
+            <Button danger type="text" @click="removeNavLink(index)">删除</Button>
+          </div>
+          <Button size="small" @click="addNavLink">+ 添加按钮</Button>
+        </Tabs.TabPane>
 
-        <p class="mb-2 mt-3 text-xs text-gray-400">导航按钮（播放页左下角，最多 6 个；留空行会被忽略）</p>
-        <div v-for="(link, index) in settingsForm.nav_links" :key="index" class="mb-2 flex gap-2">
-          <Input v-model:value="link.title" :maxlength="32" class="w-40" placeholder="名称" />
-          <Input v-model:value="link.url" placeholder="https://… 或 tel:…" />
-          <Button danger type="text" @click="removeNavLink(index)">删除</Button>
-        </div>
-        <Button size="small" @click="addNavLink">+ 添加导航按钮</Button>
+        <!-- ===== 页签 4：一键导览 ===== -->
+        <Tabs.TabPane key="tour" tab="一键导览">
+          <p class="mb-3 text-xs text-gray-400">
+            观众点播放页的 ▶ 按钮后，镜头按下面的顺序自动逐个场景游览。
+            不添加导览点则不显示该按钮。
+          </p>
 
-        <p class="mb-2 mt-3 text-xs text-gray-400">
-          一键导览（按顺序逐点飞行，每个点 = 场景 + 视角 + 停留秒数；留空的行会被忽略）
-        </p>
-        <div v-for="(point, index) in settingsForm.tour_guide" :key="index" class="mb-2 flex items-center gap-2">
-          <span class="w-5 text-xs text-gray-400">{{ index + 1 }}.</span>
-          <Select
-            v-model:value="point.scene_code"
-            class="w-44"
-            :options="sceneCodeOptions"
-            placeholder="场景"
-            show-search
-            option-filter-prop="label"
-          />
-          <InputNumber v-model:value="point.yaw" class="w-24" :min="-360" :max="360" placeholder="经度°" />
-          <InputNumber v-model:value="point.pitch" class="w-24" :min="-90" :max="90" placeholder="纬度°" />
-          <InputNumber v-model:value="point.stay" class="w-24" :min="1" :max="30" placeholder="停留s" />
-          <Button danger type="text" @click="removeTourPoint(index)">删除</Button>
-        </div>
-        <Button size="small" @click="addTourPoint">+ 添加导览点</Button>
-      </Form>
+          <div v-if="settingsForm.tour_guide.length" class="tour-table tour-6">
+            <div class="tour-row tour-head">
+              <span>顺序</span>
+              <span>场景</span>
+              <span>看的方向（水平°）</span>
+              <span>看的方向（垂直°）</span>
+              <span>停留（秒）</span>
+              <span></span>
+            </div>
+            <div v-for="(point, index) in settingsForm.tour_guide" :key="index" class="tour-row">
+              <span class="text-xs text-gray-400">{{ index + 1 }}</span>
+              <Select
+                v-model:value="point.scene_code"
+                :options="sceneCodeOptions"
+                placeholder="选择场景"
+                show-search
+                option-filter-prop="label"
+              />
+              <InputNumber v-model:value="point.yaw" :min="-360" :max="360" title="0=初始朝向，正值向右转" />
+              <InputNumber v-model:value="point.pitch" :min="-90" :max="90" title="正值抬头看，负值低头看" />
+              <InputNumber v-model:value="point.stay" :min="1" :max="30" />
+              <span class="flex gap-1">
+                <Button size="small" type="text" :disabled="index === 0" @click="moveTourPoint(index, -1)">↑</Button>
+                <Button
+                  size="small"
+                  type="text"
+                  :disabled="index === settingsForm.tour_guide.length - 1"
+                  @click="moveTourPoint(index, 1)"
+                >
+                  ↓
+                </Button>
+                <Button danger size="small" type="text" @click="removeTourPoint(index)">删除</Button>
+              </span>
+            </div>
+          </div>
+          <p v-else class="mb-2 text-xs text-gray-400">还没有导览点。</p>
+          <Button size="small" @click="addTourPoint">+ 添加导览点</Button>
+          <p class="mt-2 text-xs text-gray-400">
+            「看的方向」不知道填什么可以先保持 0 —— 镜头会停在场景的默认视角。
+          </p>
+        </Tabs.TabPane>
+      </Tabs>
     </Modal>
 
     <!-- 电子沙盘：底图 + 场景标点（点击底图取坐标），存 application_settings.sand_table -->
     <Modal
       v-model:open="sandOpen"
       title="电子沙盘"
-      :width="680"
+      :width="720"
       :confirm-loading="sandSaving"
+      :ok-button-props="{ disabled: !sandLoaded }"
       ok-text="保存"
       cancel-text="取消"
       @ok="saveSand"
     >
-      <Form layout="vertical" class="mt-2">
-        <div class="flex items-end gap-4">
-          <Form.Item label="启用沙盘（播放页导航栏出现沙盘按钮）">
-            <Switch v-model:checked="sandForm.open" />
-          </Form.Item>
-          <Form.Item label="沙盘底图" class="flex-1">
-            <div class="flex gap-2">
-              <Input v-model:value="sandForm.image" placeholder="https://… 或点「上传」" />
-              <Button :loading="imageUploading" @click="pickImage('sand')">上传</Button>
-            </div>
-          </Form.Item>
+      <p class="mb-3 text-xs text-gray-400">
+        电子沙盘 = 一张园区 / 楼宇平面图，上面标出每个场景的位置；观众点沙盘上的圆点就能跳到对应场景，
+        并用扇形显示当前视线方向。
+      </p>
+
+      <!-- 第 1 步：底图 -->
+      <div class="mb-4">
+        <div class="mb-1 flex items-center gap-2">
+          <span class="step-no">1</span>
+          <span class="text-sm font-medium">上传平面底图</span>
         </div>
-      </Form>
+        <div class="ml-6 flex gap-2">
+          <Input v-model:value="sandForm.image" class="flex-1" placeholder="https://… 或点「上传」" />
+          <Button :loading="imageUploading" @click="pickImage('sand')">上传</Button>
+        </div>
+      </div>
 
       <template v-if="sandForm.image">
-        <p class="mb-1 text-xs text-gray-400">点击底图取坐标，选好场景后确认；标点即播放页里的场景定位点</p>
-        <div class="sand-map-wrap">
-          <img :src="sandForm.image" alt="沙盘底图" class="sand-map" @click="onSandMapClick" />
-          <span
-            v-for="point in sandForm.points"
-            :key="point.scene_code"
-            class="sand-marker"
-            :style="{ left: `${point.x}%`, top: `${point.y}%` }"
-          ></span>
-          <span
-            v-if="sandPending"
-            class="sand-marker sand-marker--pending"
-            :style="{ left: `${sandPending.x}%`, top: `${sandPending.y}%` }"
-          ></span>
-        </div>
+        <!-- 第 2 步：点图落点 -->
+        <div class="mb-4">
+          <div class="mb-1 flex items-center gap-2">
+            <span class="step-no">2</span>
+            <span class="text-sm font-medium">点击底图，标出各场景的位置</span>
+          </div>
+          <div class="ml-6">
+            <div class="sand-map-wrap">
+              <img :src="sandForm.image" alt="沙盘底图" class="sand-map" @click="onSandMapClick" />
+              <span
+                v-for="point in sandForm.points"
+                :key="point.scene_code"
+                class="sand-marker"
+                :class="{ 'is-active': point.scene_code === sandSelectedCode }"
+                :style="{ left: `${point.x}%`, top: `${point.y}%` }"
+                :title="point.scene_code"
+                @click="sandSelectedCode = point.scene_code"
+              ></span>
+              <span
+                v-if="sandPending"
+                class="sand-marker sand-marker--pending"
+                :style="{ left: `${sandPending.x}%`, top: `${sandPending.y}%` }"
+              ></span>
+            </div>
 
-        <div v-if="sandPending" class="mt-2 flex items-center gap-2 rounded border border-blue-200 bg-blue-50 p-2">
-          <span class="text-xs">新标点 {{ sandPending.x }}%, {{ sandPending.y }}%</span>
-          <Select
-            v-model:value="sandPending.scene_code"
-            class="w-48"
-            :options="sandSceneOptions"
-            placeholder="选择场景"
-            show-search
-            option-filter-prop="label"
-          />
-          <Button type="primary" size="small" @click="confirmSandPoint">确认标点</Button>
-          <Button size="small" @click="sandPending = null">取消</Button>
-        </div>
-
-        <div v-if="sandForm.points.length" class="mt-3">
-          <p class="mb-1 text-xs text-gray-400">已标 {{ sandForm.points.length }} 个点</p>
-          <div v-for="(point, index) in sandForm.points" :key="point.scene_code" class="mb-2 flex items-center gap-2">
-            <span class="w-36 truncate text-xs" :title="point.scene_code">
-              {{ sceneCodeOptions.find((option) => option.value === point.scene_code)?.label || point.scene_code }}
-            </span>
-            <InputNumber v-model:value="point.x" class="w-24" :min="0" :max="100" placeholder="x%" />
-            <InputNumber v-model:value="point.y" class="w-24" :min="0" :max="100" placeholder="y%" />
-            <InputNumber v-model:value="point.rotate" class="w-24" :min="-360" :max="360" placeholder="旋转°" />
-            <InputNumber v-model:value="point.hlookat" class="w-28" :min="-360" :max="360" placeholder="到达视角°" />
-            <Button danger type="text" @click="removeSandPoint(index)">删除</Button>
+            <div v-if="sandPending" class="mt-2 flex items-center gap-2 rounded border border-blue-200 bg-blue-50 p-2">
+              <span class="text-xs">新标点位置 {{ sandPending.x }}%, {{ sandPending.y }}%，属于哪个场景？</span>
+              <Select
+                v-model:value="sandPending.scene_code"
+                class="w-48"
+                :options="sandSceneOptions"
+                placeholder="选择场景"
+                show-search
+                option-filter-prop="label"
+              />
+              <Button type="primary" size="small" @click="confirmSandPoint">确认</Button>
+              <Button size="small" @click="sandPending = null">取消</Button>
+            </div>
+            <p v-else class="mt-1 text-xs text-gray-400">点击底图任意位置开始放置圆点</p>
           </div>
         </div>
-        <p v-else class="mt-2 text-xs text-gray-400">还没有标点，点击底图开始</p>
+
+        <!-- 第 3 步：标点清单 -->
+        <div>
+          <div class="mb-1 flex items-center gap-2">
+            <span class="step-no">3</span>
+            <span class="text-sm font-medium">标点清单（{{ sandForm.points.length }}）</span>
+          </div>
+          <div v-if="sandForm.points.length" class="ml-6">
+            <div class="tour-table">
+              <div class="tour-row tour-head">
+                <span>场景</span>
+                <span>位置（横向% / 纵向%）</span>
+                <span>点进去后看的方向（°）</span>
+                <span></span>
+              </div>
+              <div
+                v-for="(point, index) in sandForm.points"
+                :key="point.scene_code"
+                class="tour-row"
+                :class="{ 'is-active': point.scene_code === sandSelectedCode }"
+                @mouseenter="sandSelectedCode = point.scene_code"
+              >
+                <span class="flex items-center gap-2">
+                  <img
+                    v-if="sceneThumbByCode[point.scene_code]"
+                    :src="sceneThumbByCode[point.scene_code]"
+                    alt=""
+                    class="h-7 w-12 rounded object-cover"
+                  />
+                  <span class="truncate text-xs" :title="point.scene_code">
+                    {{ sceneCodeOptions.find((option) => option.value === point.scene_code)?.label || point.scene_code }}
+                  </span>
+                </span>
+                <span class="flex items-center gap-1">
+                  <InputNumber v-model:value="point.x" :min="0" :max="100" />
+                  <span class="text-xs text-gray-400">/</span>
+                  <InputNumber v-model:value="point.y" :min="0" :max="100" />
+                </span>
+                <InputNumber v-model:value="point.hlookat" :min="-360" :max="360" :placeholder="'不填用默认视角'" />
+                <Button danger size="small" type="text" @click="removeSandPoint(index)">删除</Button>
+              </div>
+            </div>
+          </div>
+          <p v-else class="ml-6 text-xs text-gray-400">还没有标点 —— 回到第 2 步点击底图放置第一个圆点</p>
+        </div>
       </template>
-      <p v-else class="text-xs text-gray-400">请先上传沙盘底图（园区/建筑平面图），再点击底图为各场景标点</p>
+
+      <Form layout="vertical" class="mt-4">
+        <FormItem class="mb-0">
+          <Switch v-model:checked="sandForm.open" class="mr-2" />
+          <span class="text-sm">启用沙盘</span>
+          <span class="ml-2 text-xs text-gray-400">关闭后播放页导航栏不显示沙盘按钮（已标的点会保留）</span>
+        </FormItem>
+      </Form>
     </Modal>
   </div>
 </template>
@@ -1360,5 +1549,63 @@ watch(
 
 .sand-marker--pending {
   background: #faad14;
+}
+
+/* 沙盘圆点：清单悬停行时高亮对应圆点 */
+.sand-marker.is-active {
+  background: #faad14;
+  box-shadow:
+    0 0 0 3px rgb(250 173 20 / 40%),
+    0 0 4px rgb(0 0 0 / 40%);
+}
+
+/* 引导步骤序号圆片 */
+.step-no {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  color: #fff;
+  font-size: 12px;
+  background: #1677ff;
+  border-radius: 50%;
+}
+
+/* 行编辑表格（导览点 / 沙盘标点共用）：表头行 + 数据行 */
+.tour-table {
+  overflow: hidden;
+  border: 1px solid #f0f0f0;
+  border-radius: 6px;
+}
+
+/* 默认 4 列（沙盘标点）：场景 / 位置 / 朝向 / 操作 */
+.tour-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.4fr) minmax(150px, 1fr) minmax(130px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 10px;
+}
+
+/* 6 列版（导览点）：顺序 / 场景 / 水平 / 垂直 / 停留 / 操作 */
+.tour-6 .tour-row {
+  grid-template-columns: 44px minmax(150px, 1.4fr) minmax(120px, 1fr) minmax(120px, 1fr) minmax(90px, 0.7fr) auto;
+}
+
+.tour-row.tour-head {
+  font-size: 12px;
+  color: rgb(0 0 0 / 45%);
+  background: #fafafa;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.tour-row:not(.tour-head):not(:last-child) {
+  border-bottom: 1px solid #f5f5f5;
+}
+
+.tour-row.is-active {
+  background: #fffbe6;
 }
 </style>
