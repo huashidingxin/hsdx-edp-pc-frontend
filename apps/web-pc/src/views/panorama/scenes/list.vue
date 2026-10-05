@@ -17,6 +17,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue';
 
 import {
   Button,
+  ColorPicker,
   Empty,
   Form,
   FormItem,
@@ -188,6 +189,11 @@ async function saveSettings() {
 }
 
 /* ---- 导航按钮 / 导览点 行编辑 ---- */
+
+/** ColorPicker 写回主题色：value-format=hex 给字符串，清空时给 null —— 统一成字符串存表单。 */
+function onThemePrimaryChange(value) {
+  settingsForm.theme_primary = typeof value === 'string' ? value : '';
+}
 
 function addNavLink() {
   if (settingsForm.nav_links.length >= 6) {
@@ -1139,25 +1145,16 @@ watch(
           <Form layout="vertical">
             <div class="grid grid-cols-2 gap-x-4">
               <FormItem label="主题色" extra="按钮、足迹圈、罗盘等控件的颜色，如 #185fa5">
-                <Input v-model:value="settingsForm.theme_primary" placeholder="#185fa5" />
-              </FormItem>
-              <FormItem label="品牌 logo" extra="显示在左上角替代应用名文字">
-                <AppUpload
-                  ref="logoUploadRef"
-                  v-model:value="settingsForm.theme_logo"
-                  file-type="image"
-                  scene="panorama"
-                  item-width="80px"
-                />
-              </FormItem>
-              <FormItem label="启动图" extra="播放页打开前显示的整屏图片（即加载画面）">
-                <AppUpload
-                  ref="loadingImgUploadRef"
-                  v-model:value="settingsForm.theme_loading_img"
-                  file-type="image"
-                  scene="panorama"
-                  item-width="80px"
-                />
+                <div class="flex items-center gap-2">
+                  <ColorPicker
+                    :value="settingsForm.theme_primary || undefined"
+                    value-format="hex"
+                    show-text
+                    allow-clear
+                    @update:value="onThemePrimaryChange"
+                  />
+                  <Input v-model:value="settingsForm.theme_primary" class="flex-1" placeholder="#185fa5" />
+                </div>
               </FormItem>
               <div class="grid grid-cols-2 gap-x-4">
                 <FormItem label="指北针" extra="右上角的小罗盘">
@@ -1167,6 +1164,24 @@ watch(
                   <Switch v-model:checked="settingsForm.scenesBar" />
                 </FormItem>
               </div>
+              <FormItem label="品牌 logo" extra="显示在左上角替代应用名文字" class="col-span-2">
+                <AppUpload
+                  ref="logoUploadRef"
+                  v-model:value="settingsForm.theme_logo"
+                  file-type="image"
+                  scene="panorama"
+                  item-width="80px"
+                />
+              </FormItem>
+              <FormItem label="启动图" extra="播放页打开前显示的整屏图片（即加载画面）" class="col-span-2">
+                <AppUpload
+                  ref="loadingImgUploadRef"
+                  v-model:value="settingsForm.theme_loading_img"
+                  file-type="image"
+                  scene="panorama"
+                  item-width="80px"
+                />
+              </FormItem>
             </div>
           </Form>
         </Tabs.TabPane>
