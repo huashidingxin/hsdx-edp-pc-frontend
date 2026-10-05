@@ -63,7 +63,7 @@ const filterFields = ref([
     attrs: {
       allowClear: true,
       placeholder: '全部应用',
-      items: appOptions,
+      options: appOptions,
       fieldNames: { label: 'name', value: 'id' },
       showSearch: true,
     },
@@ -74,7 +74,7 @@ const filterFields = ref([
     type: 'select',
     span: 8,
     attrs: { fieldNames: { label: 'name', value: 'id' },
-      items: typeOptions },
+      options: typeOptions },
   },
   {
     field: 'publish_state',
@@ -85,7 +85,7 @@ const filterFields = ref([
       allowClear: true,
       placeholder: '全部',
       fieldNames: { label: 'name', value: 'id' },
-      items: [
+      options: [
         { id: 'published', name: '已发布' },
         { id: 'unpublished', name: '未发布' },
       ],
@@ -100,7 +100,7 @@ const formFields = ref([
     type: 'select',
     label: '类型',
     span: 12,
-    attrs: { items: typeOptions },
+    attrs: { options: typeOptions },
   },
   {
     field: 'parent_id',
@@ -108,7 +108,7 @@ const formFields = ref([
     label: '父级',
     span: 12,
     attrs: {
-      items: parentOptions,
+      options: parentOptions,
       fieldNames: { label: 'name', value: 'id' },
       allowClear: true,
       showSearch: true,
@@ -122,7 +122,7 @@ const formFields = ref([
     label: '图片内容类型（仅「图库」分类需要）',
     span: 12,
     attrs: {
-      items: contentTypeOptions,
+      options: contentTypeOptions,
       fieldNames: { label: 'name', value: 'id' },
       placeholder: '不选 = 不声明',
     },
@@ -132,7 +132,7 @@ const formFields = ref([
     type: 'select',
     label: '状态',
     span: 12,
-    attrs: { items: [{ id: 1, name: '启用' }, { id: 0, name: '停用' }] },
+    attrs: { options: [{ id: 1, name: '启用' }, { id: 0, name: '停用' }] },
   },
   {
     field: 'locale_manager',

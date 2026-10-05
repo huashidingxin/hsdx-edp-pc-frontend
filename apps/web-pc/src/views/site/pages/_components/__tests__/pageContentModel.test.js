@@ -223,34 +223,44 @@ describe('validateBlock', () => {
     );
   });
 
-  it('editor 仅允许 static_content，且 card/cards 必须给 fields', () => {
+  it('editor 仅允许 static_content；类型只剩 object/array；fields 可选', () => {
     expect(
       validateBlock('x', {
         provider: 'model',
         config: { type: 'product', mode: 'list' },
-        editor: { type: 'json', label: 'x' },
+        editor: { type: 'array', label: 'x' },
       }),
     ).toContain('editor 只能配置在 static_content 块上');
 
+    // 自由 JSON 编辑类型已从协议移除（§1.2A）。
     expect(
       validateBlock('x', {
         provider: 'static_content',
         config: { content_key: 'home' },
-        editor: { type: 'cards', label: '卡片组' },
+        editor: { type: 'json', label: 'x' },
       }),
-    ).toContain('card/cards 必须配置 fields 及字段 label');
+    ).toContain('editor.type 必须是 object / array');
+
+    // card/cards 不声明 fields 也合法：内容编辑页按数据形状自动生成表单。
+    expect(
+      validateBlock('x', {
+        provider: 'static_content',
+        config: { content_key: 'home' },
+        editor: { type: 'array', label: '卡片组' },
+      }),
+    ).toEqual([]);
 
     expect(
       validateBlock('x', {
         provider: 'static_content',
         config: { content_key: 'home' },
         editor: {
-          type: 'cards',
+          type: 'array',
           label: '卡片组',
           fields: { title: { label: '标题' }, nope: { label: '不支持' } },
         },
       }),
-    ).toContain('editor.type=cards 不支持字段 nope');
+    ).toContain('editor.type=array 不支持字段 nope');
   });
 
   it('editor 的 label 必填且不超过 160 字', () => {
@@ -258,14 +268,14 @@ describe('validateBlock', () => {
       validateBlock('x', {
         provider: 'static_content',
         config: { content_key: 'home' },
-        editor: { type: 'json', label: '   ' },
+        editor: { type: 'object', label: '   ' },
       }),
     ).toContain('editor.label 必填且不超过 160 字');
     expect(
       validateBlock('x', {
         provider: 'static_content',
         config: { content_key: 'home' },
-        editor: { type: 'json', label: 'x'.repeat(161) },
+        editor: { type: 'object', label: 'x'.repeat(161) },
       }),
     ).toContain('editor.label 必填且不超过 160 字');
   });
@@ -479,22 +489,22 @@ describe('isDraftDirty', () => {
     expect(isDraftDirty('auto', original, original)).toBe(false);
   });
 
-  it('json 块：草稿是等价的 JSON 文本 → 不脏（缩进/空白差异不算改）', () => {
+  it('object 块（高级模式）：草稿是等价的 JSON 文本 → 不脏（缩进/空白差异不算改）', () => {
     const original = { b: 2, a: 1 };
     // 基线是对象、草稿是文本 —— 保存后正是这个状态
-    expect(isDraftDirty('json', original, formatJson(original))).toBe(false);
+    expect(isDraftDirty('object', original, formatJson(original))).toBe(false);
     // 紧凑写法（无缩进）也应视为等价
-    expect(isDraftDirty('json', original, JSON.stringify(original))).toBe(false);
+    expect(isDraftDirty('object', original, JSON.stringify(original))).toBe(false);
   });
 
-  it('json 块：文本内容真的变了 → 脏', () => {
-    expect(isDraftDirty('json', { a: 1 }, '{"a":2}')).toBe(true);
+  it('object 块（高级模式）：文本内容真的变了 → 脏', () => {
+    expect(isDraftDirty('object', { a: 1 }, '{"a":2}')).toBe(true);
   });
 
-  it('json 块：仅调换键序 → 视为已改（比较的是文本，键序属于文本的一部分）', () => {
+  it('object 块（高级模式）：仅调换键序 → 视为已改（比较的是文本，键序属于文本的一部分）', () => {
     // 记录既有语义，避免以后误以为是 bug。真实流程不会触发：
     // 高级模式的文本由 formatJson(基线) 生成，键序与基线一致。
-    expect(isDraftDirty('json', { b: 2, a: 1 }, '{"a":1,"b":2}')).toBe(true);
+    expect(isDraftDirty('object', { b: 2, a: 1 }, '{"a":1,"b":2}')).toBe(true);
   });
 
   it('auto 块：草稿是等价的 JSON 文本 → 不脏（高级模式切回来不该误报）', () => {
@@ -502,15 +512,15 @@ describe('isDraftDirty', () => {
     expect(isDraftDirty('auto', original, formatJson(original))).toBe(false);
   });
 
-  it('richtext：HTML 正文改一个字 → 脏；未改 → 不脏', () => {
+  it('object 块 content 字段：正文改一个字 → 脏；未改 → 不脏', () => {
     const original = { content: '<p>正文</p>' };
-    expect(isDraftDirty('richtext', original, '<p>正文</p>')).toBe(false);
-    expect(isDraftDirty('richtext', original, '<p>正文！</p>')).toBe(true);
+    expect(isDraftDirty('object', original, deepClone(original))).toBe(false);
+    expect(isDraftDirty('object', original, { content: '<p>正文！</p>' })).toBe(true);
   });
 
-  it('image：换图 → 脏', () => {
-    expect(isDraftDirty('image', { image: 'a.png' }, 'a.png')).toBe(false);
-    expect(isDraftDirty('image', { image: 'a.png' }, 'b.png')).toBe(true);
+  it('object 块 image 字段：换图 → 脏', () => {
+    expect(isDraftDirty('object', { image: 'a.png' }, { image: 'a.png' })).toBe(false);
+    expect(isDraftDirty('object', { image: 'a.png' }, { image: 'b.png' })).toBe(true);
   });
 
   it('标量块：字符串内容 → 脏判断正常', () => {

@@ -13,7 +13,7 @@ const statusItems = [
 const filterFields = ref([
   { field: 'capability_code', label: '能力', type: 'text', span: 8 },
   { field: 'enabled', label: '状态', type: 'select', span: 8, attrs: { fieldNames: { label: 'name', value: 'id' },
-      items: statusItems } },
+      options: statusItems } },
 ]);
 
 const formFields = ref([

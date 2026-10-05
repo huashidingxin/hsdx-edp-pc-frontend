@@ -37,7 +37,9 @@ export function useAppQueryFilter(crudRef, getExplicitAppId) {
   });
 
   function onFiltersUpdate(next) {
-    activeFilters.value = { ...(next || {}) };
+    // next 为 null / undefined 时对象展开结果就是 {}（对 nullish 展开是合法且无副作用的），
+    // 再写 `|| {}` 属冗余，unicorn/no-useless-fallback-in-spread 会报错。
+    activeFilters.value = { ...next };
   }
 
   function syncFromQuery() {

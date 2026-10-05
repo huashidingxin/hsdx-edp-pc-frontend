@@ -522,7 +522,8 @@ function buildPayload() {
     link_type: Number(form.link_type) || 1,
     link_value: form.link_value || null,
     sort: Number(form.sort) || 0,
-    status: Number(form.status) ?? 1,
+    // 0（停用）是合法值，不能写 `|| 1`；只在拿不到数字时才兜「启用」。
+    status: Number.isFinite(Number(form.status)) ? Number(form.status) : 1,
     meta,
   };
 }

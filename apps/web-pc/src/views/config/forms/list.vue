@@ -25,7 +25,7 @@ const filterFields = ref([
   { field: 'title', label: '标题', type: 'text', span: 8 },
   { field: 'code', label: '编码', type: 'text', span: 8 },
   { field: 'status', label: '状态', type: 'select', span: 8, attrs: { fieldNames: { label: 'name', value: 'id' },
-      items: statusItems } },
+      options: statusItems } },
 ]);
 
 const formFields = ref([
@@ -39,7 +39,7 @@ const formFields = ref([
     span: 24,
     renderKey: 'fields_schema',
   },
-  { field: 'status', type: 'select', label: '状态', span: 12, attrs: { items: statusItems } },
+  { field: 'status', type: 'select', label: '状态', span: 12, attrs: { options: statusItems } },
   { field: 'created_at', type: 'datetime', label: '创建时间', span: 12, displayOnly: true },
   {
     field: 'locale_manager',

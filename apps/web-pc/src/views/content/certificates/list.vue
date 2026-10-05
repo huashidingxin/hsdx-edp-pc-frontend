@@ -69,7 +69,7 @@ const filterFields = ref([
     attrs: {
       allowClear: true,
       placeholder: '全部应用',
-      items: appOptions,
+      options: appOptions,
       fieldNames: { label: 'name', value: 'id' },
       showSearch: true,
     },
@@ -80,9 +80,9 @@ const filterFields = ref([
     label: '分类',
     type: 'select',
     span: 8,
-    attrs: { items: categoryOptions, fieldNames: { label: 'name', value: 'id' }, showSearch: true },
+    attrs: { options: categoryOptions, fieldNames: { label: 'name', value: 'id' }, showSearch: true },
   },
-  { field: 'status', label: '状态', type: 'select', span: 8, attrs: { items: statusItems, fieldNames: { label: 'name', value: 'id' } } },
+  { field: 'status', label: '状态', type: 'select', span: 8, attrs: { options: statusItems, fieldNames: { label: 'name', value: 'id' } } },
   {
     field: 'publish_state',
     label: '发布范围',
@@ -92,7 +92,7 @@ const filterFields = ref([
       allowClear: true,
       placeholder: '全部',
       fieldNames: { label: 'name', value: 'id' },
-      items: [
+      options: [
         { id: 'published', name: '已发布' },
         { id: 'unpublished', name: '未发布' },
       ],
@@ -106,7 +106,7 @@ const formFields = ref([
     type: 'select',
     label: '分类',
     span: 12,
-    attrs: { items: categoryOptions, fieldNames: { label: 'name', value: 'id' }, showSearch: true },
+    attrs: { options: categoryOptions, fieldNames: { label: 'name', value: 'id' }, showSearch: true },
   },
   { field: 'image', type: 'image', label: '证书图片', span: 24, required: true },
   { field: 'sort', type: 'number', label: '排序', span: 12 },

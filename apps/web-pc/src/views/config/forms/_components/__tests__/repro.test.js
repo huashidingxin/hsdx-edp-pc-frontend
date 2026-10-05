@@ -70,7 +70,7 @@ function clickButton(wrapper, text) {
 }
 
 describe('表单配置组件冒烟', () => {
-  it('FormFieldModal 点「取消」emit cancel', () => {
+  it('formFieldModal：点「取消」emit cancel', () => {
     const wrapper = mount(FormFieldModal, {
       props: { field: null, disabled: false },
     });
@@ -80,7 +80,7 @@ describe('表单配置组件冒烟', () => {
     wrapper.unmount();
   });
 
-  it('FormRuleModal 点「取消」emit cancel', () => {
+  it('formRuleModal：点「取消」emit cancel', () => {
     const wrapper = mount(FormRuleModal, {
       props: { field: { name: 'age', type: 'number' }, disabled: false },
     });

@@ -43,20 +43,20 @@ const filterFields = ref([
     attrs: {
       allowClear: true,
       placeholder: '全部应用',
-      items: appOptions,
+      options: appOptions,
       fieldNames: { label: 'name', value: 'id' },
       showSearch: true,
     },
   },
   { field: 'title', label: '标题', type: 'text', span: 6 },
   { field: 'location', label: '地点', type: 'text', span: 6 },
-  { field: 'status', label: '状态', type: 'select', span: 6, attrs: { items: statusItems, fieldNames: { label: 'name', value: 'id' } } },
+  { field: 'status', label: '状态', type: 'select', span: 6, attrs: { options: statusItems, fieldNames: { label: 'name', value: 'id' } } },
   {
     field: 'category_id',
     label: '分类',
     type: 'select',
     span: 6,
-    attrs: { items: categories, fieldNames: { label: 'name', value: 'id' }, showSearch: true },
+    attrs: { options: categories, fieldNames: { label: 'name', value: 'id' }, showSearch: true },
   },
   {
     field: 'publish_state',
@@ -67,7 +67,7 @@ const filterFields = ref([
       allowClear: true,
       placeholder: '全部',
       fieldNames: { label: 'name', value: 'id' },
-      items: [
+      options: [
         { id: 'published', name: '已发布' },
         { id: 'unpublished', name: '未发布' },
       ],
@@ -82,7 +82,7 @@ const formFields = ref([
     type: 'select',
     label: '分类',
     span: 12,
-    attrs: { items: categories, fieldNames: { label: 'name', value: 'id' }, showSearch: true },
+    attrs: { options: categories, fieldNames: { label: 'name', value: 'id' }, showSearch: true },
   },
   { field: 'cover', type: 'text', label: '封面', span: 12 },
   { field: 'location', type: 'text', label: '地点', span: 12 },

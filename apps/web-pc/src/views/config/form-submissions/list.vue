@@ -23,7 +23,7 @@ const statusItems = [
 
 const filterFields = ref([
   { field: 'status', label: '状态', type: 'select', span: 8, attrs: { fieldNames: { label: 'name', value: 'id' },
-      items: statusItems } },
+      options: statusItems } },
 ]);
 
 const formFields = ref([

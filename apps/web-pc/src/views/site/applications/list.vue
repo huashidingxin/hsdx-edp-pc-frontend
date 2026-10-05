@@ -36,6 +36,8 @@ import FilesList from '../../config/files/list.vue';
 import MenusList from '../../config/menus/list.vue';
 import SettingsIndex from '../../config/settings/index.vue';
 import UiStringsIndex from '../../config/ui-strings/index.vue';
+// 全景应用的场景/热点管理（同样是应用级接口，走 X-Application-Id）
+import PanoramaScenesList from '../../panorama/scenes/list.vue';
 import PagesList from '../pages/list.vue';
 // 公共内容模块：也以抽屉打开，传入 appId 自动按应用过滤
 import ArticlesList from '../../content/articles/list.vue';
@@ -46,6 +48,7 @@ const TYPE_OPTIONS = [
   { id: 1, name: '官网' },
   { id: 2, name: '小程序' },
   { id: 3, name: '公众号' },
+  { id: 4, name: '全景' },
 ];
 const STATUS_OPTIONS = [
   { id: 0, name: '草稿' },
@@ -57,7 +60,7 @@ const SSL_OPTIONS = [
   { id: 1, name: '有效' },
   { id: 2, name: '过期' },
 ];
-const typeColor = { 1: 'blue', 2: 'green', 3: 'purple' };
+const typeColor = { 1: 'blue', 2: 'green', 3: 'purple', 4: 'orange' };
 const statusColor = { 0: 'default', 1: 'green', 2: 'red' };
 const sslMap = { 0: '未配置', 1: '有效', 2: '过期' };
 
@@ -106,12 +109,24 @@ const settingLinks = [
   { key: 'files', label: '媒体库' },
 ];
 
+/** 全景应用没有页面/菜单/站点设置，只留媒体库（底图存在这里）。 */
+const PANORAMA_SETTING_KEYS = new Set(['files']);
+function visibleSettingLinks(app) {
+  return app?.type === 4
+    ? settingLinks.filter((link) => PANORAMA_SETTING_KEYS.has(link.key))
+    : settingLinks;
+}
+
+/** 全景应用专属入口：场景列表 + 热点编辑器。 */
+const panoramaLinks = [{ key: 'panorama', label: '全景场景' }];
+
 const moduleMap = {
   pages: { title: '页面管理', component: PagesList, width: 1080 },
   menus: { title: '菜单管理', component: MenusList, width: 1080 },
   settings: { title: '站点设置', component: SettingsIndex, width: 920 },
   'ui-strings': { title: 'UI 词条', component: UiStringsIndex, width: 920 },
   files: { title: '媒体库', component: FilesList, width: 1080 },
+  panorama: { title: '全景场景', component: PanoramaScenesList, width: 1080 },
   articles: { title: '文章管理', component: ArticlesList, width: 1080 },
   products: { title: '产品管理', component: ProductsList, width: 1080 },
   categories: { title: '分类管理', component: CategoriesList, width: 920 },
@@ -136,7 +151,8 @@ const currentAppStore = useCurrentAppStore();
 function enterWorkspace(app) {
   currentAppStore.selectApp(app.id);
   message.success(`已切换至应用工作区：${app.name}`);
-  router.push('/site/pages');
+  // 全景应用没有「页面」，直接落到场景列表
+  router.push(app.type === 4 ? '/panorama/scenes' : '/site/pages');
 }
 
 function navigateModule(key, app) {
@@ -378,7 +394,7 @@ onMounted(async () => {
             <span class="meta-lang">启用 {{ (app.enabled_locales || []).length }} 种语言</span>
           </div>
 
-          <div class="card-group">
+          <div v-if="app.type !== 4" class="card-group">
             <span class="group-label">内容</span>
             <Button
               v-for="link in contentLinks"
@@ -391,10 +407,23 @@ onMounted(async () => {
               {{ link.label }}
             </Button>
           </div>
+          <div v-if="app.type === 4" class="card-group">
+            <span class="group-label">全景</span>
+            <Button
+              v-for="link in panoramaLinks"
+              :key="link.key"
+              size="small"
+              type="link"
+              class="entry-btn"
+              @click="navigateModule(link.key, app)"
+            >
+              {{ link.label }}
+            </Button>
+          </div>
           <div class="card-group">
             <span class="group-label">设置</span>
             <Button
-              v-for="link in settingLinks"
+              v-for="link in visibleSettingLinks(app)"
               :key="link.key"
               size="small"
               type="link"

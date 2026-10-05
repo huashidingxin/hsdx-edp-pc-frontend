@@ -116,12 +116,23 @@ export function useCrudTableForm(props, ctx, modelValueRef) {
 
   /**
    * 上传待处理的文件
-   * 遍历 AppUpload 支持的字段类型（file/image/video/audio，AppField 均映射到 AppUpload），
-   * 对 url 不以 'http' 开头的子项调用 AppField.upload()
+   * 遍历 AppUpload 支持的字段类型（file/files/image/images/video/videos/audio，
+   * AppField 均映射到 AppUpload），对 url 不以 'http' 开头的子项调用 AppField.upload()
+   *
+   * 白名单必须与 AppField 的上传分支保持同步：漏掉某个类型时该字段的新增文件
+   * 会被静默跳过（保存成功但文件没传上去，且没有任何报错）。
    */
   async function uploadPendingFiles() {
     const fields = formatedFields.value.filter((f) =>
-      ['file', 'image', 'video', 'audio'].includes(f.type),
+      [
+        'file',
+        'files',
+        'image',
+        'images',
+        'video',
+        'videos',
+        'audio',
+      ].includes(f.type),
     );
 
     for (const field of fields) {

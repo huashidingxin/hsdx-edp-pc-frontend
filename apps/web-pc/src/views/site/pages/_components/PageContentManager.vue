@@ -14,8 +14,9 @@
  * 编辑控件：editor 提示是可选的，**没有提示也必须能图形化编辑**。
  * - 块声明了 `editor.fields` 时：字段集合、顺序、label **全部以声明为准**；声明未包含的
  *   已有字段不展示，但保留在草稿里、保存时原样写回（不丢数据）。
- * - image/images/richtext/video 用专用控件；其余（card/cards/json/无提示）用
- *   AutoFormValue 按**数据形状**自动生成表单，另给每块一个「高级（JSON）」开关兜底。
+ * - 控件全部由 AutoFormValue 渲染：块声明了 `editor.fields` 就按声明出字段
+ *   （image/video/content 等键按全局规范映射上传/富文本控件），未声明则按数据形状推断，
+ *   另给每块一个「高级（JSON）」开关兜底。
  * - 字段键的控件由 `pageContentAutoForm` 的键名规范统一决定（与块类型无关）：
  *   `image` / `image2` → 图片上传，`video` → 视频上传，`content` → 富文本。
  *
@@ -43,7 +44,6 @@ import {
 
 import { getCurrentApplicationId } from '#/api/application-context';
 import { requestClient } from '#/api/request';
-import AppEditor from '#/components/app-editor/index.vue';
 import AppUpload from '#/components/AppUpload.vue';
 
 import AutoFormValue from './AutoFormValue.vue';
@@ -58,9 +58,6 @@ import {
   setAtPath,
 } from './pageContentModel';
 import { createContentLoader } from './pageContentLoader';
-
-/** 有专用控件的 editor.type；其余走自动表单。 */
-const DEDICATED_EDITOR_TYPES = ['image', 'images', 'richtext', 'video'];
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -289,18 +286,6 @@ async function flushBlockUploads(blockName) {
   await Promise.all(tasks);
 }
 
-/**
- * card / video 分支要求草稿是「对象」。缺失或形状不符时返回 null，
- * 模板据此退回 JSON 兜底 —— 保证渲染期永远不会对 undefined 取属性。
- */
-function objectDraft(blockName) {
-  const value = drafts.value[blockName];
-
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value
-    : null;
-}
-
 async function saveBlock(blockName) {
   const descriptor = blockMeta.value[blockName];
   if (!descriptor) return;
@@ -321,19 +306,17 @@ async function saveBlock(blockName) {
     // 只有「用户在高级模式里手写的 JSON 文本」才需要解析。
     // 不能见到字符串就 parse：像 about-*.body 这类块的数据本身就是一段 HTML 字符串，
     // 硬解析会报「JSON 格式错误」，导致该块永远保存不了。
-    if (typeof value === 'string' && looksLikeJsonText(value)) {
-      if (jsonMode[blockName] || editorType === 'json') {
-        const parsed = parseJsonText(value);
-        if (!parsed.ok) {
-          message.error(`JSON 格式错误：${parsed.error}`);
-          return;
-        }
-        value = parsed.value;
+    if (jsonMode[blockName] && typeof value === 'string' && looksLikeJsonText(value)) {
+      const parsed = parseJsonText(value);
+      if (!parsed.ok) {
+        message.error(`JSON 格式错误：${parsed.error}`);
+        return;
       }
+      value = parsed.value;
     }
 
     const raw = getAtPath(contentData.value[group.key], descriptor.path);
-    const nextValue = rewrap(editorType, raw, value);
+    const nextValue = rewrap(editorType, value);
     const nextData = setAtPath(contentData.value[group.key], descriptor.path, nextValue);
 
     await requestClient.put(
@@ -365,21 +348,10 @@ function blockFields(block) {
   return editorFieldList(block.editor);
 }
 
-/** 取 editor.fields 里某字段的声明 label，没有声明时用兜底文案。 */
-function declaredLabel(block, fieldKey, fallback) {
-  const label = block.editor?.fields?.[fieldKey]?.label;
-
-  return typeof label === 'string' && label.trim() !== '' ? label.trim() : fallback;
-}
-
 /**
  * 声明/配置与真实数据对不上时的提示文案（对得上返回空串）。
  *
- * 为什么必须有：2026-09-20 用真实库数据核过，**存量里已经存在的 editor.fields 声明与实际
- * 数据并不匹配**（廊坊 home 页：`home-stats` 声明 title/content/subtitle，数据却是 label/value；
- * `home-cta` 声明 title/target/content/subtitle，数据是 title/actions/summary）。
- * 严格按声明渲染后，这些块会变成一组空字段，用户会以为「数据丢了」。
- * 这里把情况说清楚并指路（改声明 / 切高级模式），而不是悄悄回退展示规则。
+ * 把情况说清楚并指路（改声明 / 切高级模式），而不是悄悄回退展示规则。
  */
 function blockDataHint(block) {
   const group = groupOfBlock(block.blockName);
@@ -419,11 +391,6 @@ function blockDataHint(block) {
   )}）没有交集，下面会是一组空字段。请到「数据规则」修正声明，或用「高级（JSON）」编辑。`;
 }
 
-/** 该块是否用专用控件（image/images/richtext/video）；其余走自动表单。 */
-function hasDedicatedEditor(block) {
-  return DEDICATED_EDITOR_TYPES.includes(block.editor?.type);
-}
-
 /** 该块当前是否处于高级（JSON）模式。 */
 function isJsonMode(blockName) {
   return jsonMode[blockName] === true;
@@ -458,11 +425,6 @@ function toggleJsonMode(blockName) {
 
 /** 块头展示的编辑方式标签（让用户一眼看出这块是表单还是 JSON）。 */
 function blockModeLabel(block) {
-  const type = block.editor?.type;
-  if (type === 'image') return '单图';
-  if (type === 'images') return '图片集';
-  if (type === 'richtext') return '富文本';
-  if (type === 'video') return '视频';
   if (isJsonMode(block.blockName)) return 'JSON（高级）';
 
   // 有 editor.fields 声明时，表单字段就是声明的那几个（顺序/名称也来自声明）
@@ -659,7 +621,6 @@ defineExpose({
                 <span class="flex items-center gap-2">
                   <!-- 高级模式开关：默认图形表单，需要时降级为裸 JSON -->
                   <Button
-                    v-if="!hasDedicatedEditor(block)"
                     type="link"
                     size="small"
                     @click.stop="toggleJsonMode(block.blockName)"
@@ -683,90 +644,9 @@ defineExpose({
                 {{ block.blockName }} · path: {{ block.path.length ? block.path.join('.') : '(整份)' }}
               </p>
 
-            <!-- image：单图（editor.fields 声明了字段名称时一并展示） -->
-            <div
-              v-if="block.editor?.type === 'image'"
-              class="flex flex-col gap-1"
-            >
-              <span
-                v-if="declaredLabel(block, 'image', '')"
-                class="text-xs text-gray-500"
-              >
-                {{ declaredLabel(block, 'image', '') }}
-              </span>
-              <AppUpload
-                :ref="blockUploadRef(block.blockName)"
-                v-model="drafts[block.blockName]"
-                :disabled="!canWrite"
-                file-type="image"
-              />
-            </div>
-
-            <!-- images：图片集合（该类型不接受 fields 声明，整组用块 label） -->
-            <AppUpload
-              v-else-if="block.editor?.type === 'images'"
-              :ref="blockUploadRef(block.blockName)"
-              v-model="drafts[block.blockName]"
-              :disabled="!canWrite"
-              file-type="image"
-              multiple
-            />
-
-            <!-- richtext：富文本（editor.fields 声明了字段名称时一并展示） -->
-            <div
-              v-else-if="block.editor?.type === 'richtext'"
-              class="flex flex-col gap-1"
-            >
-              <span
-                v-if="declaredLabel(block, 'content', '')"
-                class="text-xs text-gray-500"
-              >
-                {{ declaredLabel(block, 'content', '') }}
-              </span>
-              <AppEditor
-                v-model="drafts[block.blockName]"
-                :disabled="!canWrite"
-              />
-            </div>
-
-            <!--
-              video：视频 + 封面。
-              字段键规范与块类型无关（pageContentAutoForm.SCALAR_KEY_KINDS）：
-              `video` 键**一律是视频上传控件**，不再退化成文本框（曾经就是这样，用户没法传视频）。
-            -->
-            <div
-              v-else-if="
-                block.editor?.type === 'video' && objectDraft(block.blockName)
-              "
-              class="flex flex-col gap-3"
-            >
-              <div class="flex flex-col gap-1">
-                <span class="text-xs text-gray-500">
-                  {{ declaredLabel(block, 'video', '视频') }}
-                </span>
-                <AppUpload
-                  :ref="blockUploadRef(block.blockName, 'video')"
-                  v-model="drafts[block.blockName].video"
-                  :disabled="!canWrite"
-                  file-type="video"
-                />
-              </div>
-              <div class="flex flex-col gap-1">
-                <span class="text-xs text-gray-500">
-                  {{ declaredLabel(block, 'image', '视频封面') }}
-                </span>
-                <AppUpload
-                  :ref="blockUploadRef(block.blockName, 'cover')"
-                  v-model="drafts[block.blockName].image"
-                  :disabled="!canWrite"
-                  file-type="image"
-                />
-              </div>
-            </div>
-
             <!-- 高级（JSON）：仅在用户主动降级该块时出现 -->
             <textarea
-              v-else-if="isJsonMode(block.blockName)"
+              v-if="isJsonMode(block.blockName)"
               :value="jsonText(block.blockName)"
               spellcheck="false"
               :disabled="!canWrite"
@@ -776,7 +656,7 @@ defineExpose({
 
             <!--
               其余块：有 editor.fields 声明时按声明渲染字段，否则按**数据形状**自动生成表单。
-              覆盖 card / cards / 显式 json / 没有 editor 提示的块 —— 真实数据里
+              覆盖 card / cards / 没有 editor 提示的块 —— 真实数据里
               107 个静态块有 45 个没有提示，以前这些块只能编辑裸 JSON，非技术人员无法操作。
               该组件把整棵子树的上传控件递归暴露为 upload()，保存前由本页统一 flush。
             -->

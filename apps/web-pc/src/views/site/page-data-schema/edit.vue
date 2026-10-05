@@ -80,7 +80,7 @@ function newRow() {
     sortByText: '',
     pathText: '',
     editorEnabled: false,
-    editor: { type: 'json', label: '', fields: [] },
+    editor: { type: 'card', label: '', fields: [] },
   };
 }
 
@@ -114,7 +114,7 @@ function blockToRow(name, block) {
     pathText: Array.isArray(config.path) ? config.path.join(', ') : '',
     editorEnabled: Boolean(editor),
     editor: {
-      type: editor?.type ?? 'json',
+      type: editor?.type ?? 'card',
       label: editor?.label ?? '',
       fields: Object.entries(editor?.fields ?? {}).map(([key, meta]) => ({
         key,
@@ -189,7 +189,7 @@ function rowToBlock(row) {
       if (key) fields[key] = { label: String(item.label ?? '').trim() };
     }
     block.editor = {
-      type: row.editor?.type ?? 'json',
+      type: row.editor?.type ?? 'card',
       label: String(row.editor?.label ?? '').trim(),
     };
     if (Object.keys(fields).length > 0) block.editor.fields = fields;
@@ -364,8 +364,9 @@ function editorFieldOptions(row) {
   return allowed.map((value) => ({ label: value, value }));
 }
 
-function editorSupportsFields(row) {
-  return !['images', 'json'].includes(row.editor?.type ?? 'json');
+function editorSupportsFields() {
+  // editor.type 只剩 card/cards，全部支持 fields 声明。
+  return true;
 }
 
 watch([pageId, locale, pageCode], () => {
@@ -598,7 +599,7 @@ onMounted(async () => {
 
                 <div v-if="editorSupportsFields(row)" class="mt-3">
                   <div class="mb-1 text-xs text-gray-500">
-                    字段提示 fields（card/cards 必填）
+                    字段提示 fields（可选；未声明时内容编辑页按数据形状自动生成表单）
                   </div>
                   <div
                     v-for="(field, fieldIndex) in row.editor.fields"

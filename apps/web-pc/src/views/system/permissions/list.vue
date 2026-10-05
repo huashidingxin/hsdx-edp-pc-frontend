@@ -35,7 +35,7 @@ const filterFields = ref([
     type: 'select',
     span: 8,
     attrs: { fieldNames: { label: 'name', value: 'id' },
-      items: domainOptions },
+      options: domainOptions },
   },
 ]);
 

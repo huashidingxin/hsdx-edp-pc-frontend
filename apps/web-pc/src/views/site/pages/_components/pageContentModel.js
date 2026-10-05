@@ -19,27 +19,21 @@ import { looksLikeJsonText } from './pageContentAutoForm';
 /** 允许的 provider。 */
 export const PROVIDERS = ['model', 'static_content', 'page_banner'];
 
-/** static_content 块允许的 editor.type。 */
-export const EDITOR_TYPES = [
-  'image',
-  'images',
-  'video',
-  'richtext',
-  'card',
-  'cards',
-  'json',
-];
+/** static_content 块允许的 editor.type：object（对象容器）/ array（对象数组容器），
+ * 即 JSON 容器形状。type 只负责容器形状；图片/视频/富文本等控件由 editor.fields
+ * 声明 + 全局「字段键 → 控件」规范（pageContentAutoForm）决定。 */
+export const EDITOR_TYPES = ['object', 'array'];
 
-/** 各 editor.type 允许声明的字段（对齐后端 StaticBlockEditor::FIELDS）。 */
+/** 各 editor.type 允许声明的字段（对齐后端 StaticBlockEditor::FIELDS）。
+ * text/text2/text3 是通用纯文本槽位，语义由 fields 的 label 提供。 */
 export const EDITOR_FIELDS = {
-  image: ['image'],
-  images: [],
-  video: ['video', 'image'],
-  richtext: ['content'],
-  card: [
+  object: [
     'title',
     'subtitle',
     'content',
+    'text',
+    'text2',
+    'text3',
     'image',
     'image2',
     'images',
@@ -47,10 +41,13 @@ export const EDITOR_FIELDS = {
     'tags',
     'target',
   ],
-  cards: [
+  array: [
     'title',
     'subtitle',
     'content',
+    'text',
+    'text2',
+    'text3',
     'image',
     'image2',
     'images',
@@ -58,7 +55,6 @@ export const EDITOR_FIELDS = {
     'tags',
     'target',
   ],
-  json: [],
 };
 
 // 注：字段键 → 编辑控件的映射只有一份规范，在 pageContentAutoForm.js 的
@@ -151,28 +147,11 @@ export function setAtPath(data, path, value) {
 export function unwrap(editorType, raw) {
   const isObject = isPlainObject(raw);
   switch (editorType) {
-    case 'image': {
-      if (isObject) return raw.image ?? '';
-      return typeof raw === 'string' ? raw : '';
-    }
-    case 'images': {
-      if (Array.isArray(raw)) return [...raw];
-      if (isObject) return Array.isArray(raw.images) ? [...raw.images] : [];
-      return [];
-    }
-    case 'richtext': {
-      if (isObject) return raw.content ?? '';
-      return typeof raw === 'string' ? raw : '';
-    }
-    case 'video': {
-      if (isObject) return { ...raw };
-      return { video: '', image: '' };
-    }
-    case 'card': {
+    case 'object': {
       if (isObject) return { ...raw };
       return {};
     }
-    case 'cards': {
+    case 'array': {
       if (Array.isArray(raw)) return raw.map((item) => ({ ...item }));
       return [];
     }
@@ -181,21 +160,9 @@ export function unwrap(editorType, raw) {
   }
 }
 
-/** 把控件值合回原始形状，保留原有对象里的其他字段。 */
-export function rewrap(editorType, raw, value) {
-  const isObject = isPlainObject(raw);
-  switch (editorType) {
-    case 'image':
-      return isObject ? { ...raw, image: value } : value;
-    case 'images':
-      return isObject ? { ...raw, images: value } : value;
-    case 'richtext':
-      return isObject ? { ...raw, content: value } : value;
-    case 'video':
-      return isObject ? { ...raw, ...value } : value;
-    default:
-      return value;
-  }
+/** 控件值 → 存储值。card/cards 草稿本身就是最终形状，原样返回（保留接缝便于未来扩展）。 */
+export function rewrap(editorType, value) {
+  return value;
 }
 
 /**
@@ -449,12 +416,10 @@ function validateEditor(editor) {
   if (!isValidLabel(editor.label)) {
     errors.push('editor.label 必填且不超过 160 字');
   }
-  const allowed = EDITOR_FIELDS[editor.type];
-  if (['card', 'cards'].includes(editor.type) && !isPlainObject(editor.fields)) {
-    errors.push('card/cards 必须配置 fields 及字段 label');
-    return errors;
-  }
+  // card/cards 的 fields 是可选编辑提示：声明了就按白名单校验，
+  // 未声明时内容编辑页按数据形状自动生成表单（与无提示块一致）。
   if (editor.fields !== undefined) {
+    const allowed = EDITOR_FIELDS[editor.type] ?? [];
     if (!isPlainObject(editor.fields) || Object.keys(editor.fields).length === 0) {
       errors.push('editor.fields 必须是非空对象');
       return errors;
@@ -544,17 +509,17 @@ export function formatJson(value) {
  * 脏值比较前的规范化。
  *
  * 两侧必须用**同一套规则**，否则会出现「数据没变却显示已修改」：
- * - 高级（JSON）模式下草稿是一段 JSON 文本、基线是对象，
- *   直接比较是「文本 vs 对象」，永远不相等 → 保存成功后仍显示「未保存」、
- *   保存按钮仍可点。所以先把 JSON 文本解析回值再比较。
- * - json 块统一格式化成缩进文本，避免键序/空白差异造成误判。
+ * 高级（JSON）模式下草稿是一段 JSON 文本、基线是对象，
+ * 直接比较是「文本 vs 对象」，永远不相等 → 保存成功后仍显示「未保存」、
+ * 保存按钮仍可点。所以先把 JSON 文本解析回值再比较。
  */
 export function comparableValue(editorType, value) {
   if (typeof value === 'string' && looksLikeJsonText(value)) {
     const parsed = parseJsonText(value);
     if (parsed.ok) value = parsed.value;
   }
-  return editorType === 'json' ? formatJson(value) : JSON.stringify(value ?? null);
+
+  return JSON.stringify(value ?? null);
 }
 
 /**

@@ -24,7 +24,7 @@ const filterFields = ref([
     type: 'select',
     span: 6,
     attrs: { fieldNames: { label: 'name', value: 'id' },
-      items: STATUS_OPTIONS },
+      options: STATUS_OPTIONS },
   },
 ]);
 
@@ -58,7 +58,7 @@ const formFields = ref([
     type: 'select',
     label: '状态',
     span: 12,
-    attrs: { items: STATUS_OPTIONS },
+    attrs: { options: STATUS_OPTIONS },
   },
   {
     field: 'last_login_at',

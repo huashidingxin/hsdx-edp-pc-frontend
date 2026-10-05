@@ -9,6 +9,7 @@ import { useCurrentAppStore } from '#/store/current-app';
 
 import ContentPublishModal from '../_components/ContentPublishModal.vue';
 import { useAppQueryFilter } from '../_components/useAppQueryFilter.js';
+import { useCustomCategoryFields } from '../_components/useCustomCategoryFields.js';
 
 import LocaleManager from '../_components/LocaleManager.vue';
 
@@ -43,7 +44,7 @@ const filterFields = ref([
     attrs: {
       allowClear: true,
       placeholder: '全部应用',
-      items: appOptions,
+      options: appOptions,
       fieldNames: { label: 'name', value: 'id' },
       showSearch: true,
     },
@@ -55,12 +56,12 @@ const filterFields = ref([
     type: 'select',
     span: 8,
     attrs: {
-      items: categories,
+      options: categories,
       fieldNames: { label: 'name', value: 'id' },
       showSearch: true,
     },
   },
-  { field: 'status', label: '状态', type: 'select', span: 8, attrs: { items: statusItems, fieldNames: { label: 'name', value: 'id' } } },
+  { field: 'status', label: '状态', type: 'select', span: 8, attrs: { options: statusItems, fieldNames: { label: 'name', value: 'id' } } },
   {
     field: 'publish_state',
     label: '发布范围',
@@ -70,7 +71,7 @@ const filterFields = ref([
       allowClear: true,
       placeholder: '全部',
       fieldNames: { label: 'name', value: 'id' },
-      items: [
+      options: [
         { id: 'published', name: '已发布' },
         { id: 'unpublished', name: '未发布' },
       ],
@@ -78,14 +79,16 @@ const filterFields = ref([
   },
 ]);
 
-const formFields = ref([
+const cc = useCustomCategoryFields('product');
+
+const baseFormFields = [
   { field: 'id', type: 'text', label: 'ID', span: 12, displayOnly: true },
   {
     field: 'category_id',
     type: 'select',
     label: '分类',
     span: 12,
-    attrs: { items: categories, fieldNames: { label: 'name', value: 'id' }, showSearch: true },
+    attrs: { options: categories, fieldNames: { label: 'name', value: 'id' }, showSearch: true },
   },
   { field: 'sku', type: 'text', label: 'SKU', span: 12 },
   { field: 'cover', type: 'text', label: '封面', span: 12 },
@@ -99,6 +102,8 @@ const formFields = ref([
     displayOnly: true,
     attrs: { rows: 3 },
   },
+  // 附件以 uploads 为唯一来源（object_field=attachments），提交时是 URL 数组
+  { field: 'attachments', type: 'files', label: '附件', span: 24 },
   {
     field: 'published_at',
     type: 'datetime',
@@ -113,7 +118,13 @@ const formFields = ref([
     span: 24,
     renderKey: 'locale_manager',
   },
-]);
+];
+
+/**
+ * 表单字段 = 固定字段 + 租户声明的扩展分类维度（按内容模型收敛）。
+ * 产品：品类走公共分类 category_id，品牌/场景走扩展分类。
+ */
+const formFields = computed(() => [...baseFormFields, ...cc.fields.value]);
 
 const gridColumns = ref([
   { field: 'id', title: 'ID', width: 70 },
@@ -187,6 +198,8 @@ onMounted(async () => {
   } catch (error) {
     console.error(error);
   }
+  // 扩展分类：按内容模型拉适用维度 + 各维度节点选项（未声明维度时静默为空）
+  await cc.load();
   try {
     const { data } = await new Resource('categories').list({ per_page: 100, type: 3 });
     categories.value = data || [];
@@ -224,6 +237,8 @@ onMounted(async () => {
     }"
     :open-mode="{ create: 'modal', detail: 'modal' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
+    :detail-format="cc.detailFormat"
+    :save-format="cc.saveFormat"
     :actions-config="[
       {
         key: 'publish',

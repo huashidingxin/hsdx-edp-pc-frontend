@@ -27,6 +27,9 @@
     "#/*": "./src/*"
   },
   "dependencies": {
+    "@photo-sphere-viewer/core": "^5.15.1",
+    "@photo-sphere-viewer/equirectangular-tiles-adapter": "^5.15.1",
+    "@photo-sphere-viewer/markers-plugin": "^5.15.1",
     "@tiptap/core": "catalog:",
     "@tiptap/extension-highlight": "catalog:",
     "@tiptap/extension-image": "catalog:",
@@ -59,6 +62,7 @@
     "fflate": "catalog:",
     "lunar-javascript": "^1.7.7",
     "pinia": "catalog:",
+    "three": "^0.185.1",
     "vue": "catalog:",
     "mitt": "^3.0.1",
     "lodash-es": "^4.17.23",

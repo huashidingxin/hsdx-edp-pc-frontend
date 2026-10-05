@@ -11,7 +11,7 @@ function makeSchema() {
         enabled: true,
         config: { content_key: 'home' },
         editor: {
-          type: 'card',
+          type: 'object',
           label: '主视觉',
           fields: { title: { label: '标题' }, image: { label: '图片' } },
         },
@@ -20,19 +20,19 @@ function makeSchema() {
         provider: 'static_content',
         enabled: true,
         config: { content_key: 'home', path: ['intro'] },
-        editor: { type: 'card', label: '介绍', fields: { title: { label: '标题' } } },
+        editor: { type: 'object', label: '介绍', fields: { title: { label: '标题' } } },
       },
       missing: {
         provider: 'static_content',
         enabled: true,
         config: { content_key: 'home', path: ['nope'] },
-        editor: { type: 'card', label: '空块', fields: { title: { label: '标题' } } },
+        editor: { type: 'object', label: '空块', fields: { title: { label: '标题' } } },
       },
       cross: {
         provider: 'static_content',
         enabled: true,
         config: { content_key: 'home', page_code: 'other_page' },
-        editor: { type: 'card', label: '跨页块', fields: { title: { label: '标题' } } },
+        editor: { type: 'object', label: '跨页块', fields: { title: { label: '标题' } } },
       },
       banner: {
         provider: 'page_banner',
@@ -80,7 +80,7 @@ describe('pageContentLoader', () => {
     }
   });
 
-  it('card 草稿始终是对象，即使数据缺失', async () => {
+  it('object 草稿始终是对象，即使数据缺失', async () => {
     const { loader } = makeLoader();
     const { drafts } = await loader.load(ctx);
 

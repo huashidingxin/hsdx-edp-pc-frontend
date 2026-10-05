@@ -68,7 +68,7 @@ function newRow() {
     sortByText: '',
     pathText: '',
     editorEnabled: false,
-    editor: { type: 'json', label: '', fields: [] },
+    editor: { type: 'card', label: '', fields: [] },
   };
 }
 
@@ -101,7 +101,7 @@ function blockToRow(name, block) {
     pathText: Array.isArray(config.path) ? config.path.join(', ') : '',
     editorEnabled: Boolean(editor),
     editor: {
-      type: editor?.type ?? 'json',
+      type: editor?.type ?? 'card',
       label: editor?.label ?? '',
       fields: Object.entries(editor?.fields ?? {}).map(([key, meta]) => ({
         key,
@@ -175,7 +175,7 @@ function rowToBlock(row) {
       if (key) fields[key] = { label: String(item.label ?? '').trim() };
     }
     block.editor = {
-      type: row.editor?.type ?? 'json',
+      type: row.editor?.type ?? 'card',
       label: String(row.editor?.label ?? '').trim(),
     };
     if (Object.keys(fields).length > 0) block.editor.fields = fields;
@@ -302,13 +302,9 @@ function editorFieldOptions(row) {
   return allowed.map((value) => ({ label: value, value }));
 }
 
-function editorSupportsFields(row) {
-  return !['images', 'json'].includes(row.editor?.type ?? 'json');
-}
-
-/** card/cards 必须声明字段（协议 §1.2A），表单里给个显式提醒。 */
-function editorFieldsRequired(row) {
-  return ['card', 'cards'].includes(row.editor?.type ?? '');
+function editorSupportsFields() {
+  // editor.type 只剩 card/cards，全部支持 fields 声明。
+  return true;
 }
 
 /**
@@ -596,12 +592,6 @@ watch(
 
                   <span v-if="!row.editor?.fields?.length" class="text-xs text-gray-400">
                     未声明字段：内容编辑页将按数据形状自动推断字段与名称
-                  </span>
-                  <span
-                    v-else-if="editorFieldsRequired(row)"
-                    class="text-xs text-gray-400"
-                  >
-                    card / cards 类型必须声明字段，否则保存会被拒绝
                   </span>
                 </div>
               </div>

@@ -64,7 +64,7 @@ describe('editorFieldList：把 editor.fields 规范成声明列表', () => {
   it('保留声明顺序，label 原样取出', () => {
     expect(
       editorFieldList({
-        type: 'cards',
+        type: 'array',
         label: '核心特点',
         fields: {
           title: { label: '特点标题' },
@@ -82,15 +82,15 @@ describe('editorFieldList：把 editor.fields 规范成声明列表', () => {
   it('没有声明、空声明或形状不对时返回 null（调用方退回按数据形状推断）', () => {
     expect(editorFieldList(null)).toBeNull();
     expect(editorFieldList(undefined)).toBeNull();
-    expect(editorFieldList({ type: 'json', label: '关于页内容' })).toBeNull();
-    expect(editorFieldList({ type: 'cards', label: 'x', fields: {} })).toBeNull();
-    expect(editorFieldList({ type: 'cards', label: 'x', fields: [] })).toBeNull();
+    expect(editorFieldList({ type: 'object', label: '关于页内容' })).toBeNull();
+    expect(editorFieldList({ type: 'array', label: 'x', fields: {} })).toBeNull();
+    expect(editorFieldList({ type: 'array', label: 'x', fields: [] })).toBeNull();
   });
 
   it('label 为空的字段被跳过（后端也只接受非空 label）', () => {
     expect(
       editorFieldList({
-        type: 'cards',
+        type: 'array',
         label: 'x',
         fields: { title: { label: '标题' }, subtitle: { label: '   ' }, extra: {} },
       }),

@@ -68,13 +68,13 @@ const filterFields = ref([
     attrs: {
       allowClear: true,
       placeholder: '全部应用',
-      items: appOptions,
+      options: appOptions,
       fieldNames: { label: 'name', value: 'id' },
       showSearch: true,
     },
   },
   { field: 'name', label: '姓名', type: 'text', span: 8 },
-  { field: 'status', label: '状态', type: 'select', span: 8, attrs: { items: statusItems, fieldNames: { label: 'name', value: 'id' } } },
+  { field: 'status', label: '状态', type: 'select', span: 8, attrs: { options: statusItems, fieldNames: { label: 'name', value: 'id' } } },
 ]);
 
 const formFields = ref([
@@ -85,7 +85,7 @@ const formFields = ref([
     label: '归属应用',
     span: 12,
     required: true,
-    attrs: { items: appOptions, fieldNames: { label: 'name', value: 'id' }, showSearch: true },
+    attrs: { options: appOptions, fieldNames: { label: 'name', value: 'id' }, showSearch: true },
   },
   { field: 'name', type: 'text', label: '姓名', span: 12 },
   { field: 'title', type: 'text', label: '职务', span: 12 },

@@ -5,6 +5,58 @@ import { calculateFileHash } from '#/utils/file.js';
 
 type UploadFile = File & { ret?: any };
 
+type UploadLimits = { max_file_size: number; max_file_size_human: string };
+
+let limitsPromise: Promise<UploadLimits | null> | null = null;
+
+/**
+ * 服务器真实上传上限（读 php.ini 的 upload_max_filesize / post_max_size）。
+ *
+ * 一个会话内只取一次；取不到就返回 null 并放弃预检，绝不因为预检本身失败而挡住上传。
+ */
+async function fetchUploadLimits(): Promise<UploadLimits | null> {
+  limitsPromise ??= requestClient
+    .get('/uploads/limits')
+    .then((data: any) => ({
+      max_file_size: Number(data?.max_file_size) || 0,
+      max_file_size_human: String(data?.max_file_size_human || ''),
+    }))
+    .catch(() => null);
+
+  return limitsPromise;
+}
+
+function formatBytes(bytes: number): string {
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index += 1;
+  }
+
+  return `${value.toFixed(value >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
+}
+
+/**
+ * 上传前预检：超过服务器上限就直接抛出可读错误，不浪费一次请求。
+ *
+ * 之前这里没有任何预检，前端也不知道真实上限（后端配置写着 512MB，
+ * 实际 php.ini 只给 2MB），用户只能等传完拿到一句
+ * "The file failed to upload."，完全看不出是大小问题。
+ */
+async function assertWithinUploadLimit(file: File): Promise<void> {
+  const limits = await fetchUploadLimits();
+  const max = limits?.max_file_size ?? 0;
+  if (max > 0 && file.size > max) {
+    const readable = limits?.max_file_size_human || formatBytes(max);
+
+    throw new Error(
+      `「${file.name}」${formatBytes(file.size)} 超过服务器允许的上传大小 ${readable}，请压缩后重试`,
+    );
+  }
+}
+
 function appendParams(
   target: FormData | Record<string, any>,
   params: Record<string, any>,
@@ -49,6 +101,9 @@ export async function upload(
   const result: string[] = [];
 
   for (const uploadFile of files) {
+    // 先按真实上限挡掉超大文件：算 hash 对大文件很贵，没必要白算一遍
+    await assertWithinUploadLimit(uploadFile);
+
     const hash = await calculateFileHash(uploadFile);
 
     // 1. 预检（秒传）：仅 hash + name + size，不携带文件

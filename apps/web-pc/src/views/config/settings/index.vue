@@ -28,7 +28,9 @@ const props = defineProps({
 });
 
 const applications = ref([]);
-const appId = ref(null);
+// 局部名不能叫 appId：与 defineProps 的 appId 重名会被 vue/no-dupe-keys 拦下，
+// 且模板里的 `appId` 究竟解析到 ref 还是 prop 会变得含糊。prop 一律走 props.appId。
+const selectedAppId = ref(null);
 const groups = ref([]);
 /** 仅记录被修改过的叶子：{ [groupKey]: { [leafKey]: value } } */
 const edits = ref({});
@@ -36,7 +38,7 @@ const loading = ref(false);
 const saving = ref(false);
 const activeGroup = ref(null);
 
-const appIdNum = computed(() => Number(appId.value) || null);
+const appIdNum = computed(() => Number(selectedAppId.value) || null);
 const dirty = computed(() => Object.keys(edits.value).length > 0);
 /** 抽屉嵌入时隐藏自带的应用选择 */
 const embedded = computed(() => Number(props.appId) > 0);
@@ -53,7 +55,7 @@ function toStringValue(value) {
 
 function onChange(group, item, value) {
   edits.value[group.group_key] = {
-    ...(edits.value[group.group_key] || {}),
+    ...edits.value[group.group_key],
     [item.key]: value,
   };
 }
@@ -76,7 +78,7 @@ async function load() {
 }
 
 function switchApplication(id) {
-  appId.value = id;
+  selectedAppId.value = id;
   setCurrentApplicationId(id);
   load();
 }
@@ -104,16 +106,16 @@ onMounted(async () => {
     applications.value = data || [];
     const propApp = Number(props.appId);
     if (propApp > 0 && applications.value.some((a) => Number(a.id) === propApp)) {
-      appId.value = propApp;
+      selectedAppId.value = propApp;
     } else {
       const stored = getCurrentApplicationId();
-      appId.value =
+      selectedAppId.value =
         stored && applications.value.some((a) => Number(a.id) === stored)
           ? stored
           : (Number(applications.value[0]?.id) || null);
     }
-    if (appId.value) {
-      setCurrentApplicationId(appId.value);
+    if (selectedAppId.value) {
+      setCurrentApplicationId(selectedAppId.value);
     }
     await load();
   } catch (error) {
@@ -125,7 +127,7 @@ watch(
   () => props.appId,
   (id) => {
     const num = Number(id);
-    if (num > 0 && num !== appId.value) {
+    if (num > 0 && num !== selectedAppId.value) {
       switchApplication(num);
     }
   },
@@ -140,7 +142,7 @@ watch(
         <div v-if="!embedded" class="flex items-center gap-3">
           <span class="text-sm text-gray-600">应用</span>
           <select
-            :value="appId"
+            :value="selectedAppId"
             class="rounded border border-gray-200 px-2 py-1 text-sm dark:border-gray-600 dark:bg-gray-800"
             @change="switchApplication(Number($event.target.value))"
           >

@@ -35,7 +35,7 @@ const filterFields = ref([
     type: 'select',
     span: 8,
     attrs: { fieldNames: { label: 'name', value: 'id' },
-      items: TYPE_OPTIONS },
+      options: TYPE_OPTIONS },
   },
 ]);
 
@@ -54,7 +54,7 @@ const formFields = ref([
     type: 'select',
     label: '类型',
     span: 12,
-    attrs: { items: TYPE_OPTIONS },
+    attrs: { options: TYPE_OPTIONS },
   },
   {
     field: 'record_binding',

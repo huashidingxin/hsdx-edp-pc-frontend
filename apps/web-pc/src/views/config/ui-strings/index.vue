@@ -15,7 +15,9 @@ const props = defineProps({
 });
 
 const applications = ref([]);
-const appId = ref(null);
+// 局部名不能叫 appId：与 defineProps 的 appId 重名会被 vue/no-dupe-keys 拦下，
+// 且模板里的 `appId` 究竟解析到 ref 还是 prop 会变得含糊。prop 一律走 props.appId。
+const selectedAppId = ref(null);
 const locale = ref('');
 const locales = ref([]);
 const rows = ref([]);
@@ -23,7 +25,7 @@ const loading = ref(false);
 const saving = ref(false);
 const allData = ref(null);
 
-const appIdNum = computed(() => Number(appId.value) || null);
+const appIdNum = computed(() => Number(selectedAppId.value) || null);
 /** 抽屉嵌入时隐藏自带的应用选择 */
 const embedded = computed(() => Number(props.appId) > 0);
 
@@ -100,7 +102,7 @@ onMounted(async () => {
     const { data } = await new Resource('applications').list({ per_page: 100 });
     applications.value = data || [];
     const propApp = Number(props.appId);
-    appId.value =
+    selectedAppId.value =
       propApp > 0 && applications.value.some((a) => Number(a.id) === propApp)
         ? propApp
         : Number(localStorage.getItem('edp:current-application-id')) ||
@@ -116,8 +118,8 @@ watch(
   () => props.appId,
   (id) => {
     const num = Number(id);
-    if (num > 0 && num !== appId.value) {
-      appId.value = num;
+    if (num > 0 && num !== selectedAppId.value) {
+      selectedAppId.value = num;
       load();
     }
   },
@@ -132,7 +134,7 @@ watch(
         <template v-if="!embedded">
           <span class="text-sm text-gray-600">应用</span>
           <select
-            v-model="appId"
+            v-model="selectedAppId"
             class="rounded border border-gray-200 px-2 py-1 text-sm dark:border-gray-600 dark:bg-gray-800"
             @change="load"
           >

@@ -524,7 +524,9 @@ export function editorRowsToBundle(rows, ruleId = DEFAULT_RULE_ID) {
   const groups = [];
   let current = [];
   for (let i = 0; i < valid.length; i++) {
-    const { connector, ...rest } = valid[i];
+    // connector 只用于上面推算分组边界（下一行读 valid[i-1].connector），
+    // 这里把它摘掉，避免混进规则体；下划线前缀表示有意不用。
+    const { connector: _connector, ...rest } = valid[i];
     if (i === 0) {
       current.push(rest);
     } else {
@@ -575,7 +577,8 @@ export function countFieldRules(field) {
  * （其他 rule_id 的 bundle 原样保留）。
  */
 export function setFieldRuleLeaves(field, rows) {
-  const next = { ...(field || {}) };
+  // 对象展开对 nullish 本身合法（结果就是 {}），`|| {}` 属冗余。
+  const next = { ...field };
   const others = (Array.isArray(next.rules) ? next.rules : []).filter(
     (rule) => Number(rule?.rule_id ?? 0) !== DEFAULT_RULE_ID,
   );
@@ -650,7 +653,7 @@ export function fieldToDraft(field) {
       ? source.date_type
       : 'date',
     span: clampNum(source.layout?.span, 1, 12, 12),
-    validation: { ...(source.validation || {}) },
+    validation: { ...source.validation },
     accept:
       Array.isArray(source.accept) && source.accept.length
         ? [...source.accept]

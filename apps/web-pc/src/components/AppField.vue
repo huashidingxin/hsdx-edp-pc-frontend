@@ -95,6 +95,15 @@ const componentDisabled = computed(() => {
   return props.field.attrs?.readonly || props.readonly;
 });
 
+// 只读态必须显式下发给 AppUpload：它不注册在 antdv Form 的控件上下文里，
+// 外层 <Form disabled> 管不到它，不传就会在「查看」态仍渲染上传/删除入口。
+// 其他组件传 undefined（Vue 会移除该属性），避免给 antdv 组件塞未知 prop。
+const componentReadonly = computed(() =>
+  component.value === AppUpload
+    ? props.readonly || Boolean(props.field.attrs?.readonly)
+    : undefined,
+);
+
 const fieldRef = ref(null);
 const attrItems = ref([]);
 let formatter = (e) => e;
@@ -279,20 +288,27 @@ function initComponent() {
   switch (props.field.type) {
     case 'audio':
     case 'file':
+    case 'files':
     case 'image':
     case 'images':
     case 'video':
     case 'videos': {
-      // images/videos：复数类型同样使用 AppUpload，fileType 归一到单数，
-      // 保证图片/视频以缩略图网格渲染（而非默认的纯文本 Input）
+      // images/videos/files：复数类型同样使用 AppUpload，fileType 归一到单数，
+      // 保证图片/视频以缩略图网格渲染（而非默认的纯文本 Input）。
+      // files 的 fileType 归一为 'file'（accept='*'），用于文章附件这类任意格式的多文件字段。
       const uploadType = props.field.type;
+      const isMultiUpload =
+        uploadType === 'images' ||
+        uploadType === 'videos' ||
+        uploadType === 'files';
+      // 不再下发 maxCount：AppUpload 没有这个 prop（既不声明也不读取），
+      // 之前的值只会变成一个无意义的 DOM 属性，却让人误以为存在文件数上限。
       defaultAttrs.value = {
         fileType:
           uploadType === 'file'
             ? props.field.attrs?.fileType
             : uploadType.replace(/s$/, ''),
-        multiple: uploadType === 'images' || uploadType === 'videos',
-        maxCount: props.field.attrs?.multiple ? 10 : 1,
+        multiple: isMultiUpload,
       };
       component.value = AppUpload;
       break;
@@ -693,6 +709,7 @@ function getMonthInGanZhi(date) {
             :label="field.label || field.attrs?.label"
             v-bind="attrs"
             :disabled="componentDisabled"
+            :readonly="componentReadonly"
             v-on="{ ...defaultEvents, ...field.events }"
             :key="field.field"
             :field-name="field.field"
