@@ -117,6 +117,20 @@ const targetSceneOptions = computed(() =>
     .map((item) => ({ label: item.title || `#${item.id}`, value: item.id })),
 );
 
+/**
+ * 跳转热点（type=scene）的内置图标 —— 设计与素材借鉴老平台 hsdx720：
+ * animated = 动态雪碧图（25 帧循环播放），选择器里只静态预览第一帧。
+ * key 清单与后端 `PanoramaHotspot::ICONS` 保持一致，后端按它校验。
+ */
+const HOTSPOT_ICONS = {
+  'arrow-forward': { label: '直行', src: '/panorama-icons/arrow-forward.png', animated: false },
+  'arrow-up': { label: '向上 / 上楼', src: '/panorama-icons/arrow-up.png', animated: true },
+  'arrow-down': { label: '向下 / 下楼', src: '/panorama-icons/arrow-down.png', animated: true },
+  'arrow-left': { label: '向左', src: '/panorama-icons/arrow-left.png', animated: true },
+  'arrow-right': { label: '向右', src: '/panorama-icons/arrow-right.png', animated: true },
+  plane: { label: '飞机（常用于标航拍场景）', src: '/panorama-icons/plane.png', animated: true },
+};
+
 const selectedHotspot = computed(() =>
   hotspots.value.find((item) => item._key === selectedKey.value) || null,
 );
@@ -811,6 +825,36 @@ function onKeydown(event) {
                       placeholder="选择要跳转到的场景"
                     />
                   </div>
+                  <div class="pano-editor-field">
+                    <label>跳转图标</label>
+                    <div class="pano-icon-picker">
+                      <button
+                        type="button"
+                        class="pano-icon-cell"
+                        :class="{ active: !item.icon }"
+                        title="默认圆点"
+                        @click="item.icon = ''"
+                      >
+                        <span class="pano-icon-dot"></span>
+                      </button>
+                      <button
+                        v-for="(meta, key) in HOTSPOT_ICONS"
+                        :key="key"
+                        type="button"
+                        class="pano-icon-cell"
+                        :class="{ active: item.icon === key }"
+                        :title="meta.label"
+                        @click="item.icon = key"
+                      >
+                        <span
+                          class="pano-icon-thumb"
+                          :class="{ animated: meta.animated }"
+                          :style="{ backgroundImage: `url(${meta.src})` }"
+                        ></span>
+                      </button>
+                    </div>
+                  </div>
+                  <p class="pano-editor-hint">图标只在播放页生效（动态图标会循环播放）；留空 = 默认圆点。</p>
                   <div class="pano-editor-row">
                     <div class="pano-editor-field">
                       <label>到达 yaw</label>
@@ -950,6 +994,58 @@ function onKeydown(event) {
   color: rgb(255 255 255 / 72%);
 }
 
+/* 跳转图标选择器：一排小格子，动态图标静态预览第一帧（雪碧图顶部） */
+.pano-icon-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.pano-icon-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 2px;
+  cursor: pointer;
+  background: rgb(255 255 255 / 6%);
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 6px;
+}
+
+.pano-icon-cell:hover {
+  background: rgb(255 255 255 / 14%);
+}
+
+.pano-icon-cell.active {
+  background: rgb(47 124 246 / 30%);
+  border-color: #2f7cf6;
+}
+
+.pano-icon-dot {
+  width: 14px;
+  height: 14px;
+  background: #2f7cf6;
+  border: 2px solid #fff;
+  border-radius: 50%;
+}
+
+/* 动态雪碧图：容器 28px → 图高 28×25=700px，只露出顶部第一帧 */
+.pano-icon-thumb {
+  display: block;
+  width: 28px;
+  height: 28px;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+}
+
+.pano-icon-thumb.animated {
+  background-position: 0 0;
+  background-size: 28px 700px;
+}
+
 .pano-editor-loading {
   position: absolute;
   inset: 0;
@@ -1068,6 +1164,21 @@ function onKeydown(event) {
   margin: 0;
   font-size: 12px;
   color: rgb(0 0 0 / 45%);
+}
+
+/* 浅色面板下的图标选择器 */
+.pano-icon-cell {
+  background: rgb(0 0 0 / 4%);
+  border-color: rgb(0 0 0 / 15%);
+}
+
+.pano-icon-cell:hover {
+  background: rgb(0 0 0 / 8%);
+}
+
+.pano-icon-cell.active {
+  background: rgb(47 124 246 / 15%);
+  border-color: #2f7cf6;
 }
 
 .pano-editor-row {
