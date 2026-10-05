@@ -1149,7 +1149,6 @@ watch(
                   <ColorPicker
                     :value="settingsForm.theme_primary || undefined"
                     value-format="hex"
-                    show-text
                     allow-clear
                     @update:value="onThemePrimaryChange"
                   />
@@ -1170,7 +1169,6 @@ watch(
                   v-model:value="settingsForm.theme_logo"
                   file-type="image"
                   scene="panorama"
-                  item-width="80px"
                 />
               </FormItem>
               <FormItem label="启动图" extra="播放页打开前显示的整屏图片（即加载画面）" class="col-span-2">
@@ -1179,7 +1177,6 @@ watch(
                   v-model:value="settingsForm.theme_loading_img"
                   file-type="image"
                   scene="panorama"
-                  item-width="80px"
                 />
               </FormItem>
             </div>
@@ -1308,7 +1305,6 @@ watch(
             v-model:value="sandForm.image"
             file-type="image"
             scene="panorama"
-            item-width="140px"
           />
           <p class="text-xs text-gray-400">建议用横版平面图（园区 / 楼宇俯视图）；也支持直接粘贴外部图片地址</p>
         </div>
