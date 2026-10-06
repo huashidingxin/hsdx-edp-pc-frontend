@@ -19,11 +19,13 @@ import { Viewer } from '@photo-sphere-viewer/core';
 import { EquirectangularTilesAdapter } from '@photo-sphere-viewer/equirectangular-tiles-adapter';
 import { MarkersPlugin } from '@photo-sphere-viewer/markers-plugin';
 
+import { IconifyIcon as Icon } from '@vben/icons';
 import {
   Button,
   Drawer,
   Input,
   InputNumber,
+  Modal,
   Popconfirm,
   Segmented,
   Select,
@@ -112,15 +114,28 @@ const tileStatus = computed(() => {
   }[status] || { text: status, color: 'default' };
 });
 
-const targetSceneOptions = computed(() =>
-  props.scenes
+const allAvailableScenes = ref([]);
+
+async function loadTargetScenes() {
+  try {
+    const res = await requestClient.get('/panorama-scenes', { params: { per_page: 500 } });
+    const list = Array.isArray(res) ? res : res?.items || res?.data || [];
+    allAvailableScenes.value = list;
+  } catch (err) {
+    allAvailableScenes.value = props.scenes || [];
+  }
+}
+
+const targetSceneOptions = computed(() => {
+  const pool = allAvailableScenes.value.length ? allAvailableScenes.value : props.scenes;
+  return pool
     .filter((item) => Number(item.id) !== Number(sceneId.value))
     .map((item) => ({
       label: item.title || `#${item.id}`,
       value: item.id,
       thumb: item.thumb || item.preview || item.image,
-    })),
-);
+    }));
+});
 
 /** 系统预设图标字典（从后端动态加载，98+ 分类图标） */
 const systemIcons = ref([]);
@@ -187,15 +202,87 @@ const selectedHotspot = computed(() =>
   hotspots.value.find((item) => item._key === selectedKey.value) || null,
 );
 
+/** 交互预览模式与弹窗状态 */
+const previewMode = ref(false);
+const previewModalOpen = ref(false);
+const previewHotspot = ref(null);
+const previewImageIndex = ref(0);
+
+const previewGalleryUrls = computed(() => {
+  if (!previewHotspot.value) return [];
+  if (Array.isArray(previewHotspot.value.urls) && previewHotspot.value.urls.length) {
+    return previewHotspot.value.urls.filter(Boolean);
+  }
+  return previewHotspot.value.url ? [previewHotspot.value.url] : [];
+});
+
+function targetSceneTitle(id) {
+  if (!id) return '未设置目标场景';
+  const found =
+    allAvailableScenes.value.find((s) => Number(s.id) === Number(id)) ||
+    props.scenes.find((s) => Number(s.id) === Number(id));
+  return found?.title || `#${id}`;
+}
+
+function targetSceneThumb(id) {
+  if (!id) return '';
+  const found =
+    allAvailableScenes.value.find((s) => Number(s.id) === Number(id)) ||
+    props.scenes.find((s) => Number(s.id) === Number(id));
+  return found?.thumb || found?.preview || found?.image || '';
+}
+
+function triggerPreview(hotspot) {
+  if (!hotspot) return;
+  previewHotspot.value = hotspot;
+  previewImageIndex.value = 0;
+
+  // 视口平滑旋转对焦到该热点
+  if (viewer.value && hotspot.yaw !== undefined && hotspot.pitch !== undefined) {
+    viewer.value.animate({
+      yaw: deg(hotspot.yaw),
+      pitch: deg(hotspot.pitch),
+      speed: '3rpm',
+    });
+  }
+
+  previewModalOpen.value = true;
+}
+
+function simulateArrivalView(hotspot) {
+  previewModalOpen.value = false;
+  if (!viewer.value) return;
+  const yaw = hotspot.target_yaw !== null && hotspot.target_yaw !== undefined ? hotspot.target_yaw : initialView.value.yaw;
+  const pitch = hotspot.target_pitch !== null && hotspot.target_pitch !== undefined ? hotspot.target_pitch : initialView.value.pitch;
+  viewer.value.animate({
+    yaw: deg(yaw),
+    pitch: deg(pitch),
+    speed: '3rpm',
+  });
+  message.info(`视角已旋转至到达视角朝向（${Math.round(yaw)}° / ${Math.round(pitch)}°）`);
+}
+
+function openExternalLink(url) {
+  if (!url) return;
+  window.open(url, url.startsWith('http') ? '_blank' : '_self');
+}
+
+watch(previewMode, () => {
+  syncMarkers();
+});
+
 /** 底部提示条文案：告诉用户当前该做什么。 */
 const hint = computed(() => {
+  if (previewMode.value) {
+    return '💡 交互预览模式已开启：点击画面中任意热点，直接体验访客交互效果（弹窗/图集/视频等）';
+  }
   if (placeMode.value !== 'browse') {
     return `「${typeMeta(placeMode.value).label}」放置中：点击全景图空白处落点（Esc 取消）`;
   }
   if (selectedHotspot.value) {
-    return '拖动球面上的圆点可微调位置；右侧面板可改标题与目标';
+    return '拖动圆点微调位置；双击热点或点击右侧「预览效果」可体验访客交互';
   }
-  return '选择一种热点类型后点击画面落点；拖动圆点微调位置';
+  return '点击热点选中编辑（双击可直接预览效果）；拖动圆点可微调位置';
 });
 
 /* ===================== 生命周期 ===================== */
@@ -204,6 +291,8 @@ watch(
   () => props.open,
   async (open) => {
     if (open) {
+      loadSystemIcons();
+      loadTargetScenes();
       resetFromScene();
       window.addEventListener('keydown', onKeydown);
       await nextTick();
@@ -425,7 +514,9 @@ function syncMarkers() {
         html: markerHtml,
         size: { width: 34, height: 34 },
         anchor: 'center center',
-        tooltip: item.title || typeMeta(item.type).label,
+        tooltip: previewMode.value
+          ? `点击预览效果：${item.title || typeMeta(item.type).label}`
+          : `${item.title || typeMeta(item.type).label}（单击编辑，双击预览）`,
         className: item._key === selectedKey.value ? 'pano-edit-marker-selected' : '',
       };
     }),
@@ -467,6 +558,9 @@ function onViewerClick({ yaw, pitch }) {
   syncMarkers();
 }
 
+let lastMarkerClickTime = 0;
+let lastMarkerClickKey = null;
+
 function onMarkerPointerDown(event) {
   const target = event.target?.closest?.('[data-hotspot-key]');
   if (!target) return;
@@ -476,6 +570,26 @@ function onMarkerPointerDown(event) {
 
   event.preventDefault();
 
+  const item = hotspots.value.find((entry) => entry._key === key);
+
+  // 1. 如果处于交互预览模式：点击直接触发该热点的效果预览
+  if (previewMode.value) {
+    if (item) triggerPreview(item);
+    return;
+  }
+
+  // 2. 双击检测（350ms 内连续点击同一热点）：直接打开预览
+  const now = Date.now();
+  if (lastMarkerClickKey === key && now - lastMarkerClickTime < 350) {
+    lastMarkerClickTime = 0;
+    lastMarkerClickKey = null;
+    if (item) triggerPreview(item);
+    return;
+  }
+  lastMarkerClickTime = now;
+  lastMarkerClickKey = key;
+
+  // 3. 正常单击：选中该热点（展开右侧属性表单），并准备拖拽位移
   selectedKey.value = key;
   syncMarkers();
 
@@ -759,27 +873,54 @@ function onKeydown(event) {
       <!-- 左：球面预览 + 放置工具 -->
       <div class="pano-editor-stage">
         <div class="pano-editor-toolbar">
-          <div class="flex items-center gap-2">
-            <span class="text-xs font-medium text-gray-500">布点模式：</span>
-            <Segmented
-              v-model:value="placeMode"
-              size="small"
-              :options="placeOptions"
-            />
+          <div class="flex items-center gap-2 flex-wrap">
+            <div class="flex items-center gap-1 bg-gray-100 p-0.5 rounded border border-gray-200">
+              <Button
+                size="small"
+                :type="!previewMode ? 'primary' : 'text'"
+                class="flex items-center gap-1 text-xs px-2"
+                @click="previewMode = false"
+              >
+                <Icon icon="lucide:edit-3" />
+                <span>编辑模式</span>
+              </Button>
+              <Button
+                size="small"
+                :type="previewMode ? 'primary' : 'text'"
+                class="flex items-center gap-1 text-xs px-2"
+                @click="previewMode = true; selectedKey = null; syncMarkers();"
+              >
+                <Icon icon="lucide:play" />
+                <span>交互预览</span>
+              </Button>
+            </div>
+
+            <div v-show="!previewMode" class="flex items-center gap-1.5">
+              <span class="text-xs font-medium text-gray-500">布点：</span>
+              <Segmented
+                v-model:value="placeMode"
+                size="small"
+                :options="placeOptions"
+              />
+            </div>
           </div>
           <span class="pano-editor-hint">{{ hint }}</span>
           <div class="flex items-center gap-1 flex-shrink-0">
             <Button size="small" @click="captureCurrentView" title="把当前视角采集为场景首屏默认视角">
-              📷 采集首屏
+              <Icon icon="lucide:camera" class="mr-1" />
+              采集首屏
             </Button>
             <Button size="small" @click="captureNorth" :title="`把当前朝向（${Math.round(currentYaw)}°）设为正北`">
-              🧭 设为正北
+              <Icon icon="lucide:compass" class="mr-1" />
+              设为正北
             </Button>
             <Button size="small" @click="previewInitialView" title="转动到首屏视角并恢复视场角">
-              👁️ 预览视角
+              <Icon icon="lucide:eye" class="mr-1" />
+              预览视角
             </Button>
             <Button size="small" type="primary" :loading="saving" @click="save">
-              💾 保存
+              <Icon icon="lucide:save" class="mr-1" />
+              保存
             </Button>
           </div>
         </div>
@@ -892,12 +1033,36 @@ function onKeydown(event) {
                 <span class="pano-editor-item-coord">
                   {{ Math.round(item.yaw) }}° / {{ Math.round(item.pitch) }}°
                 </span>
-                <Popconfirm title="删除该热点？" @confirm="removeHotspot(item._key)">
-                  <Button size="small" type="text" danger @click.stop>删除</Button>
-                </Popconfirm>
+                <div class="flex items-center gap-1" @click.stop>
+                  <Button
+                    size="small"
+                    type="text"
+                    title="预览此热点效果"
+                    class="p-0.5 text-gray-400 hover:text-blue-600 flex items-center justify-center"
+                    @click="triggerPreview(item)"
+                  >
+                    <Icon icon="lucide:eye" class="text-sm" />
+                  </Button>
+                  <Popconfirm title="删除该热点？" @confirm="removeHotspot(item._key)">
+                    <Button size="small" type="text" danger class="p-0.5">删除</Button>
+                  </Popconfirm>
+                </div>
               </div>
 
               <div v-if="item._key === selectedKey" class="pano-editor-item-body">
+                <div class="flex items-center justify-between bg-blue-50/80 px-2 py-1 rounded mb-2 border border-blue-100">
+                  <span class="text-xs font-semibold text-blue-900">属性配置</span>
+                  <Button
+                    size="small"
+                    type="primary"
+                    ghost
+                    class="flex items-center gap-1 text-xs h-6 px-2"
+                    @click="triggerPreview(item)"
+                  >
+                    <Icon icon="lucide:play-circle" />
+                    <span>预览效果</span>
+                  </Button>
+                </div>
                 <div class="pano-editor-field">
                   <label>标题</label>
                   <Input v-model:value="item.title" size="small" placeholder="鼠标悬停显示的文字" />
@@ -1043,6 +1208,150 @@ function onKeydown(event) {
       </aside>
     </div>
   
+    <!-- 热点效果交互预览弹窗 -->
+    <Modal
+      v-model:open="previewModalOpen"
+      :title="`热点效果预览 · ${previewHotspot ? typeMeta(previewHotspot.type).label : ''}`"
+      :footer="null"
+      width="540px"
+      destroy-on-close
+    >
+      <div v-if="previewHotspot" class="py-2">
+        <!-- 1. 场景跳转预览 -->
+        <div v-if="previewHotspot.type === 'scene'" class="space-y-3">
+          <div class="flex items-center gap-3 p-3 bg-blue-50/70 border border-blue-100 rounded-lg">
+            <Icon icon="lucide:arrow-right-circle" class="text-2xl text-blue-600 flex-shrink-0" />
+            <div class="min-w-0">
+              <h4 class="text-sm font-semibold text-gray-800 mb-0.5 truncate">
+                目标场景：{{ targetSceneTitle(previewHotspot.target_scene_id) }}
+              </h4>
+              <p class="text-xs text-gray-500 mb-0">
+                到达视角：
+                <template v-if="previewHotspot.target_yaw !== null && previewHotspot.target_yaw !== undefined">
+                  Yaw: {{ Math.round(previewHotspot.target_yaw) }}° / Pitch: {{ Math.round(previewHotspot.target_pitch) }}°
+                </template>
+                <template v-else>使用目标场景自身默认首屏视角</template>
+              </p>
+            </div>
+          </div>
+
+          <div v-if="targetSceneThumb(previewHotspot.target_scene_id)" class="rounded-lg overflow-hidden border border-gray-200 aspect-[2/1] relative bg-gray-900">
+            <img :src="targetSceneThumb(previewHotspot.target_scene_id)" class="w-full h-full object-cover" alt="" />
+            <div class="absolute bottom-2 left-2 bg-black/60 text-white text-xs px-2 py-0.5 rounded backdrop-blur">
+              目标全景底图预览
+            </div>
+          </div>
+
+          <div class="flex justify-end gap-2 pt-2">
+            <Button @click="previewModalOpen = false">关闭</Button>
+            <Button
+              v-if="previewHotspot.target_yaw !== null && previewHotspot.target_yaw !== undefined"
+              type="primary"
+              ghost
+              @click="simulateArrivalView(previewHotspot)"
+            >
+              <Icon icon="lucide:compass" class="mr-1" />
+              在视口中预览到达朝向
+            </Button>
+          </div>
+        </div>
+
+        <!-- 2. 图文说明预览 -->
+        <div v-else-if="previewHotspot.type === 'info'" class="space-y-3">
+          <div class="flex items-center gap-2 border-b pb-2">
+            <Icon icon="lucide:info" class="text-lg text-emerald-600" />
+            <h4 class="text-sm font-semibold text-gray-800 m-0">{{ previewHotspot.title || '说明介绍' }}</h4>
+          </div>
+          <div class="text-xs text-gray-600 leading-relaxed whitespace-pre-wrap bg-gray-50 p-3 rounded-lg max-h-60 overflow-y-auto">
+            {{ previewHotspot.content || '暂未填写说明内容' }}
+          </div>
+          <div class="flex justify-end pt-2">
+            <Button type="primary" @click="previewModalOpen = false">我知道了</Button>
+          </div>
+        </div>
+
+        <!-- 3. 图片/相册预览 -->
+        <div v-else-if="previewHotspot.type === 'image'" class="space-y-3">
+          <div class="flex items-center justify-between border-b pb-2">
+            <div class="flex items-center gap-2">
+              <Icon icon="lucide:image" class="text-lg text-purple-600" />
+              <h4 class="text-sm font-semibold text-gray-800 m-0">{{ previewHotspot.title || '图片相册' }}</h4>
+            </div>
+            <span v-if="previewGalleryUrls.length > 1" class="text-xs text-gray-400">
+              {{ previewImageIndex + 1 }} / {{ previewGalleryUrls.length }}
+            </span>
+          </div>
+
+          <div v-if="!previewGalleryUrls.length" class="text-center py-8 text-xs text-gray-400">
+            暂未配置图片地址
+          </div>
+          <div v-else class="flex flex-col items-center">
+            <div class="w-full max-h-[46vh] flex items-center justify-center bg-gray-950 rounded-lg overflow-hidden p-2">
+              <img
+                :src="previewGalleryUrls[previewImageIndex]"
+                class="max-h-[42vh] max-w-full object-contain rounded"
+                alt="图片预览"
+              />
+            </div>
+            <div v-if="previewGalleryUrls.length > 1" class="flex items-center justify-center gap-2 mt-3 overflow-x-auto max-w-full py-1">
+              <button
+                v-for="(url, idx) in previewGalleryUrls"
+                :key="idx"
+                class="w-12 h-12 rounded border-2 overflow-hidden flex-shrink-0 transition-all p-0 bg-transparent"
+                :class="previewImageIndex === idx ? 'border-purple-500 scale-105' : 'border-transparent opacity-60 hover:opacity-100'"
+                @click="previewImageIndex = idx"
+              >
+                <img :src="url" class="w-full h-full object-cover" alt="" />
+              </button>
+            </div>
+          </div>
+          <div class="flex justify-end pt-2">
+            <Button @click="previewModalOpen = false">关闭</Button>
+          </div>
+        </div>
+
+        <!-- 4. 视频播放预览 -->
+        <div v-else-if="previewHotspot.type === 'video'" class="space-y-3">
+          <div class="flex items-center gap-2 border-b pb-2">
+            <Icon icon="lucide:video" class="text-lg text-purple-600" />
+            <h4 class="text-sm font-semibold text-gray-800 m-0">{{ previewHotspot.title || '视频播放' }}</h4>
+          </div>
+          <div v-if="!previewHotspot.url" class="text-center py-8 text-xs text-gray-400">
+            暂未配置视频播放地址
+          </div>
+          <div v-else class="rounded-lg overflow-hidden bg-black flex items-center justify-center">
+            <video :src="previewHotspot.url" controls autoplay class="w-full max-h-[46vh]" />
+          </div>
+          <div class="flex justify-end pt-2">
+            <Button @click="previewModalOpen = false">关闭</Button>
+          </div>
+        </div>
+
+        <!-- 5. 网页外链预览 -->
+        <div v-else-if="previewHotspot.type === 'link'" class="space-y-3">
+          <div class="flex items-center gap-2 border-b pb-2">
+            <Icon icon="lucide:link-2" class="text-lg text-amber-600" />
+            <h4 class="text-sm font-semibold text-gray-800 m-0">{{ previewHotspot.title || '外链跳转' }}</h4>
+          </div>
+          <div class="p-3 bg-amber-50/60 border border-amber-100 rounded-lg text-xs break-all">
+            <span class="text-gray-500">跳转网址：</span>
+            <span class="text-blue-600 font-mono">{{ previewHotspot.url || '未填写链接' }}</span>
+          </div>
+          <div class="flex justify-end gap-2 pt-2">
+            <Button @click="previewModalOpen = false">关闭</Button>
+            <Button
+              v-if="previewHotspot.url"
+              type="primary"
+              @click="openExternalLink(previewHotspot.url)"
+            >
+              <Icon icon="lucide:external-link" class="mr-1" />
+              新窗口测试打开
+            </Button>
+          </div>
+        </div>
+      </div>
+    </Modal>
+
     <!-- 热点图标选择器弹窗 -->
     <HotspotIconPicker
       v-model:open="iconPickerOpen"

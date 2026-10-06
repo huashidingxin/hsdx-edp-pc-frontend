@@ -119,6 +119,8 @@ const props = defineProps({
 const emit = defineEmits([
   'update:modelValue',
   'update:list',
+  'update:meta',
+  'update:pagination',
   'update:selected',
   'update:filters',
   'reset',
@@ -454,6 +456,13 @@ defineExpose({
   reload: dataApi.reload,
   search: dataApi.search,
   getGrid: () => crudGridRef.value?.getGridInstance?.(),
+  pagerConfig: gridState.pagerConfig,
+  setPage: (page, pageSize) => {
+    if (page) gridState.pagerConfig.currentPage = page;
+    if (pageSize) gridState.pagerConfig.pageSize = pageSize;
+    dataApi.handlePageData();
+  },
+  handlePageChange,
   // 筛选
   setFilterState: filterApi.setFilterState,
   resetFilters: filterApi.reset,

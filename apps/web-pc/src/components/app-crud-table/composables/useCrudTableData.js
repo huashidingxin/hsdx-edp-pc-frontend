@@ -189,6 +189,14 @@ export function useCrudTableData(props, ctx) {
       }
 
       ctx.emit('update:list', flatData);
+      if (meta) {
+        ctx.emit('update:meta', meta);
+      }
+      ctx.emit('update:pagination', {
+        total: gridOptions.pagerConfig.total,
+        currentPage: gridOptions.pagerConfig.currentPage,
+        pageSize: gridOptions.pagerConfig.pageSize,
+      });
     } catch (error) {
       console.error('[AppCrudTable] loadList error:', error);
       // 保留前一次成功数据

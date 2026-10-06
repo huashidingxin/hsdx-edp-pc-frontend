@@ -10,6 +10,7 @@
  *   5. 默认圆点：一键清空自定义图标，沿用高反差通用标记。
  */
 import { computed, onMounted, ref, watch } from 'vue';
+import { IconifyIcon as Icon } from '@vben/icons';
 import {
   Button,
   Empty,
@@ -254,7 +255,7 @@ function handleCancel() {
               @change="handleCustomUpload"
             />
             <label for="hotspot-custom-icon-file" class="upload-label">
-              <span class="upload-icon">📁</span>
+              <Icon icon="lucide:folder-up" class="text-3xl text-blue-500 mb-2" />
               <span class="upload-title">点击选择图片或拖拽上传</span>
               <span class="upload-tip">建议尺寸 80×80 ~ 128×128 的透明底 PNG，文件自动归一至素材库</span>
             </label>
@@ -299,7 +300,7 @@ function handleCancel() {
               <div class="icon-card-info">
                 <span class="icon-card-name" :title="item.label">{{ item.label }}</span>
               </div>
-              <span v-if="isSelected(item)" class="icon-card-check">✓</span>
+              <span v-if="isSelected(item)" class="icon-card-check"><Icon icon="lucide:check" class="text-xs" /></span>
             </div>
           </div>
         </div>

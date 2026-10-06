@@ -15,6 +15,7 @@
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 
+import { IconifyIcon as Icon } from '@vben/icons';
 import {
   Button,
   ColorPicker,
@@ -24,6 +25,7 @@ import {
   Input,
   InputNumber,
   Modal,
+  Pagination,
   Popconfirm,
   Progress,
   Radio,
@@ -69,29 +71,72 @@ const cardGroupFilter = ref('all');
 const cardSearchText = ref('');
 const reordering = ref(false);
 
-const availableGroups = computed(() => {
-  const set = new Set();
-  for (const s of allScenes.value) {
-    if (s.group && s.group.trim()) set.add(s.group.trim());
-  }
-  return Array.from(set);
+const pagination = reactive({
+  currentPage: 1,
+  pageSize: 15,
+  total: 0,
 });
 
-const filteredCardScenes = computed(() => {
-  let list = allScenes.value;
-  if (cardGroupFilter.value !== 'all') {
-    list = list.filter((s) => s.group === cardGroupFilter.value);
+const serverGroups = ref([]);
+
+async function loadGroups() {
+  try {
+    const res = await requestClient.get('/panorama-scenes/groups');
+    serverGroups.value = Array.isArray(res) ? res : res?.data || [];
+  } catch (e) {
+    console.warn('[list.vue] loadGroups error:', e);
   }
-  const kw = cardSearchText.value.trim().toLowerCase();
-  if (kw) {
-    list = list.filter(
-      (s) =>
-        (s.title && s.title.toLowerCase().includes(kw)) ||
-        (s.code && s.code.toLowerCase().includes(kw)),
-    );
-  }
-  return list;
+}
+
+onMounted(() => {
+  loadGroups();
 });
+
+const availableGroups = computed(() => serverGroups.value);
+
+const filteredCardScenes = computed(() => allScenes.value);
+
+function selectGroup(grp) {
+  cardGroupFilter.value = grp;
+  crudRef.value?.setFilterState?.({ group: grp === 'all' ? undefined : grp });
+  crudRef.value?.applyFilters?.();
+}
+
+function handleCardSearch() {
+  const kw = cardSearchText.value.trim();
+  crudRef.value?.setFilterState?.({ keyword: kw });
+  crudRef.value?.applyFilters?.();
+}
+
+function clearCardSearch() {
+  cardSearchText.value = '';
+  crudRef.value?.setFilterState?.({ keyword: '' });
+  crudRef.value?.applyFilters?.();
+}
+
+function onListUpdate(rows) {
+  allScenes.value = Array.isArray(rows) ? rows : [];
+}
+
+function onMetaUpdate(meta) {
+  if (!meta) return;
+  if (meta.total !== undefined) pagination.total = Number(meta.total);
+  if (meta.current_page !== undefined) pagination.currentPage = Number(meta.current_page);
+  if (meta.per_page !== undefined) pagination.pageSize = Number(meta.per_page);
+}
+
+function onPaginationUpdate(p) {
+  if (!p) return;
+  if (p.total !== undefined) pagination.total = Number(p.total);
+  if (p.currentPage !== undefined) pagination.currentPage = Number(p.currentPage);
+  if (p.pageSize !== undefined) pagination.pageSize = Number(p.pageSize);
+}
+
+function onCardPageChange(page, pageSize) {
+  pagination.currentPage = page;
+  pagination.pageSize = pageSize;
+  crudRef.value?.setPage?.(page, pageSize);
+}
 
 async function setAsFirstScene(scene) {
   if (allScenes.value.length <= 1 || allScenes.value[0]?.id === scene.id) return;
@@ -994,21 +1039,40 @@ watch(
           <div>
             <h2 class="text-base font-semibold text-gray-800 flex items-center gap-2 mb-1">
               全景漫游场景管理
-              <Tag color="blue" class="text-xs">共 {{ allScenes.length }} 个场景</Tag>
+              <Tag color="blue" class="text-xs">共 {{ pagination.total || allScenes.length }} 个场景</Tag>
             </h2>
             <p class="text-xs text-gray-400 mb-0">
               一个场景 = 一张 2:1 全景底图；点击「全景编辑」进入 3D 视口所见即所得布点与视角微调；支持一键设首场景。
             </p>
           </div>
           <div class="flex items-center gap-2 flex-wrap">
-            <Button @click="openSand">🗺️ 电子沙盘</Button>
-            <Button @click="openSettings">⚙️ 漫游设置</Button>
-            <Button type="primary" ghost @click="openBatch">⚡ 批量上传全景图</Button>
-            <Button type="primary" @click="crudRef?.openDetail(null, true)">+ 新建单个场景</Button>
-            <Radio.Group v-model:value="viewMode" size="small" button-style="solid">
-              <Radio.Button value="card">🎴 卡片视图</Radio.Button>
-              <Radio.Button value="table">📋 表格视图</Radio.Button>
-            </Radio.Group>
+            <Button @click="openSand">
+              <Icon icon="lucide:map" class="mr-1" />
+              电子沙盘
+            </Button>
+            <Button @click="openSettings">
+              <Icon icon="lucide:settings" class="mr-1" />
+              漫游设置
+            </Button>
+            <Button type="primary" ghost @click="openBatch">
+              <Icon icon="lucide:upload-cloud" class="mr-1" />
+              批量上传全景图
+            </Button>
+            <Button type="primary" @click="crudRef?.openDetail(null, true)">
+              <Icon icon="lucide:plus" class="mr-1" />
+              新建单个场景
+            </Button>
+            <Tooltip :title="viewMode === 'card' ? '切换为表格视图' : '切换为卡片视图'">
+              <Button
+                class="flex items-center justify-center px-2.5"
+                @click="viewMode = viewMode === 'card' ? 'table' : 'card'"
+              >
+                <Icon
+                  :icon="viewMode === 'card' ? 'lucide:list' : 'lucide:layout-grid'"
+                  class="text-base"
+                />
+              </Button>
+            </Tooltip>
           </div>
         </div>
 
@@ -1018,16 +1082,16 @@ watch(
             <Button
               size="small"
               :type="cardGroupFilter === 'all' ? 'primary' : 'default'"
-              @click="cardGroupFilter = 'all'"
+              @click="selectGroup('all')"
             >
-              全部 ({{ allScenes.length }})
+              全部 ({{ pagination.total || allScenes.length }})
             </Button>
             <Button
               v-for="grp in availableGroups"
               :key="grp"
               size="small"
               :type="cardGroupFilter === grp ? 'primary' : 'default'"
-              @click="cardGroupFilter = grp"
+              @click="selectGroup(grp)"
             >
               {{ grp }}
             </Button>
@@ -1035,10 +1099,12 @@ watch(
 
           <Input.Search
             v-model:value="cardSearchText"
-            placeholder="搜索场景名称或编码..."
+            placeholder="按场景标题搜索..."
             size="small"
             style="width: 220px"
             allow-clear
+            @search="handleCardSearch"
+            @clear="clearCardSearch"
           />
         </div>
       </div>
@@ -1067,9 +1133,14 @@ watch(
             </div>
 
             <div class="absolute top-2 left-2 flex items-center gap-1.5 z-10">
-              <span class="scene-order-badge">#{{ index + 1 }}</span>
-              <Tag v-if="index === 0 && cardGroupFilter === 'all'" color="gold" class="m-0 font-medium shadow-sm">
-                ★ 开场首场景
+              <span class="scene-order-badge">#{{ (pagination.currentPage - 1) * pagination.pageSize + index + 1 }}</span>
+              <Tag
+                v-if="index === 0 && cardGroupFilter === 'all' && pagination.currentPage === 1"
+                color="gold"
+                class="m-0 font-medium shadow-sm inline-flex items-center"
+              >
+                <Icon icon="lucide:star" class="text-amber-500 fill-amber-400 mr-1 text-xs" />
+                开场首场景
               </Tag>
               <Tag
                 :color="(TILE_META[scene.tile_status] || TILE_META.none).color"
@@ -1083,10 +1154,11 @@ watch(
               <Button
                 type="primary"
                 size="middle"
-                class="shadow-lg"
+                class="shadow-lg inline-flex items-center gap-1.5"
                 @click="openEditor(scene)"
               >
-                🎯 进入全景编辑
+                <Icon icon="lucide:crosshair" />
+                <span>进入全景编辑</span>
               </Button>
             </div>
           </div>
@@ -1102,10 +1174,26 @@ watch(
             </div>
 
             <div class="grid grid-cols-2 gap-1 text-[11px] text-gray-500 bg-gray-50 p-2 rounded">
-              <div>🎯 热点数：<span class="font-medium text-gray-700">{{ scene.hotspot_count ?? scene.hotspots?.length ?? 0 }}</span></div>
-              <div>📐 视角：<span class="font-medium text-gray-700">{{ Math.round(scene.initial_yaw || 0) }}° / {{ Math.round(scene.initial_pitch || 0) }}°</span></div>
-              <div>🧭 北向：<span class="font-medium text-gray-700">{{ Math.round(scene.north_offset || 0) }}°</span></div>
-              <div>尺寸：<span class="font-medium text-gray-700">{{ scene.width ? `${scene.width}×${scene.height}` : '-' }}</span></div>
+              <div class="flex items-center gap-1">
+                <Icon icon="lucide:map-pin" class="text-gray-400 text-xs" />
+                <span>热点数：</span>
+                <span class="font-medium text-gray-700">{{ scene.hotspot_count ?? scene.hotspots?.length ?? 0 }}</span>
+              </div>
+              <div class="flex items-center gap-1">
+                <Icon icon="lucide:eye" class="text-gray-400 text-xs" />
+                <span>视角：</span>
+                <span class="font-medium text-gray-700">{{ Math.round(scene.initial_yaw || 0) }}° / {{ Math.round(scene.initial_pitch || 0) }}°</span>
+              </div>
+              <div class="flex items-center gap-1">
+                <Icon icon="lucide:compass" class="text-gray-400 text-xs" />
+                <span>北向：</span>
+                <span class="font-medium text-gray-700">{{ Math.round(scene.north_offset || 0) }}°</span>
+              </div>
+              <div class="flex items-center gap-1">
+                <Icon icon="lucide:maximize-2" class="text-gray-400 text-xs" />
+                <span>尺寸：</span>
+                <span class="font-medium text-gray-700">{{ scene.width ? `${scene.width}×${scene.height}` : '-' }}</span>
+              </div>
             </div>
 
             <div class="pt-2 border-t border-gray-100 flex items-center justify-between">
@@ -1160,6 +1248,28 @@ watch(
           </div>
         </div>
       </div>
+
+      <!-- 卡片分页条 -->
+      <div
+        v-if="pagination.total > 0"
+        class="cards-pagination-bar mt-6 p-4 bg-white rounded-lg shadow-sm border border-gray-100 flex items-center justify-between flex-wrap gap-3"
+      >
+        <div class="text-xs text-gray-500">
+          显示第 {{ (pagination.currentPage - 1) * pagination.pageSize + 1 }} - {{ Math.min(pagination.currentPage * pagination.pageSize, pagination.total) }} 条，共 {{ pagination.total }} 个场景
+        </div>
+        <Pagination
+          v-model:current="pagination.currentPage"
+          v-model:pageSize="pagination.pageSize"
+          :total="pagination.total"
+          :show-size-changer="true"
+          :show-quick-jumper="true"
+          :page-size-options="['12', '15', '24', '30', '50']"
+          :show-total="(total) => `共 ${total} 个场景`"
+          size="small"
+          @change="onCardPageChange"
+          @show-size-change="onCardPageChange"
+        />
+      </div>
     </div>
 
     <!-- 表格视图 -->
@@ -1186,7 +1296,9 @@ watch(
       permission-name="cms.panorama"
       title="全景场景"
       class="p-4"
-      @update:list="allScenes = $event"
+      @update:list="onListUpdate"
+      @update:meta="onMetaUpdate"
+      @update:pagination="onPaginationUpdate"
       @saved="onSaved"
     >
       <template #sub-title>
@@ -1196,13 +1308,29 @@ watch(
       </template>
 
       <template #toolbar-append>
-        <Button class="mr-2" @click="openSand">电子沙盘</Button>
-        <Button class="mr-2" @click="openSettings">漫游设置</Button>
-        <Button type="primary" ghost class="mr-2" @click="openBatch">批量上传</Button>
-        <Radio.Group v-model:value="viewMode" size="small" button-style="solid">
-          <Radio.Button value="card">🎴 卡片视图</Radio.Button>
-          <Radio.Button value="table">📋 表格视图</Radio.Button>
-        </Radio.Group>
+        <Button class="mr-2" @click="openSand">
+          <Icon icon="lucide:map" class="mr-1" />
+          电子沙盘
+        </Button>
+        <Button class="mr-2" @click="openSettings">
+          <Icon icon="lucide:settings" class="mr-1" />
+          漫游设置
+        </Button>
+        <Button type="primary" ghost class="mr-2" @click="openBatch">
+          <Icon icon="lucide:upload-cloud" class="mr-1" />
+          批量上传
+        </Button>
+        <Tooltip :title="viewMode === 'card' ? '切换为表格视图' : '切换为卡片视图'">
+          <Button
+            class="flex items-center justify-center px-2.5 mr-2"
+            @click="viewMode = viewMode === 'card' ? 'table' : 'card'"
+          >
+            <Icon
+              :icon="viewMode === 'card' ? 'lucide:list' : 'lucide:layout-grid'"
+              class="text-base"
+            />
+          </Button>
+        </Tooltip>
       </template>
 
       <template #default_thumb="{ row }">
