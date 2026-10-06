@@ -180,6 +180,8 @@ async function loadSystemIcons() {
   try {
     const res = await requestClient.get('/panorama-scenes/icons');
     systemIcons.value = Array.isArray(res) ? res : (res?.data || []);
+    // 系统图标清单就绪后，重新渲染三维视口内的热点标记，避免首帧缺少缩略图
+    syncMarkers();
   } catch (err) {
     console.warn('[panorama-editor] loadSystemIcons failed:', err);
   }
@@ -196,10 +198,12 @@ function findIconMeta(iconKeyOrPath) {
   );
 }
 
-function iconThumbOf(iconKeyOrPath) {
-  if (!iconKeyOrPath) return '';
+function iconThumbOf(iconKeyOrPath, fallbackThumbUrl = '') {
+  if (!iconKeyOrPath && !fallbackThumbUrl) return '';
   const meta = findIconMeta(iconKeyOrPath);
   if (meta) return meta.thumb_url || meta.url;
+  // 优先采用后端返回的单帧缩略图地址（非多帧雪碧长图）
+  if (typeof fallbackThumbUrl === 'string' && fallbackThumbUrl.startsWith('http')) return fallbackThumbUrl;
   if (typeof iconKeyOrPath === 'string' && iconKeyOrPath.startsWith('http')) return iconKeyOrPath;
   return '';
 }
@@ -215,9 +219,11 @@ function openIconPicker(item) {
   iconPickerOpen.value = true;
 }
 
-function onIconSelected({ icon }) {
+function onIconSelected(selected) {
   if (currentEditingHotspot.value) {
-    currentEditingHotspot.value.icon = icon;
+    currentEditingHotspot.value.icon = selected.icon;
+    currentEditingHotspot.value.icon_url = selected.url || '';
+    currentEditingHotspot.value.icon_thumb_url = selected.thumb_url || selected.url || '';
     syncMarkers();
   }
 }
@@ -387,6 +393,8 @@ function resetFromScene() {
       ? [...item.urls]
       : (item.url ? [item.url] : []),
     icon: item.icon || '',
+    icon_url: item.icon_url || '',
+    icon_thumb_url: item.icon_thumb_url || '',
     yaw: Number(item.yaw || 0),
     pitch: Number(item.pitch || 0),
     size: Number(item.size || 50),
@@ -562,7 +570,7 @@ function syncMarkers() {
 
   plugin.setMarkers(
     hotspots.value.map((item, index) => {
-      const thumb = iconThumbOf(item.icon);
+      const thumb = iconThumbOf(item.icon, item.icon_thumb_url);
       const markerHtml = thumb
         ? `<div class="pano-edit-marker pano-edit-marker-custom psv--capture-event" data-type="${item.type}" data-hotspot-key="${item._key}"><img src="${thumb}" class="pano-marker-img" /></div>`
         : `<div class="pano-edit-marker psv--capture-event" data-type="${item.type}" data-hotspot-key="${item._key}">${index + 1}</div>`;
@@ -1111,8 +1119,8 @@ function onKeydown(event) {
                     <div class="flex items-center gap-2 min-w-0">
                       <span v-if="!item.icon" class="pano-icon-dot-preview" title="默认高反差圆点"></span>
                       <img
-                        v-else-if="iconThumbOf(item.icon)"
-                        :src="iconThumbOf(item.icon)"
+                        v-else-if="iconThumbOf(item.icon, item.icon_thumb_url)"
+                        :src="iconThumbOf(item.icon, item.icon_thumb_url)"
                         class="w-7 h-7 object-contain rounded border bg-white p-0.5"
                         alt="图标"
                       />
@@ -1934,19 +1942,6 @@ function onKeydown(event) {
   box-shadow: 0 0 0 1px #cbd5e1;
 }
 
-.pano-edit-marker-custom {
-  background: #ffffff !important;
-  border: 2px solid #3b82f6 !important;
-  padding: 2px;
-}
-
-.pano-marker-img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  pointer-events: none;
-}
-
 </style>
 
 <style>
@@ -1967,6 +1962,24 @@ function onKeydown(event) {
   border-radius: 50%;
   box-shadow: 0 2px 8px rgb(0 0 0 / 45%);
   user-select: none;
+  overflow: hidden;
+}
+
+.pano-edit-marker-custom {
+  background: #ffffff !important;
+  border: 2px solid #3b82f6 !important;
+  padding: 2px;
+  overflow: hidden;
+}
+
+.pano-marker-img {
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+  pointer-events: none;
 }
 
 .pano-edit-marker:active {
