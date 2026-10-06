@@ -56,7 +56,7 @@ const props = defineProps({
   scenes: { type: Array, default: () => [] },
 });
 
-const emit = defineEmits(['update:open', 'saved']);
+const emit = defineEmits(['update:open', 'saved', 'switchScene']);
 
 /** 热点类型元数据：类型 → 中文名 / 颜色 / 图标。 */
 const HOTSPOT_TYPES = [
@@ -118,24 +118,57 @@ const allAvailableScenes = ref([]);
 
 async function loadTargetScenes() {
   try {
-    const res = await requestClient.get('/panorama-scenes', { params: { per_page: 500 } });
+    const headers = {};
+    const appId = scene.value?.application_id;
+    if (appId) {
+      headers['X-Application-Id'] = String(appId);
+    }
+    const res = await requestClient.get('/panorama-scenes', {
+      params: { per_page: 'all' },
+      headers,
+    });
     const list = Array.isArray(res) ? res : res?.items || res?.data || [];
     allAvailableScenes.value = list;
   } catch (err) {
+    console.warn('[panorama-editor] loadTargetScenes failed:', err);
     allAvailableScenes.value = props.scenes || [];
   }
 }
 
 const targetSceneOptions = computed(() => {
+  const currentId = Number(sceneId.value);
   const pool = allAvailableScenes.value.length ? allAvailableScenes.value : props.scenes;
   return pool
-    .filter((item) => Number(item.id) !== Number(sceneId.value))
-    .map((item) => ({
-      label: item.title || `#${item.id}`,
-      value: item.id,
-      thumb: item.thumb || item.preview || item.image,
-    }));
+    .filter((item) => Number(item.id) !== currentId)
+    .map((item) => {
+      const groupPrefix = item.group ? `[${item.group}] ` : '';
+      return {
+        label: `${groupPrefix}${item.title || `场景 #${item.id}`}`,
+        value: Number(item.id),
+        thumb: item.thumb || item.preview || item.image || '',
+        group: item.group || '',
+      };
+    });
 });
+
+const allSceneSwitcherOptions = computed(() => {
+  const pool = allAvailableScenes.value.length ? allAvailableScenes.value : props.scenes;
+  return pool.map((item) => {
+    const groupPrefix = item.group ? `[${item.group}] ` : '';
+    return {
+      label: `${groupPrefix}${item.title || `场景 #${item.id}`}`,
+      value: Number(item.id),
+    };
+  });
+});
+
+function onSwitchActiveScene(newId) {
+  const pool = allAvailableScenes.value.length ? allAvailableScenes.value : props.scenes;
+  const target = pool.find((s) => Number(s.id) === Number(newId));
+  if (target) {
+    emit('switchScene', target);
+  }
+}
 
 /** 系统预设图标字典（从后端动态加载，98+ 分类图标） */
 const systemIcons = ref([]);
@@ -249,8 +282,20 @@ function triggerPreview(hotspot) {
   previewModalOpen.value = true;
 }
 
+const galleryPreviewIndices = ref({});
+
+function activeImagePreviewIndex(item) {
+  const current = galleryPreviewIndices.value[item._key] ?? 0;
+  const len = Array.isArray(item.urls) ? item.urls.length : (item.url ? 1 : 0);
+  if (current >= len && len > 0) return 0;
+  return current;
+}
+
+function setImagePreviewIndex(key, idx) {
+  galleryPreviewIndices.value[key] = idx;
+}
+
 function simulateArrivalView(hotspot) {
-  previewModalOpen.value = false;
   if (!viewer.value) return;
   const yaw = hotspot.target_yaw !== null && hotspot.target_yaw !== undefined ? hotspot.target_yaw : initialView.value.yaw;
   const pitch = hotspot.target_pitch !== null && hotspot.target_pitch !== undefined ? hotspot.target_pitch : initialView.value.pitch;
@@ -274,15 +319,15 @@ watch(previewMode, () => {
 /** 底部提示条文案：告诉用户当前该做什么。 */
 const hint = computed(() => {
   if (previewMode.value) {
-    return '💡 交互预览模式已开启：点击画面中任意热点，直接体验访客交互效果（弹窗/图集/视频等）';
+    return '💡 交互预览模式已开启：点击画面中任意热点体验访客交互效果';
   }
   if (placeMode.value !== 'browse') {
     return `「${typeMeta(placeMode.value).label}」放置中：点击全景图空白处落点（Esc 取消）`;
   }
   if (selectedHotspot.value) {
-    return '拖动圆点微调位置；双击热点或点击右侧「预览效果」可体验访客交互';
+    return '拖动圆点微调位置；右侧实时展示访客端交互效果';
   }
-  return '点击热点选中编辑（双击可直接预览效果）；拖动圆点可微调位置';
+  return '点击画面热点选中编辑；拖动圆点微调位置；右侧实时展示预览效果';
 });
 
 /* ===================== 生命周期 ===================== */
@@ -303,6 +348,18 @@ watch(
     }
   },
   { immediate: true },
+);
+
+watch(
+  () => props.scene?.id,
+  async (newId, oldId) => {
+    if (props.open && newId && newId !== oldId) {
+      loadTargetScenes();
+      resetFromScene();
+      await nextTick();
+      mountViewer();
+    }
+  },
 );
 
 onBeforeUnmount(() => {
@@ -344,7 +401,8 @@ function resetFromScene() {
   };
   northOffset.value = Number(source.north_offset || 0);
 
-  selectedKey.value = null;
+  // 切换场景时默认选中第一个热点，使得右侧编辑区立刻呈现属性与实时预览
+  selectedKey.value = hotspots.value.length ? hotspots.value[0]._key : null;
   placeMode.value = 'browse';
   currentYaw.value = initialView.value.yaw;
 }
@@ -516,7 +574,7 @@ function syncMarkers() {
         anchor: 'center center',
         tooltip: previewMode.value
           ? `点击预览效果：${item.title || typeMeta(item.type).label}`
-          : `${item.title || typeMeta(item.type).label}（单击编辑，双击预览）`,
+          : `${item.title || typeMeta(item.type).label}（点击选中编辑，右侧实时预览）`,
         className: item._key === selectedKey.value ? 'pano-edit-marker-selected' : '',
       };
     }),
@@ -558,9 +616,6 @@ function onViewerClick({ yaw, pitch }) {
   syncMarkers();
 }
 
-let lastMarkerClickTime = 0;
-let lastMarkerClickKey = null;
-
 function onMarkerPointerDown(event) {
   const target = event.target?.closest?.('[data-hotspot-key]');
   if (!target) return;
@@ -578,18 +633,7 @@ function onMarkerPointerDown(event) {
     return;
   }
 
-  // 2. 双击检测（350ms 内连续点击同一热点）：直接打开预览
-  const now = Date.now();
-  if (lastMarkerClickKey === key && now - lastMarkerClickTime < 350) {
-    lastMarkerClickTime = 0;
-    lastMarkerClickKey = null;
-    if (item) triggerPreview(item);
-    return;
-  }
-  lastMarkerClickTime = now;
-  lastMarkerClickKey = key;
-
-  // 3. 正常单击：选中该热点（展开右侧属性表单），并准备拖拽位移
+  // 2. 正常单击：选中该热点（展开右侧属性表单及其实时预览），并准备拖拽位移
   selectedKey.value = key;
   syncMarkers();
 
@@ -865,8 +909,19 @@ function onKeydown(event) {
     @close="emit('update:open', false)"
   >
     <template #extra>
-      <span v-if="scene.title" class="mr-3 text-xs text-gray-400">{{ scene.title }}</span>
-      <Tag :color="tileStatus.color">{{ tileStatus.text }}</Tag>
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-gray-500">当前场景：</span>
+        <Select
+          :value="sceneId"
+          size="small"
+          show-search
+          :filter-option="(input, option) => (option?.label || '').toLowerCase().includes(input.toLowerCase())"
+          style="min-width: 160px; max-width: 240px"
+          :options="allSceneSwitcherOptions"
+          @change="onSwitchActiveScene"
+        />
+        <Tag :color="tileStatus.color">{{ tileStatus.text }}</Tag>
+      </div>
     </template>
 
     <div v-if="open" class="pano-editor">
@@ -1034,15 +1089,6 @@ function onKeydown(event) {
                   {{ Math.round(item.yaw) }}° / {{ Math.round(item.pitch) }}°
                 </span>
                 <div class="flex items-center gap-1" @click.stop>
-                  <Button
-                    size="small"
-                    type="text"
-                    title="预览此热点效果"
-                    class="p-0.5 text-gray-400 hover:text-blue-600 flex items-center justify-center"
-                    @click="triggerPreview(item)"
-                  >
-                    <Icon icon="lucide:eye" class="text-sm" />
-                  </Button>
                   <Popconfirm title="删除该热点？" @confirm="removeHotspot(item._key)">
                     <Button size="small" type="text" danger class="p-0.5">删除</Button>
                   </Popconfirm>
@@ -1050,18 +1096,9 @@ function onKeydown(event) {
               </div>
 
               <div v-if="item._key === selectedKey" class="pano-editor-item-body">
-                <div class="flex items-center justify-between bg-blue-50/80 px-2 py-1 rounded mb-2 border border-blue-100">
-                  <span class="text-xs font-semibold text-blue-900">属性配置</span>
-                  <Button
-                    size="small"
-                    type="primary"
-                    ghost
-                    class="flex items-center gap-1 text-xs h-6 px-2"
-                    @click="triggerPreview(item)"
-                  >
-                    <Icon icon="lucide:play-circle" />
-                    <span>预览效果</span>
-                  </Button>
+                <div class="flex items-center justify-between bg-gray-100/80 px-2 py-1 rounded mb-2 border border-gray-200">
+                  <span class="text-xs font-semibold text-gray-700">属性配置</span>
+                  <span class="text-[11px] text-gray-400">坐标 {{ Math.round(item.yaw) }}° / {{ Math.round(item.pitch) }}°</span>
                 </div>
                 <div class="pano-editor-field">
                   <label>标题</label>
@@ -1102,10 +1139,27 @@ function onKeydown(event) {
                     <Select
                       v-model:value="item.target_scene_id"
                       size="small"
+                      show-search
+                      :filter-option="(input, option) => (option?.label || '').toLowerCase().includes(input.toLowerCase())"
                       style="width: 100%"
                       :options="targetSceneOptions"
                       placeholder="选择要跳转到的场景"
-                    />
+                      :dropdown-match-select-width="false"
+                    >
+                      <template #option="{ label, thumb, group }">
+                        <div class="flex items-center gap-2 py-0.5">
+                          <img
+                            v-if="thumb"
+                            :src="thumb"
+                            class="w-7 h-4 object-cover rounded flex-shrink-0 border bg-gray-100"
+                            alt=""
+                          />
+                          <span v-else class="w-7 h-4 rounded bg-gray-200 flex-shrink-0 text-[9px] text-gray-500 flex items-center justify-center">无图</span>
+                          <span class="truncate flex-1 text-xs">{{ label }}</span>
+                          <Tag v-if="group" color="blue" class="text-[10px] m-0">{{ group }}</Tag>
+                        </div>
+                      </template>
+                    </Select>
                   </div>
                   <div class="pano-editor-row">
                     <div class="pano-editor-field">
@@ -1194,6 +1248,156 @@ function onKeydown(event) {
                   <div class="pano-editor-field">
                     <label>大小</label>
                     <InputNumber v-model:value="item.size" size="small" :min="12" :max="128" />
+                  </div>
+                </div>
+
+                <!-- 实时效果预览（访客端所见，实时响应配置） -->
+                <div class="pano-preview-card mt-3 rounded-lg border border-gray-200 bg-gray-50/80 p-2.5">
+                  <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-1.5 text-xs font-semibold text-gray-700">
+                      <Icon icon="lucide:sparkles" class="text-blue-500 text-sm" />
+                      <span>访客端效果实时预览</span>
+                    </div>
+                    <span class="text-[11px] text-gray-400 font-normal">实时响应配置</span>
+                  </div>
+
+                  <!-- 1. 场景跳转预览 -->
+                  <div v-if="item.type === 'scene'" class="space-y-2">
+                    <div
+                      v-if="!item.target_scene_id"
+                      class="p-2.5 rounded border border-dashed border-gray-300 text-center text-xs text-gray-400 bg-white"
+                    >
+                      尚未选择目标跳转场景，请在上方下拉框中指定
+                    </div>
+                    <div v-else class="space-y-2">
+                      <div class="p-2 bg-blue-50/80 border border-blue-100 rounded flex items-center gap-2">
+                        <Icon icon="lucide:arrow-right-circle" class="text-blue-600 text-base flex-shrink-0" />
+                        <div class="min-w-0 flex-1">
+                          <p class="text-xs font-medium text-blue-950 mb-0 truncate">
+                            跳转目标：{{ targetSceneTitle(item.target_scene_id) }}
+                          </p>
+                          <p class="text-[11px] text-blue-700 mb-0">
+                            到达视角：
+                            <template v-if="item.target_yaw !== null && item.target_yaw !== undefined">
+                              Yaw {{ Math.round(item.target_yaw) }}° / Pitch {{ Math.round(item.target_pitch) }}°
+                            </template>
+                            <template v-else>沿用目标场景默认初始视角</template>
+                          </p>
+                        </div>
+                      </div>
+                      <div
+                        v-if="targetSceneThumb(item.target_scene_id)"
+                        class="rounded overflow-hidden border border-gray-200 aspect-[2/1] relative bg-gray-900"
+                      >
+                        <img
+                          :src="targetSceneThumb(item.target_scene_id)"
+                          class="w-full h-full object-cover"
+                          alt="目标全景底图"
+                        />
+                        <div class="absolute bottom-1 left-1.5 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded backdrop-blur">
+                          目标全景底图
+                        </div>
+                      </div>
+                      <Button
+                        v-if="item.target_yaw !== null && item.target_yaw !== undefined"
+                        size="small"
+                        block
+                        type="dashed"
+                        class="text-xs"
+                        @click="simulateArrivalView(item)"
+                      >
+                        <Icon icon="lucide:compass" class="mr-1" />
+                        在当前视口中旋转模拟到达视角
+                      </Button>
+                    </div>
+                  </div>
+
+                  <!-- 2. 图文说明预览 -->
+                  <div v-else-if="item.type === 'info'" class="bg-white rounded border border-gray-200 p-2.5 shadow-sm space-y-1.5">
+                    <div class="flex items-center gap-1.5 border-b border-gray-100 pb-1.5">
+                      <Icon icon="lucide:info" class="text-emerald-600 text-sm flex-shrink-0" />
+                      <span class="text-xs font-semibold text-gray-800 truncate">
+                        {{ item.title || '（未命名说明）' }}
+                      </span>
+                    </div>
+                    <div class="text-xs text-gray-600 leading-relaxed whitespace-pre-wrap max-h-40 overflow-y-auto">
+                      {{ item.content || '（暂未填写说明内容）' }}
+                    </div>
+                  </div>
+
+                  <!-- 3. 图片/相册预览 -->
+                  <div v-else-if="item.type === 'image'" class="space-y-2">
+                    <div
+                      v-if="!item.urls || !item.urls.length"
+                      class="p-2.5 rounded border border-dashed border-gray-300 text-center text-xs text-gray-400 bg-white"
+                    >
+                      暂无图片，请在上方点击「添加图片」
+                    </div>
+                    <div v-else class="bg-white rounded border border-gray-200 p-2 shadow-sm space-y-2">
+                      <div class="flex items-center justify-between text-xs text-gray-600 border-b border-gray-100 pb-1">
+                        <span class="font-medium truncate">{{ item.title || '图集画廊' }}</span>
+                        <span class="text-gray-400 text-[11px]">{{ activeImagePreviewIndex(item) + 1 }} / {{ item.urls.length }}</span>
+                      </div>
+                      <div class="w-full aspect-[16/9] bg-black rounded overflow-hidden flex items-center justify-center">
+                        <img
+                          :src="item.urls[activeImagePreviewIndex(item)]"
+                          class="max-h-full max-w-full object-contain"
+                          alt="预览"
+                        />
+                      </div>
+                      <div v-if="item.urls.length > 1" class="flex items-center gap-1.5 overflow-x-auto py-0.5">
+                        <button
+                          v-for="(url, idx) in item.urls"
+                          :key="idx"
+                          type="button"
+                          class="w-8 h-8 rounded border overflow-hidden flex-shrink-0 p-0 transition-all bg-transparent"
+                          :class="activeImagePreviewIndex(item) === idx ? 'border-purple-600 ring-1 ring-purple-600' : 'border-gray-200 opacity-60 hover:opacity-100'"
+                          @click="setImagePreviewIndex(item._key, idx)"
+                        >
+                          <img :src="url" class="w-full h-full object-cover" alt="" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 4. 视频播放预览 -->
+                  <div v-else-if="item.type === 'video'" class="space-y-1.5">
+                    <div
+                      v-if="!item.url"
+                      class="p-2.5 rounded border border-dashed border-gray-300 text-center text-xs text-gray-400 bg-white"
+                    >
+                      暂未配置视频地址，请在上方输入或上传
+                    </div>
+                    <div v-else class="bg-white rounded border border-gray-200 p-2 shadow-sm space-y-1.5">
+                      <div class="text-xs font-medium text-gray-700 truncate">
+                        {{ item.title || '视频播放' }}
+                      </div>
+                      <div class="rounded overflow-hidden bg-black flex items-center justify-center aspect-[16/9]">
+                        <video :src="item.url" controls class="w-full max-h-full" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 5. 网页外链预览 -->
+                  <div v-else-if="item.type === 'link'" class="space-y-1.5">
+                    <div
+                      v-if="!item.url"
+                      class="p-2.5 rounded border border-dashed border-gray-300 text-center text-xs text-gray-400 bg-white"
+                    >
+                      未填写链接地址
+                    </div>
+                    <div v-else class="bg-white rounded border border-gray-200 p-2.5 shadow-sm space-y-2">
+                      <div class="text-xs font-medium text-gray-800 truncate">
+                        {{ item.title || '外部链接' }}
+                      </div>
+                      <div class="p-1.5 bg-amber-50 rounded border border-amber-100 text-[11px] text-blue-600 font-mono break-all">
+                        {{ item.url }}
+                      </div>
+                      <Button size="small" block type="primary" ghost class="text-xs" @click="openExternalLink(item.url)">
+                        <Icon icon="lucide:external-link" class="mr-1" />
+                        在新窗口测试打开
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>

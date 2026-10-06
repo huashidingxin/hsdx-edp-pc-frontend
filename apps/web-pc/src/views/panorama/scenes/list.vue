@@ -78,6 +78,7 @@ const pagination = reactive({
 });
 
 const serverGroups = ref([]);
+const fullScenePool = ref([]);
 
 async function loadGroups() {
   try {
@@ -88,8 +89,18 @@ async function loadGroups() {
   }
 }
 
+async function loadFullScenePool() {
+  try {
+    const res = await requestClient.get('/panorama-scenes', { params: { per_page: 'all' } });
+    fullScenePool.value = Array.isArray(res) ? res : (res?.data || []);
+  } catch (e) {
+    console.warn('[list.vue] loadFullScenePool error:', e);
+  }
+}
+
 onMounted(() => {
   loadGroups();
+  loadFullScenePool();
 });
 
 const availableGroups = computed(() => serverGroups.value);
@@ -317,15 +328,19 @@ function removeNavLink(index) {
 /** 导航按钮行的图标上传控件（每行一个 AppUpload，v-for 里用函数式 ref 收集）。 */
 const navIconRefs = ref([]);
 
+const effectiveAllScenes = computed(() =>
+  fullScenePool.value.length ? fullScenePool.value : allScenes.value,
+);
+
 /** 导览点行可用的场景下拉（场景 code 是 tour_guide 的关联键）。 */
 const sceneCodeOptions = computed(() =>
-  allScenes.value.map((scene) => ({ value: scene.code, label: scene.title || scene.code })),
+  effectiveAllScenes.value.map((scene) => ({ value: scene.code, label: scene.title || scene.code })),
 );
 
 /** 场景 code → 缩略图地址（沙盘/导览列表里帮用户认场景）。 */
 const sceneThumbByCode = computed(() => {
   const map = {};
-  for (const scene of allScenes.value) {
+  for (const scene of effectiveAllScenes.value) {
     map[scene.code] = scene.thumb || scene.image || '';
   }
   return map;
@@ -698,8 +713,13 @@ function refreshList() {
 }
 
 /** 编辑器保存后刷新列表（热点数、首屏视角都会变）。 */
+function onSwitchScene(targetScene) {
+  editorRow.value = targetScene;
+}
+
 function onEditorSaved() {
   refreshList();
+  loadFullScenePool();
 }
 
 /* ===================== 保存 / 切片 ===================== */
@@ -1381,7 +1401,8 @@ watch(
     <PanoramaSceneEditor
       v-model:open="editorOpen"
       :scene="editorRow"
-      :scenes="allScenes"
+      :scenes="effectiveAllScenes"
+      @switch-scene="onSwitchScene"
       @saved="onEditorSaved"
     />
 
