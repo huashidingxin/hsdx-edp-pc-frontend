@@ -558,7 +558,62 @@ function aspectOf(instance) {
   return Number.isFinite(aspect) && aspect > 0 ? aspect : 1;
 }
 
-/* ===================== 标记渲染 ===================== */
+/* ===================== 标记渲染（所见即所得，与展示端保持完全一致） ===================== */
+
+const ICONS = {
+  scene: '<svg viewBox="0 0 24 24"><path d="M5 12h13"/><path d="m12 5 7 7-7 7"/></svg>',
+  info: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/></svg>',
+  link: '<svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>',
+  video: '<svg viewBox="0 0 24 24"><path d="m10 8 6 4-6 4V8Z"/><rect x="3" y="5" width="18" height="14" rx="2"/></svg>',
+  image: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="m5 17 4-4 3 3 3-3 4 4"/></svg>',
+};
+
+const SPRITE_ICONS = {
+  'arrow-forward': { frames: 1, animated: false },
+  'arrow-up': { frames: 25, animated: true },
+  'arrow-down': { frames: 25, animated: true },
+  'arrow-left': { frames: 25, animated: true },
+  'arrow-right': { frames: 25, animated: true },
+  'arrow-up-left': { frames: 25, animated: true },
+  'arrow-up-right': { frames: 25, animated: true },
+  plane: { frames: 25, animated: true },
+  hand: { frames: 25, animated: true },
+  'arrow-down-alt': { frames: 10, animated: true },
+};
+
+const OLD_ICON_ALIASES = {
+  '1484639129526qz0': 'arrow-up',
+  '14846390951599sl': 'arrow-down',
+  '1484639053745wff': 'arrow-left',
+  '148463900805960d': 'arrow-right',
+  '14846387045795lf': 'arrow-up-left',
+  '14846386687403g5': 'arrow-up-right',
+  '1484638532176tpt': 'plane',
+  '1484634754727618': 'arrow-forward',
+  '1484638475345t3o': 'hand',
+  '1484638964908wqo': 'arrow-down-alt',
+};
+
+function spriteIconOf(icon) {
+  const key = typeof icon === 'string' ? icon.trim() : '';
+  if (!key) return null;
+  if (Object.prototype.hasOwnProperty.call(SPRITE_ICONS, key)) return key;
+  const baseName = key.split('/').pop()?.replace(/\.[^.]+$/, '') ?? '';
+  return OLD_ICON_ALIASES[baseName] || null;
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function escapeAttr(value) {
+  return escapeHtml(value);
+}
 
 function markerId(key) {
   return `hotspot-${key}`;
@@ -569,21 +624,65 @@ function syncMarkers() {
   if (!plugin) return;
 
   plugin.setMarkers(
-    hotspots.value.map((item, index) => {
-      const thumb = iconThumbOf(item.icon, item.icon_thumb_url);
-      const markerHtml = thumb
-        ? `<div class="pano-edit-marker pano-edit-marker-custom psv--capture-event" data-type="${item.type}" data-hotspot-key="${item._key}"><img src="${thumb}" class="pano-marker-img" /></div>`
-        : `<div class="pano-edit-marker psv--capture-event" data-type="${item.type}" data-hotspot-key="${item._key}">${index + 1}</div>`;
+    hotspots.value.map((item) => {
+      const size = Number(item.size || 50);
+      const spriteKey = spriteIconOf(item.icon);
+      const meta = findIconMeta(item.icon);
+      const iconUrl =
+        item.icon_url ||
+        meta?.url ||
+        (item.icon && (item.icon.startsWith('/') || item.icon.startsWith('http')) ? item.icon : null);
+
+      let inner = '';
+      let extraClasses = '';
+      const styles = [];
+
+      if (spriteKey || iconUrl) {
+        extraClasses += ' pano-hotspot-sprite';
+        if (spriteKey) {
+          extraClasses += ` pano-hotspot-sprite--${spriteKey}`;
+        }
+        if (iconUrl) {
+          const isAnim =
+            item.icon_animated ??
+            meta?.animated ??
+            (item.icon_frames ? item.icon_frames > 1 : (meta?.frames ? meta.frames > 1 : (spriteKey ? SPRITE_ICONS[spriteKey]?.animated : false)));
+          const frames = item.icon_frames || meta?.frames || (spriteKey ? SPRITE_ICONS[spriteKey]?.frames : 25) || 25;
+          styles.push(`background-image: url('${escapeAttr(iconUrl)}') !important;`);
+          if (isAnim) {
+            styles.push('background-repeat: repeat-y !important;');
+            styles.push(`background-size: 100% ${frames * 100}% !important;`);
+            styles.push(`animation: pano-sprite-cycle 1.25s steps(${frames}) infinite !important;`);
+            styles.push(`--pano-sprite-cycle: -${size * frames}px;`);
+          } else {
+            styles.push('background-position: center !important;');
+            styles.push('background-size: contain !important;');
+            styles.push('background-repeat: no-repeat !important;');
+            styles.push('animation: none !important;');
+          }
+        }
+      } else {
+        inner = ICONS[item.type] || ICONS.info;
+      }
+
+      const label = item.title
+        ? `<span class="pano-hotspot-label">${escapeHtml(item.title)}</span>`
+        : '';
+
+      const isSelected = item._key === selectedKey.value;
+      const selectedClass = isSelected ? ' is-selected' : '';
+
+      const markerHtml = `<div class="pano-hotspot pano-edit-marker${extraClasses}${selectedClass} psv--capture-event" data-type="${escapeAttr(item.type)}" data-hotspot-key="${item._key}" style="${styles.join(' ')}">${inner}${label}</div>`;
+
       return {
         id: markerId(item._key),
         position: { yaw: deg(item.yaw), pitch: deg(item.pitch) },
         html: markerHtml,
-        size: { width: 34, height: 34 },
+        size: { width: size, height: size },
         anchor: 'center center',
         tooltip: previewMode.value
           ? `点击预览效果：${item.title || typeMeta(item.type).label}`
-          : `${item.title || typeMeta(item.type).label}（点击选中编辑，右侧实时预览）`,
-        className: item._key === selectedKey.value ? 'pano-edit-marker-selected' : '',
+          : `${item.title || typeMeta(item.type).label}（点击选中编辑，可拖拽位移）`,
       };
     }),
   );
@@ -1110,7 +1209,7 @@ function onKeydown(event) {
                 </div>
                 <div class="pano-editor-field">
                   <label>标题</label>
-                  <Input v-model:value="item.title" size="small" placeholder="鼠标悬停显示的文字" />
+                  <Input v-model:value="item.title" size="small" placeholder="鼠标悬停显示的文字" @input="syncMarkers" />
                 </div>
 
                 <div class="pano-editor-field">
@@ -1255,7 +1354,7 @@ function onKeydown(event) {
                   </div>
                   <div class="pano-editor-field">
                     <label>大小</label>
-                    <InputNumber v-model:value="item.size" size="small" :min="12" :max="128" />
+                    <InputNumber v-model:value="item.size" size="small" :min="12" :max="128" @change="syncMarkers" />
                   </div>
                 </div>
 
@@ -1945,67 +2044,123 @@ function onKeydown(event) {
 </style>
 
 <style>
-/* 球面上的可拖拽圆点（渲染在 PSV 的 marker 容器里，不能 scoped）。 */
-.pano-edit-marker {
+/* ===================== 全景三维热点（所见即所得，与展示端保持完全一致） ===================== */
+.pano-hotspot {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 100%;
   height: 100%;
-  font-size: 13px;
-  font-weight: 600;
   color: #fff;
   cursor: grab;
   touch-action: none;
-  background: rgb(22 119 255 / 92%);
-  border: 2px solid #fff;
-  border-radius: 50%;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 45%);
   user-select: none;
-  overflow: hidden;
+  background: rgba(47, 124, 246, 0.85);
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  transition: transform 0.15s ease;
+  position: relative;
 }
 
-.pano-edit-marker-custom {
-  background: #ffffff !important;
-  border: 2px solid #3b82f6 !important;
-  padding: 2px;
-  overflow: hidden;
-}
-
-.pano-marker-img {
-  width: 100%;
-  height: 100%;
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
-  display: block;
-  pointer-events: none;
-}
-
-.pano-edit-marker:active {
+.pano-hotspot:active {
   cursor: grabbing;
 }
 
-.pano-edit-marker[data-type='scene'] {
-  background: rgb(22 119 255 / 92%);
+.pano-hotspot svg {
+  width: 58%;
+  height: 58%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
 }
 
-.pano-edit-marker[data-type='info'] {
-  background: rgb(35 178 137 / 92%);
+.pano-hotspot[data-type='info'] {
+  background: rgba(35, 178, 137, 0.85);
 }
 
-.pano-edit-marker[data-type='link'] {
-  background: rgb(240 154 55 / 94%);
+.pano-hotspot[data-type='link'] {
+  background: rgba(240, 154, 55, 0.9);
 }
 
-.pano-edit-marker[data-type='video'],
-.pano-edit-marker[data-type='image'] {
-  background: rgb(168 92 232 / 94%);
+.pano-hotspot[data-type='video'],
+.pano-hotspot[data-type='image'] {
+  background: rgba(168, 92, 232, 0.9);
 }
 
-/* className 落在 marker 的包裹元素上，圆点本身是它的子元素 */
-.pano-edit-marker-selected .pano-edit-marker {
-  box-shadow: 0 0 0 4px rgb(255 255 255 / 55%), 0 2px 10px rgb(0 0 0 / 55%);
+/* 常显名称标签：对齐展示端观感（黑底半透明、圆角、土黄描边、白字，挂在图标正下方） */
+.pano-hotspot-label {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 8px;
+  border: 1px solid #bdb76b;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.57);
+  color: #fff;
+  font-size: 14px;
+  line-height: 18px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* 内置方向 / 自定义图标：透明背景，无边框，无圆底 */
+.pano-hotspot.pano-hotspot-sprite {
+  background-color: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.pano-hotspot.pano-hotspot-sprite:hover {
+  background-color: transparent !important;
+  transform: scale(1.1);
+}
+
+.pano-hotspot.pano-hotspot-sprite--arrow-forward {
+  background-position: center !important;
+  background-size: contain !important;
+  background-repeat: no-repeat !important;
+}
+
+.pano-hotspot.pano-hotspot-sprite--arrow-up,
+.pano-hotspot.pano-hotspot-sprite--arrow-down,
+.pano-hotspot.pano-hotspot-sprite--arrow-left,
+.pano-hotspot.pano-hotspot-sprite--arrow-right,
+.pano-hotspot.pano-hotspot-sprite--arrow-up-left,
+.pano-hotspot.pano-hotspot-sprite--arrow-up-right,
+.pano-hotspot.pano-hotspot-sprite--plane,
+.pano-hotspot.pano-hotspot-sprite--hand {
+  background-repeat: repeat-y !important;
+  background-size: 100% 2500% !important;
+  animation: pano-sprite-cycle 1.25s steps(25) infinite !important;
+}
+
+.pano-hotspot.pano-hotspot-sprite--arrow-down-alt {
+  background-repeat: repeat-y !important;
+  background-size: 100% 1000% !important;
+  animation: pano-sprite-cycle 0.8s steps(10) infinite !important;
+}
+
+@keyframes pano-sprite-cycle {
+  from { background-position: 0 0; }
+  to { background-position: 0 var(--pano-sprite-cycle, -1250px); }
+}
+
+/* 编辑器选中态指示：在所见即所得的基础上，呈现呼吸高亮圈与焦点标签 */
+.pano-hotspot.is-selected {
+  outline: 2px dashed #3b82f6 !important;
+  outline-offset: 4px;
+  filter: drop-shadow(0 0 6px rgba(59, 130, 246, 0.85));
   transform: scale(1.12);
+}
+
+.pano-hotspot.is-selected .pano-hotspot-label {
+  border-color: #3b82f6;
+  background: rgba(24, 72, 160, 0.85);
 }
 </style>
