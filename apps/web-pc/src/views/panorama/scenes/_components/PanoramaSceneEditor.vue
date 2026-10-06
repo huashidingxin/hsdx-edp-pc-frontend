@@ -34,6 +34,7 @@ import {
 import { upload } from '#/api';
 import { requestClient } from '#/api/request';
 import Resource from '#/api/resource';
+import HotspotIconPicker from './HotspotIconPicker.vue';
 
 import {
   clampPitch,
@@ -114,24 +115,73 @@ const tileStatus = computed(() => {
 const targetSceneOptions = computed(() =>
   props.scenes
     .filter((item) => Number(item.id) !== Number(sceneId.value))
-    .map((item) => ({ label: item.title || `#${item.id}`, value: item.id })),
+    .map((item) => ({
+      label: item.title || `#${item.id}`,
+      value: item.id,
+      thumb: item.thumb || item.preview || item.image,
+    })),
 );
 
-/**
- * 跳转热点（type=scene）的内置图标 —— 设计与素材借鉴老平台 hsdx720：
- * animated = 动态雪碧图（25 帧循环播放），选择器里只静态预览第一帧。
- * key 清单与后端 `PanoramaHotspot::ICONS` 保持一致，后端按它校验。
- */
-const HOTSPOT_ICONS = {
-  'arrow-forward': { label: '直行', src: '/panorama-icons/arrow-forward.png', animated: false },
-  'arrow-up': { label: '向上 / 上楼', src: '/panorama-icons/arrow-up.png', animated: true },
-  'arrow-down': { label: '向下 / 下楼', src: '/panorama-icons/arrow-down.png', animated: true },
-  'arrow-left': { label: '向左', src: '/panorama-icons/arrow-left.png', animated: true },
-  'arrow-right': { label: '向右', src: '/panorama-icons/arrow-right.png', animated: true },
-  'arrow-up-left': { label: '左上 / 左前方', src: '/panorama-icons/arrow-up-left.png', animated: true },
-  'arrow-up-right': { label: '右上 / 右前方', src: '/panorama-icons/arrow-up-right.png', animated: true },
-  plane: { label: '飞机（常用于标航拍场景）', src: '/panorama-icons/plane.png', animated: true },
-};
+/** 系统预设图标字典（从后端动态加载，98+ 分类图标） */
+const systemIcons = ref([]);
+const iconPickerOpen = ref(false);
+const currentEditingHotspot = ref(null);
+
+async function loadSystemIcons() {
+  if (systemIcons.value.length) return;
+  try {
+    const res = await requestClient.get('/panorama-scenes/icons');
+    systemIcons.value = Array.isArray(res) ? res : (res?.data || []);
+  } catch (err) {
+    console.warn('[panorama-editor] loadSystemIcons failed:', err);
+  }
+}
+
+function findIconMeta(iconKeyOrPath) {
+  if (!iconKeyOrPath) return null;
+  return systemIcons.value.find(
+    (item) =>
+      item.key === iconKeyOrPath ||
+      item.path === iconKeyOrPath ||
+      item.url === iconKeyOrPath ||
+      (item.aliases && item.aliases.includes(iconKeyOrPath)),
+  );
+}
+
+function iconThumbOf(iconKeyOrPath) {
+  if (!iconKeyOrPath) return '';
+  const meta = findIconMeta(iconKeyOrPath);
+  if (meta) return meta.thumb_url || meta.url;
+  if (typeof iconKeyOrPath === 'string' && iconKeyOrPath.startsWith('http')) return iconKeyOrPath;
+  return '';
+}
+
+function iconLabelOf(iconKeyOrPath) {
+  if (!iconKeyOrPath) return '默认圆点';
+  const meta = findIconMeta(iconKeyOrPath);
+  return meta ? meta.label : '自定义图标';
+}
+
+function openIconPicker(item) {
+  currentEditingHotspot.value = item;
+  iconPickerOpen.value = true;
+}
+
+function onIconSelected({ icon }) {
+  if (currentEditingHotspot.value) {
+    currentEditingHotspot.value.icon = icon;
+    syncMarkers();
+  }
+}
+
+function captureTargetView(item) {
+  const instance = viewer.value;
+  if (!instance) return;
+  const pos = instance.getPosition();
+  item.target_yaw = normalizeYaw((pos.yaw * 180) / Math.PI);
+  item.target_pitch = clampPitch((pos.pitch * 180) / Math.PI);
+  message.success(`已采集当前朝向（${Math.round(item.target_yaw)}° / ${Math.round(item.target_pitch)}°）`);
+}
 
 const selectedHotspot = computed(() =>
   hotspots.value.find((item) => item._key === selectedKey.value) || null,
@@ -172,6 +222,7 @@ onBeforeUnmount(() => {
 });
 
 function resetFromScene() {
+  loadSystemIcons();
   const source = scene.value;
   hotspots.value = (source.hotspots || []).map((item) => ({
     _key: `h${(keySeq += 1)}`,
@@ -363,16 +414,21 @@ function syncMarkers() {
   if (!plugin) return;
 
   plugin.setMarkers(
-    hotspots.value.map((item, index) => ({
-      id: markerId(item._key),
-      position: { yaw: deg(item.yaw), pitch: deg(item.pitch) },
-      // psv--capture-event：告诉 PSV「别把这里的事件当成转动全景」，见 core EventsHandler
-      html: `<div class="pano-edit-marker psv--capture-event" data-type="${item.type}" data-hotspot-key="${item._key}">${index + 1}</div>`,
-      size: { width: 30, height: 30 },
-      anchor: 'center center',
-      tooltip: item.title || typeMeta(item.type).label,
-      className: item._key === selectedKey.value ? 'pano-edit-marker-selected' : '',
-    })),
+    hotspots.value.map((item, index) => {
+      const thumb = iconThumbOf(item.icon);
+      const markerHtml = thumb
+        ? `<div class="pano-edit-marker pano-edit-marker-custom psv--capture-event" data-type="${item.type}" data-hotspot-key="${item._key}"><img src="${thumb}" class="pano-marker-img" /></div>`
+        : `<div class="pano-edit-marker psv--capture-event" data-type="${item.type}" data-hotspot-key="${item._key}">${index + 1}</div>`;
+      return {
+        id: markerId(item._key),
+        position: { yaw: deg(item.yaw), pitch: deg(item.pitch) },
+        html: markerHtml,
+        size: { width: 34, height: 34 },
+        anchor: 'center center',
+        tooltip: item.title || typeMeta(item.type).label,
+        className: item._key === selectedKey.value ? 'pano-edit-marker-selected' : '',
+      };
+    }),
   );
 }
 
@@ -466,6 +522,16 @@ function stopDragging() {
 function selectHotspot(key) {
   selectedKey.value = selectedKey.value === key ? null : key;
   syncMarkers();
+  if (selectedKey.value) {
+    const item = hotspots.value.find((h) => h._key === selectedKey.value);
+    if (item && viewer.value) {
+      viewer.value.animate({
+        yaw: deg(item.yaw),
+        pitch: deg(item.pitch),
+        speed: '3rpm',
+      });
+    }
+  }
 }
 
 function removeHotspot(key) {
@@ -669,6 +735,10 @@ function onKeydown(event) {
   if (event.key === 'Escape' && placeMode.value !== 'browse') {
     placeMode.value = 'browse';
   }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+    event.preventDefault();
+    save();
+  }
 }</script>
 
 <template>
@@ -689,12 +759,29 @@ function onKeydown(event) {
       <!-- 左：球面预览 + 放置工具 -->
       <div class="pano-editor-stage">
         <div class="pano-editor-toolbar">
-          <Segmented
-            v-model:value="placeMode"
-            size="small"
-            :options="placeOptions"
-          />
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-medium text-gray-500">布点模式：</span>
+            <Segmented
+              v-model:value="placeMode"
+              size="small"
+              :options="placeOptions"
+            />
+          </div>
           <span class="pano-editor-hint">{{ hint }}</span>
+          <div class="flex items-center gap-1 flex-shrink-0">
+            <Button size="small" @click="captureCurrentView" title="把当前视角采集为场景首屏默认视角">
+              📷 采集首屏
+            </Button>
+            <Button size="small" @click="captureNorth" :title="`把当前朝向（${Math.round(currentYaw)}°）设为正北`">
+              🧭 设为正北
+            </Button>
+            <Button size="small" @click="previewInitialView" title="转动到首屏视角并恢复视场角">
+              👁️ 预览视角
+            </Button>
+            <Button size="small" type="primary" :loading="saving" @click="save">
+              💾 保存
+            </Button>
+          </div>
         </div>
 
         <div ref="viewerEl" class="pano-editor-viewer"></div>
@@ -816,6 +903,34 @@ function onKeydown(event) {
                   <Input v-model:value="item.title" size="small" placeholder="鼠标悬停显示的文字" />
                 </div>
 
+                <div class="pano-editor-field">
+                  <label>热点图标</label>
+                  <div class="pano-chosen-icon-card">
+                    <div class="flex items-center gap-2 min-w-0">
+                      <span v-if="!item.icon" class="pano-icon-dot-preview" title="默认高反差圆点"></span>
+                      <img
+                        v-else-if="iconThumbOf(item.icon)"
+                        :src="iconThumbOf(item.icon)"
+                        class="w-7 h-7 object-contain rounded border bg-white p-0.5"
+                        alt="图标"
+                      />
+                      <span v-else class="w-6 h-6 rounded bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold">图</span>
+                      <div class="min-w-0">
+                        <p class="text-xs font-medium text-gray-800 mb-0 truncate">{{ iconLabelOf(item.icon) }}</p>
+                        <p v-if="item.icon" class="text-[10px] text-gray-400 mb-0 truncate max-w-[120px]">{{ item.icon }}</p>
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-1 flex-shrink-0">
+                      <Button size="small" type="primary" ghost @click="openIconPicker(item)">
+                        {{ item.icon ? '更换' : '选择图标' }}
+                      </Button>
+                      <Button v-if="item.icon" size="small" danger type="text" @click="item.icon = ''; syncMarkers()">
+                        清除
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
                 <template v-if="item.type === 'scene'">
                   <div class="pano-editor-field">
                     <label>跳转目标</label>
@@ -827,39 +942,14 @@ function onKeydown(event) {
                       placeholder="选择要跳转到的场景"
                     />
                   </div>
-                  <div class="pano-editor-field">
-                    <label>跳转图标</label>
-                    <div class="pano-icon-picker">
-                      <button
-                        type="button"
-                        class="pano-icon-cell"
-                        :class="{ active: !item.icon }"
-                        title="默认圆点"
-                        @click="item.icon = ''"
-                      >
-                        <span class="pano-icon-dot"></span>
-                      </button>
-                      <button
-                        v-for="(meta, key) in HOTSPOT_ICONS"
-                        :key="key"
-                        type="button"
-                        class="pano-icon-cell"
-                        :class="{ active: item.icon === key }"
-                        :title="meta.label"
-                        @click="item.icon = key"
-                      >
-                        <span
-                          class="pano-icon-thumb"
-                          :class="{ animated: meta.animated }"
-                          :style="{ backgroundImage: `url(${meta.src})` }"
-                        ></span>
-                      </button>
-                    </div>
-                  </div>
-                  <p class="pano-editor-hint">图标只在播放页生效（动态图标会循环播放）；留空 = 默认圆点。</p>
                   <div class="pano-editor-row">
                     <div class="pano-editor-field">
-                      <label>到达 yaw</label>
+                      <div class="flex items-center justify-between w-full mb-1">
+                        <label>到达 yaw</label>
+                        <Button type="link" size="small" class="p-0 text-xs h-auto" @click="captureTargetView(item)">
+                          采集当前朝向
+                        </Button>
+                      </div>
                       <InputNumber v-model:value="item.target_yaw" size="small" :step="1" :min="-180" :max="180" placeholder="缺省" />
                     </div>
                     <div class="pano-editor-field">
@@ -952,6 +1042,14 @@ function onKeydown(event) {
         </footer>
       </aside>
     </div>
+  
+    <!-- 热点图标选择器弹窗 -->
+    <HotspotIconPicker
+      v-model:open="iconPickerOpen"
+      :model-value="currentEditingHotspot?.icon || ''"
+      :hotspot-type="currentEditingHotspot?.type || 'scene'"
+      @select="onIconSelected"
+    />
   </Drawer>
 </template>
 
@@ -1301,6 +1399,41 @@ function onKeydown(event) {
   padding-top: 12px;
   border-top: 1px solid rgb(0 0 0 / 6%);
 }
+
+.pano-chosen-icon-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 6px 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+}
+
+.pano-icon-dot-preview {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  background: #3b82f6;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px #cbd5e1;
+}
+
+.pano-edit-marker-custom {
+  background: #ffffff !important;
+  border: 2px solid #3b82f6 !important;
+  padding: 2px;
+}
+
+.pano-marker-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
 </style>
 
 <style>

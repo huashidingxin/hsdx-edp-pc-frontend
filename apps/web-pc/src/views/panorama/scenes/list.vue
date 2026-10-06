@@ -24,11 +24,14 @@ import {
   Input,
   InputNumber,
   Modal,
+  Popconfirm,
   Progress,
+  Radio,
   Select,
   Switch,
   Tabs,
   Tag,
+  Tooltip,
   message,
 } from 'antdv-next';
 
@@ -59,6 +62,65 @@ function flattenScene(data) {
     initial_pitch: data.initial_view?.pitch ?? 0,
     initial_hfov: data.initial_view?.hfov ?? 75,
   };
+}
+
+const viewMode = ref('card');
+const cardGroupFilter = ref('all');
+const cardSearchText = ref('');
+const reordering = ref(false);
+
+const availableGroups = computed(() => {
+  const set = new Set();
+  for (const s of allScenes.value) {
+    if (s.group && s.group.trim()) set.add(s.group.trim());
+  }
+  return Array.from(set);
+});
+
+const filteredCardScenes = computed(() => {
+  let list = allScenes.value;
+  if (cardGroupFilter.value !== 'all') {
+    list = list.filter((s) => s.group === cardGroupFilter.value);
+  }
+  const kw = cardSearchText.value.trim().toLowerCase();
+  if (kw) {
+    list = list.filter(
+      (s) =>
+        (s.title && s.title.toLowerCase().includes(kw)) ||
+        (s.code && s.code.toLowerCase().includes(kw)),
+    );
+  }
+  return list;
+});
+
+async function setAsFirstScene(scene) {
+  if (allScenes.value.length <= 1 || allScenes.value[0]?.id === scene.id) return;
+  const list = [scene, ...allScenes.value.filter((s) => s.id !== scene.id)];
+  await saveReorder(list);
+}
+
+async function removeScene(scene) {
+  try {
+    await new Resource('panorama-scenes').delete(scene.id);
+    message.success('场景已删除');
+    refreshList();
+  } catch (e) {
+    message.error(e?.message || '删除失败');
+  }
+}
+
+async function saveReorder(list) {
+  reordering.value = true;
+  try {
+    const items = list.map((s, idx) => ({ id: s.id, sort: idx + 1 }));
+    await requestClient.put('/panorama-scenes/reorder', { items });
+    message.success('已更新场景漫游顺序');
+    refreshList();
+  } catch (e) {
+    message.error(e?.message || '排序保存失败');
+  } finally {
+    reordering.value = false;
+  }
 }
 
 const detailFormat = flattenScene;
@@ -925,7 +987,184 @@ watch(
 
 <template>
   <div class="panorama-scenes-page">
+    <!-- 卡片网格视图 -->
+    <div v-show="viewMode === 'card'" class="panorama-cards-view p-4">
+      <div class="cards-view-header bg-white p-4 rounded-lg shadow-sm border border-gray-100 mb-4">
+        <div class="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <h2 class="text-base font-semibold text-gray-800 flex items-center gap-2 mb-1">
+              全景漫游场景管理
+              <Tag color="blue" class="text-xs">共 {{ allScenes.length }} 个场景</Tag>
+            </h2>
+            <p class="text-xs text-gray-400 mb-0">
+              一个场景 = 一张 2:1 全景底图；点击「全景编辑」进入 3D 视口所见即所得布点与视角微调；支持一键设首场景。
+            </p>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <Button @click="openSand">🗺️ 电子沙盘</Button>
+            <Button @click="openSettings">⚙️ 漫游设置</Button>
+            <Button type="primary" ghost @click="openBatch">⚡ 批量上传全景图</Button>
+            <Button type="primary" @click="crudRef?.openDetail(null, true)">+ 新建单个场景</Button>
+            <Radio.Group v-model:value="viewMode" size="small" button-style="solid">
+              <Radio.Button value="card">🎴 卡片视图</Radio.Button>
+              <Radio.Button value="table">📋 表格视图</Radio.Button>
+            </Radio.Group>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between flex-wrap gap-2 mt-4 pt-3 border-t border-gray-100">
+          <div class="flex items-center gap-1.5 flex-wrap">
+            <span class="text-xs font-medium text-gray-500 mr-1">场景分组：</span>
+            <Button
+              size="small"
+              :type="cardGroupFilter === 'all' ? 'primary' : 'default'"
+              @click="cardGroupFilter = 'all'"
+            >
+              全部 ({{ allScenes.length }})
+            </Button>
+            <Button
+              v-for="grp in availableGroups"
+              :key="grp"
+              size="small"
+              :type="cardGroupFilter === grp ? 'primary' : 'default'"
+              @click="cardGroupFilter = grp"
+            >
+              {{ grp }}
+            </Button>
+          </div>
+
+          <Input.Search
+            v-model:value="cardSearchText"
+            placeholder="搜索场景名称或编码..."
+            size="small"
+            style="width: 220px"
+            allow-clear
+          />
+        </div>
+      </div>
+
+      <div v-if="!filteredCardScenes.length" class="bg-white p-12 rounded-lg border text-center">
+        <Empty description="暂无符合条件的场景">
+          <Button type="primary" @click="openBatch">批量上传第一批全景图</Button>
+        </Empty>
+      </div>
+
+      <div v-else class="scene-cards-grid">
+        <div
+          v-for="(scene, index) in filteredCardScenes"
+          :key="scene.id"
+          class="scene-card"
+        >
+          <div class="scene-card-cover aspect-[2/1] relative bg-gray-900 overflow-hidden group">
+            <img
+              v-if="scene.thumb || scene.preview || scene.image"
+              :src="scene.thumb || scene.preview || scene.image"
+              class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+              alt=""
+            />
+            <div v-else class="w-full h-full flex items-center justify-center text-xs text-gray-400">
+              无底图预览
+            </div>
+
+            <div class="absolute top-2 left-2 flex items-center gap-1.5 z-10">
+              <span class="scene-order-badge">#{{ index + 1 }}</span>
+              <Tag v-if="index === 0 && cardGroupFilter === 'all'" color="gold" class="m-0 font-medium shadow-sm">
+                ★ 开场首场景
+              </Tag>
+              <Tag
+                :color="(TILE_META[scene.tile_status] || TILE_META.none).color"
+                class="m-0 shadow-sm"
+              >
+                {{ (TILE_META[scene.tile_status] || TILE_META.none).text }}
+              </Tag>
+            </div>
+
+            <div class="scene-card-hover-overlay">
+              <Button
+                type="primary"
+                size="middle"
+                class="shadow-lg"
+                @click="openEditor(scene)"
+              >
+                🎯 进入全景编辑
+              </Button>
+            </div>
+          </div>
+
+          <div class="p-3.5 bg-white flex flex-col gap-2">
+            <div class="flex items-center justify-between gap-2">
+              <h3 class="text-sm font-semibold text-gray-800 m-0 truncate" :title="scene.title">
+                {{ scene.title || '未命名场景' }}
+              </h3>
+              <Tag v-if="scene.group" color="cyan" class="m-0 text-xs truncate max-w-[80px]">
+                {{ scene.group }}
+              </Tag>
+            </div>
+
+            <div class="grid grid-cols-2 gap-1 text-[11px] text-gray-500 bg-gray-50 p-2 rounded">
+              <div>🎯 热点数：<span class="font-medium text-gray-700">{{ scene.hotspot_count ?? scene.hotspots?.length ?? 0 }}</span></div>
+              <div>📐 视角：<span class="font-medium text-gray-700">{{ Math.round(scene.initial_yaw || 0) }}° / {{ Math.round(scene.initial_pitch || 0) }}°</span></div>
+              <div>🧭 北向：<span class="font-medium text-gray-700">{{ Math.round(scene.north_offset || 0) }}°</span></div>
+              <div>尺寸：<span class="font-medium text-gray-700">{{ scene.width ? `${scene.width}×${scene.height}` : '-' }}</span></div>
+            </div>
+
+            <div class="pt-2 border-t border-gray-100 flex items-center justify-between">
+              <div class="flex items-center gap-1">
+                <Button
+                  size="small"
+                  type="primary"
+                  ghost
+                  @click="openEditor(scene)"
+                >
+                  全景编辑
+                </Button>
+                <Button
+                  v-if="index !== 0 && cardGroupFilter === 'all'"
+                  size="small"
+                  @click="setAsFirstScene(scene)"
+                  title="设为默认开场第一场景"
+                >
+                  设为首景
+                </Button>
+              </div>
+
+              <div class="flex items-center gap-0.5">
+                <Button
+                  size="small"
+                  type="text"
+                  @click="crudRef?.openDetail(scene.id, true, null, scene)"
+                  title="编辑属性"
+                >
+                  属性
+                </Button>
+                <Button
+                  size="small"
+                  type="text"
+                  @click="retile(scene)"
+                  title="重新切片"
+                >
+                  切片
+                </Button>
+                <Popconfirm
+                  title="确定删除此全景场景？其关联的热点将一并移除"
+                  ok-text="删除"
+                  cancel-text="取消"
+                  @confirm="removeScene(scene)"
+                >
+                  <Button size="small" type="text" danger>
+                    删除
+                  </Button>
+                </Popconfirm>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 表格视图 -->
     <AppCrudTable
+      v-show="viewMode === 'table'"
       ref="crudRef"
       api-url="panorama-scenes"
       v-model="formData"
@@ -959,7 +1198,11 @@ watch(
       <template #toolbar-append>
         <Button class="mr-2" @click="openSand">电子沙盘</Button>
         <Button class="mr-2" @click="openSettings">漫游设置</Button>
-        <Button type="primary" ghost @click="openBatch">批量上传</Button>
+        <Button type="primary" ghost class="mr-2" @click="openBatch">批量上传</Button>
+        <Radio.Group v-model:value="viewMode" size="small" button-style="solid">
+          <Radio.Button value="card">🎴 卡片视图</Radio.Button>
+          <Radio.Button value="table">📋 表格视图</Radio.Button>
+        </Radio.Group>
       </template>
 
       <template #default_thumb="{ row }">
@@ -1620,4 +1863,54 @@ watch(
 .tour-row.is-active {
   background: #fffbe6;
 }
+
+.scene-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.scene-card {
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  transition: all 0.25s ease;
+  background: #ffffff;
+}
+
+.scene-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.1);
+  border-color: #cbd5e1;
+}
+
+.scene-order-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 8px;
+  background: rgba(0, 0, 0, 0.75);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+}
+
+.scene-card-hover-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.scene-card:hover .scene-card-hover-overlay {
+  opacity: 1;
+}
+
 </style>
