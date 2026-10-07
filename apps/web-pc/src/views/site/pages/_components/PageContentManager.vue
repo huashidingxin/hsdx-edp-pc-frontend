@@ -2,7 +2,7 @@
 /**
  * 页面静态内容编辑器（抽屉）。
  *
- * 协议依据：docs/saas-website-api.md §1.2A。
+ * 协议依据：docs/README.md#page-config。
  * - 取数配置 `page_data_schemas.schema` 里 provider=static_content 的块，用
  *   config.content_key + config.path 指向 page_contents.data 的子值；
  *   editor 只是编辑提示，不构成后端字段 Schema。

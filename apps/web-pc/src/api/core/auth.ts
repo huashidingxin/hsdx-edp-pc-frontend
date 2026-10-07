@@ -10,7 +10,7 @@ export namespace AuthApi {
     username?: string;
   }
 
-  /** 登录接口返回值（扁平 payload，见 docs/saas-admin-basic-api-design.md §4.1） */
+  /** 登录接口返回值（扁平 payload，见 docs/README.md#backend） */
   export interface LoginResult {
     avatar: string;
     expires_at: null | string;

@@ -2,7 +2,7 @@
 /**
  * 页面数据配置编辑器（P17 具名数据块）。
  *
- * 协议依据：docs/saas-website-api.md §1.2A「页面数据配置」（唯一实现规范）。
+ * 协议依据：docs/README.md#page-config「页面数据配置」（唯一实现规范）。
  * - 保存位置：page_data_schemas.schema，JSON 顶层只有 blocks。
  * - 每个块：provider（model / static_content / page_banner）+ config + enabled + editor。
  * - editor 只是静态块的编辑提示，随配置保存；不是后端字段 Schema。

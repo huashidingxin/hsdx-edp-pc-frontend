@@ -2,7 +2,7 @@
 /**
  * 页面数据配置编辑器（P17 具名数据块 Schema）。
  *
- * 协议依据：docs/saas-website-api.md §1.2A「页面数据配置」（唯一规范）。
+ * 协议依据：docs/README.md#page-config「页面数据配置」（唯一规范）。
  * 支持在工作台与独立页双向复用。
  */
 import { computed, onMounted, ref, watch } from 'vue';
