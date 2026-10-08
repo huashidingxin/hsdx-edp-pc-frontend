@@ -27,6 +27,8 @@ const props = defineProps({
   localesPool: { type: Array, default: () => [] },
   /** 显式保存模式预留（每语种独立保存）；当前仅 summary */
   mode: { type: String, default: 'summary' },
+  /** 当前编辑行 ID：变化时重置内部状态，避免上一行记录的内容/脏标记残留到下一行 */
+  rowId: { type: [Number, String], default: null },
 });
 
 const emit = defineEmits(['update:locales', 'changed']);
@@ -88,6 +90,10 @@ function hasAnyContent(code) {
   if (!form) return false;
   return props.fields.some((f) => {
     const v = form[f.field];
+    if (f.type === 'pairs') {
+      // 参数对：过滤全空行后还有剩余才算有内容
+      return normalizePairRows(v).length > 0;
+    }
     return v !== undefined && v !== '' && v !== null && v !== '{}';
   });
 }
@@ -104,9 +110,19 @@ function dotClass(code) {
 function blankForm() {
   const out = {};
   for (const f of props.fields) {
-    out[f.field] = f.type === 'json' ? '{}' : '';
+    out[f.field] = f.type === 'json' ? '{}' : f.type === 'pairs' ? [] : '';
   }
   return out;
+}
+
+/** 参数对行归一：保证每行都有 label/value 键（历史数据可能缺键或非数组） */
+function normalizePairRows(v) {
+  return (Array.isArray(v) ? v : [])
+    .map((row) => ({ label: row?.label ?? '', value: row?.value ?? '' }))
+    .filter(
+      (row) =>
+        String(row.label).trim() !== '' || String(row.value).trim() !== '',
+    );
 }
 
 function fillForm(form, data) {
@@ -115,12 +131,20 @@ function fillForm(form, data) {
     const v = data?.[f.field];
     if (f.type === 'json') {
       next[f.field] = v ? JSON.stringify(v, null, 2) : '{}';
+    } else if (f.type === 'pairs') {
+      // 保留空行（用户可能正编辑中），仅归一每行的键
+      next[f.field] = Array.isArray(v)
+        ? v.map((row) => ({ label: row?.label ?? '', value: row?.value ?? '' }))
+        : [];
     } else if (v !== undefined) {
       next[f.field] = v;
     }
   }
   for (const f of props.fields) {
-    if (next[f.field] === undefined) next[f.field] = f.type === 'json' ? '{}' : '';
+    if (next[f.field] === undefined) {
+      next[f.field] =
+        f.type === 'json' ? '{}' : f.type === 'pairs' ? [] : '';
+    }
   }
   Object.keys(form).forEach((k) => delete form[k]);
   Object.assign(form, next);
@@ -135,21 +159,69 @@ function ensureForm(locale) {
   return forms[locale];
 }
 
+function isEmptyValue(v) {
+  if (Array.isArray(v)) return v.length === 0;
+  return v === undefined || v === null || v === '';
+}
+
+/**
+ * 新数据是否带来了当前表单还没有的字段值。
+ *
+ * 背景：AppCrudTable 打开详情时会先用列表行数据立即填表单，而列表接口的
+ * locales 只有 title/slug 等概览字段（index 有意不序列化沉重的 body），
+ * 详情接口随后才返回完整字段。若一律「只登记一次」，详情数据会被残缺的
+ * 列表快照挡在门外，表现为除标题/Slug 外全部字段不回显。
+ * 只有能补上表单空缺的新数据才值得覆盖；用户改动过的表单（dirty）绝不覆盖。
+ */
+function isRicherThanForm(data, form) {
+  if (!form) return false;
+  return props.fields.some(
+    (f) => !isEmptyValue(data?.[f.field]) && isEmptyValue(form[f.field]),
+  );
+}
+
 function mergeLocales(list) {
+  const refreshed = new Set();
   for (const l of list || []) {
     const code = l?.locale || l?.code;
     if (!code) continue;
-    if (contentMap[code] === undefined) {
-      contentMap[code] = { ...l };
-    }
+    const canOverwrite =
+      contentMap[code] === undefined ||
+      (!dirty[code] && isRicherThanForm(l, forms[code]));
+    if (!canOverwrite) continue;
+    contentMap[code] = { ...l };
+    if (forms[code]) refreshed.add(code);
   }
+  return refreshed;
 }
+
+/** 上一次合并时的行 ID：检测行切换（与 props.rowId 的 watcher 无关，顺序无关） */
+let lastRowId = null;
 
 watch(
   () => props.locales,
   (list) => {
-    mergeLocales(list);
-    for (const code of existingCodes.value) ensureForm(code);
+    // 行切换必须先于合并处理。打开详情时 rowId 与 locales 同一 tick 变化，
+    // 但两个 watcher 的触发顺序不保证（实测 locales 先于 rowId 触发），
+    // 所以不能把重置逻辑放在独立的 rowId watch 里。
+    if (props.rowId !== lastRowId) {
+      lastRowId = props.rowId;
+      for (const key of Object.keys(contentMap)) delete contentMap[key];
+      for (const key of Object.keys(forms)) delete forms[key];
+      for (const key of Object.keys(dirty)) delete dirty[key];
+      for (const key of Object.keys(uploadRefs)) delete uploadRefs[key];
+      activeCode.value = defaultLocale.value;
+      ensureForm(defaultLocale.value);
+    }
+    const refreshed = mergeLocales(list);
+    for (const code of existingCodes.value) {
+      if (refreshed.has(code)) {
+        // contentMap 被更完整的数据覆盖过：重刷已存在的表单让详情字段回显
+        fillForm(forms[code], contentMap[code] || {});
+      } else {
+        ensureForm(code);
+      }
+    }
   },
   { immediate: true, deep: true },
 );
@@ -208,10 +280,16 @@ function buildLocalesPayload() {
           jsonError = true;
           break;
         }
+      } else if (f.type === 'pairs') {
+        // 提交前过滤全空行，避免把没有输入的空参数行写进数据
+        values[f.field] = normalizePairRows(v);
       } else {
         values[f.field] = v ?? '';
       }
-      if (v !== undefined && v !== '' && v !== null && v !== '{}') {
+      const filled = Array.isArray(values[f.field])
+        ? values[f.field].length > 0
+        : v !== undefined && v !== '' && v !== null && v !== '{}';
+      if (filled) {
         hasContent = true;
       }
     }
@@ -229,6 +307,23 @@ async function handleFieldChange(locale) {
   const payload = buildLocalesPayload();
   emit('update:locales', payload);
   emit('changed', payload);
+}
+
+/** 参数对（label/value）编辑：追加一行空参数 */
+function addPair(locale, field) {
+  const form = forms[locale];
+  if (!form) return;
+  if (!Array.isArray(form[field])) form[field] = [];
+  form[field].push({ label: '', value: '' });
+  handleFieldChange(locale);
+}
+
+/** 参数对编辑：删除一行（handleFieldChange 由行内输入的响应式更新触发） */
+function removePair(locale, field, index) {
+  const form = forms[locale];
+  if (!form || !Array.isArray(form[field])) return;
+  form[field].splice(index, 1);
+  handleFieldChange(locale);
 }
 
 async function copyFromMain() {
@@ -339,7 +434,7 @@ onMounted(async () => {
             v-for="f in fields"
             :key="f.field"
             :class="
-              f.type === 'textarea' || f.type === 'json' || f.type === 'editor' || isUploadField(f)
+              f.type === 'textarea' || f.type === 'json' || f.type === 'editor' || isUploadField(f) || f.type === 'pairs'
                 ? 'md:col-span-2'
                 : ''
             "
@@ -349,8 +444,46 @@ onMounted(async () => {
             >
               {{ f.label }}
             </label>
+            <!-- 参数对（label/value）：动态行编辑，提交前过滤全空行。
+                 宽度由外层普通 div 控制（tailwind 类直接挂 antd Input 会被其
+                 内置 width:100% 覆盖，导致 value 框被压成窄缝无法输入），
+                 Input 用内联 width:100% 填满格子（内联优先级最高，最稳）。 -->
+            <template v-if="f.type === 'pairs'">
+              <div class="flex flex-col gap-2">
+                <div
+                  v-for="(row, index) in forms[activeCode][f.field]"
+                  :key="index"
+                  class="flex items-center gap-2"
+                >
+                  <div class="w-1/3 shrink-0">
+                    <Input
+                      v-model:value="row.label"
+                      :placeholder="f.attrs?.labelPlaceholder || '名称'"
+                      style="width: 100%"
+                      @input="handleFieldChange(activeCode)"
+                    />
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <Input
+                      v-model:value="row.value"
+                      :placeholder="f.attrs?.valuePlaceholder || '内容'"
+                      style="width: 100%"
+                      @input="handleFieldChange(activeCode)"
+                    />
+                  </div>
+                  <Button danger size="small" type="text" @click="removePair(activeCode, f.field, index)">
+                    删除
+                  </Button>
+                </div>
+                <div>
+                  <Button size="small" type="dashed" @click="addPair(activeCode, f.field)">
+                    + 添加
+                  </Button>
+                </div>
+              </div>
+            </template>
             <AppEditor
-              v-if="f.type === 'editor'"
+              v-else-if="f.type === 'editor'"
               v-model="forms[activeCode][f.field]"
               :placeholder="f.placeholder || ''"
               :min-height="f.attrs?.minHeight || 240"

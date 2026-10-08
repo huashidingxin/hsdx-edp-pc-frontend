@@ -27,6 +27,7 @@ const emit = defineEmits(['update:locales', 'changed']);
   <LocaleTabsEditor
     :fields="fields"
     :locales="locales"
+    :row-id="rowId"
     :locales-pool="localesPool"
     @update:locales="(v) => emit('update:locales', v)"
     @changed="(v) => emit('changed', v)"

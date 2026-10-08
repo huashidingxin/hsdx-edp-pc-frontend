@@ -98,7 +98,7 @@ const filterFields = ref([
 const cc = useCustomCategoryFields('article');
 
 const baseFormFields = [
-  { field: 'id', type: 'text', label: 'ID', span: 12, displayOnly: true },
+  // { field: 'id', type: 'text', label: 'ID', span: 12, displayOnly: true },
   {
     field: 'category_id',
     type: 'select',
@@ -122,8 +122,8 @@ const baseFormFields = [
       ],
     },
   },
-  { field: 'cover', type: 'text', label: '封面', span: 12 },
-  { field: 'video', type: 'text', label: '视频地址', span: 12 },
+  { field: 'cover', type: 'file', label: '封面', span: 24 },
+  { field: 'video', type: 'file', label: '视频地址', span: 24,attrs:{type:'vide'} },
   // 附件以 uploads 为唯一来源（object_field=attachments），提交时是 URL 数组
   { field: 'attachments', type: 'files', label: '附件', span: 24 },
   { field: 'sort', type: 'number', label: '排序', span: 12 },
@@ -335,7 +335,16 @@ onMounted(async () => {
           { field: 'title', label: '标题', type: 'text' },
           { field: 'slug', label: 'Slug', type: 'text' },
           { field: 'summary', label: '摘要', type: 'textarea' },
-          { field: 'body', label: '正文', type: 'textarea' },
+          { field: 'body', label: '正文', type: 'editor' },
+          {
+            field: 'attributes',
+            label: '产品参数',
+            type: 'pairs',
+            attrs: {
+              labelPlaceholder: '名称（如：成品厚度）',
+              valuePlaceholder: '内容（如：0.2mm-1.5mm）',
+            },
+          },
           { field: 'seo_title', label: 'SEO 标题', type: 'text' },
           { field: 'seo_description', label: 'SEO 描述', type: 'textarea' },
           { field: 'seo_keywords', label: 'SEO 关键词', type: 'text' },
