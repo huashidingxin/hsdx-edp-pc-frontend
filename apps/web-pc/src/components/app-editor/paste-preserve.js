@@ -48,8 +48,8 @@ export const Section = Node.create({
 
 /** 已由专用扩展结构化管理的 style 键，剔除后剩余部分原样保留 */
 const MANAGED_STYLE_KEYS = new Set([
-  'color',
   'background-color',
+  'color',
   'font-family',
   'font-size',
   'line-height',
@@ -68,7 +68,7 @@ function extractResidualInlineStyle(element) {
     const priority = style.getPropertyPriority(key);
     parts.push(`${key}: ${value}${priority ? ' !important' : ''}`);
   }
-  return parts.length ? `${parts.join('; ')};` : null;
+  return parts.length > 0 ? `${parts.join('; ')};` : null;
 }
 
 const MAX_MERGE_SPAN_DEPTH = 20;
@@ -83,7 +83,7 @@ function mergeNestedSpanStyles(element) {
   const childSpans = [];
   const walk = (node, depth) => {
     if (depth > MAX_MERGE_SPAN_DEPTH) return;
-    Array.from(node.children).forEach((child) => {
+    [...node.children].forEach((child) => {
       if (child.tagName === 'SPAN') {
         childSpans.push(child);
       } else {
@@ -175,7 +175,7 @@ function cleanStyleAttr(element) {
     .split(';')
     .map((decl) => decl.trim())
     .filter((decl) => decl && !WORD_STYLE_DECL.test(decl));
-  if (kept.length) {
+  if (kept.length > 0) {
     element.setAttribute('style', `${kept.join('; ')};`);
   } else {
     element.removeAttribute('style');
@@ -186,7 +186,7 @@ function cleanClassAttr(element) {
   const raw = element.getAttribute('class');
   if (!raw) return;
   const kept = raw.split(/\s+/).filter((cls) => cls && !/^Mso/i.test(cls));
-  if (kept.length) {
+  if (kept.length > 0) {
     element.setAttribute('class', kept.join(' '));
   } else {
     element.removeAttribute('class');
@@ -211,21 +211,21 @@ export function sanitizePastedHtml(html) {
     const commentWalker = dom.createTreeWalker(body, 128);
     const comments = [];
     while (commentWalker.nextNode()) comments.push(commentWalker.currentNode);
-    comments.forEach((comment) => comment.parentNode?.removeChild(comment));
+    comments.forEach((comment) => comment.remove());
 
     // Office 私有标签：拆壳保留内容
-    const officeTags = Array.from(body.querySelectorAll('*')).filter(
-      isOfficeTag,
+    const officeTags = [...body.querySelectorAll('*')].filter((element) =>
+      isOfficeTag(element),
     );
     officeTags.forEach((el) => {
       const parent = el.parentNode;
       if (!parent) return;
       while (el.firstChild) parent.insertBefore(el.firstChild, el);
-      parent.removeChild(el);
+      el.remove();
     });
 
-    body.querySelectorAll('[style]').forEach(cleanStyleAttr);
-    body.querySelectorAll('[class]').forEach(cleanClassAttr);
+    body.querySelectorAll('[style]').forEach((element) => cleanStyleAttr(element));
+    body.querySelectorAll('[class]').forEach((element) => cleanClassAttr(element));
 
     return body.innerHTML;
   } catch {

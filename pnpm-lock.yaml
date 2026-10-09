@@ -730,6 +730,9 @@ importers:
       '@tiptap/starter-kit':
         specifier: 'catalog:'
         version: 3.30.0
+      '@tiptap/vue-3':
+        specifier: 'catalog:'
+        version: 3.30.0(@floating-ui/dom@1.8.0)(@tiptap/core@3.30.0(@tiptap/pm@3.30.0))(@tiptap/pm@3.30.0)(vue@3.5.41(typescript@6.0.3))
       '@vben/access':
         specifier: workspace:*
         version: link:../../packages/effects/access
