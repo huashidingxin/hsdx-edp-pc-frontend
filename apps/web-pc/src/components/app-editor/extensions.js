@@ -12,6 +12,9 @@
  *      让粘贴/回填的 HTML 不被裁剪。
  *    - 通过 PreserveAttributes 全局属性保留块级元素上的 style/class，
  *      尽量逼近 CKEditor GeneralHtmlSupport 的「无损」表现。
+ * 4. 粘贴保真（paste-preserve.js）：承接 135/秀米/公众号/Word 等来源的
+ *    <section>/<div> 嵌套结构与行内装饰样式（letter-spacing/text-indent 等），
+ *    并在解析前清洗来源垃圾（o:p 标签、mso- 声明、script、style、注释）。
  */
 import { Extension } from '@tiptap/core';
 import Highlight from '@tiptap/extension-highlight';
@@ -26,12 +29,13 @@ import {
   FontFamily,
   FontSize,
   LineHeight,
-  TextStyle,
 } from '@tiptap/extension-text-style';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import StarterKit from '@tiptap/starter-kit';
 
-// 需要保留 style / class 的块级节点类型
+import { PasteSanitizer, RichTextStyle, Section } from './paste-preserve';
+
+// 需要保留 style / class 的节点类型（块级节点 + 行内标记）
 const PRESERVE_TYPES = [
   'paragraph',
   'heading',
@@ -43,6 +47,13 @@ const PRESERVE_TYPES = [
   'image',
   'tableCell',
   'tableHeader',
+  // 秀米/135 素材骨架容器
+  'section',
+  // 行内标记上的装饰样式（如 <strong style="color:...">）
+  'bold',
+  'italic',
+  'underline',
+  'strike',
 ];
 
 /**
@@ -69,6 +80,7 @@ const PreserveAttributes = Extension.create({
               if (!style) return null;
               const cleaned = style
                 .replace(/text-align\s*:[^;]+;?/gi, '')
+                .replace(/mso-[\w-]*\s*:[^;]+;?/gi, '')
                 .trim();
               return cleaned || null;
             },
@@ -201,10 +213,11 @@ export function createEditorExtensions(options = {}) {
       // 关闭 StarterKit 内置 Link，使用下方自定义配置
       link: false,
     }),
+    Section,
     TextAlign.configure({
-      types: ['heading', 'paragraph'],
+      types: ['heading', 'paragraph', 'section'],
     }),
-    TextStyle,
+    RichTextStyle,
     Color,
     BackgroundColor,
     FontFamily,
@@ -227,5 +240,6 @@ export function createEditorExtensions(options = {}) {
     PreserveAttributes,
     Placeholder.configure({ placeholder }),
     createImageUploadExtension(upload),
+    PasteSanitizer,
   ];
 }
