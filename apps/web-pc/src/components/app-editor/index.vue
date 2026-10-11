@@ -24,6 +24,7 @@ import {
 import { NodeSelection, TextSelection } from '@tiptap/pm/state';
 
 import { VbenTiptap } from '@vben/plugins/tiptap';
+import { BubbleMenu, FloatingMenu } from '@tiptap/vue-3/menus';
 
 import { upload as uploadFile } from '#/api';
 
@@ -32,12 +33,14 @@ import { findActiveColumnsInfo } from './columns';
 import { contentStylesCss, usesCustomStyleBlocks } from './content-styles.js';
 import {
   cleanEmptyTopParagraphs,
+  findTextRange,
   justifyAllContent as justifyAllContentDoc,
   unifyAllLineHeight as unifyAllLineHeightDoc,
 } from './doc-actions';
 import {
   findColumnsNodeAndPos,
   findImageNodeAndPos,
+  findTableNodeAndPos,
   findVideoNodeAndPos,
 } from './dom-lookup';
 import EditorToolbar from './editor-toolbar.vue';
@@ -58,7 +61,9 @@ import {
   appEditorSelectionKey,
   dispatchColumnsSelected,
   dispatchSelectionCleared,
+  dispatchTableSelected,
 } from './selection-plugin';
+import { getTableDimensions } from './table-tools';
 
 const props = defineProps({
   value: {
@@ -114,6 +119,22 @@ const props = defineProps({
     default: () => DEFAULT_INTERNAL_DOMAINS,
   },
   /**
+   * 站内Mention 数据源：(query: string) => Promise<Array<{ url, label, hint? }>>
+   * 默认 null（@ 建议列表提示未配置）；接入业务 records 搜索后传入。
+   */
+  fetchMentions: {
+    type: [Function, Boolean],
+    default: null,
+  },
+  /**
+   * 中文校对服务：(text: string) => Promise<Array<{ text, message, suggestions[] }>>
+   * 默认 null（校对面板提示未配置）；需后端代理第三方接口，切勿前端直连带密钥。
+   */
+  fetchProofread: {
+    type: [Function, Boolean],
+    default: null,
+  },
+  /**
    * 粘贴富文本时是否自动后台转存并原地替换外链
    * 属于组件底层能力，默认关闭 (false)；仅由调用方通过 props 显式传入开启，不向终端用户暴露交互切换
    */
@@ -157,9 +178,14 @@ watch(
 );
 
 const externalAssetsCount = computed(() => externalAssets.value.length);
-const plainTextCount = computed(
-  () => (content.value || '').replace(/<[^>]*>/g, '').trim().length,
-);
+const plainTextCount = computed(() => {
+  // 优先官方 CharacterCount（textSize），桥接未就绪时回退正则
+  try {
+    const chars = editorInstance.value?.storage?.characterCount?.characters?.();
+    if (typeof chars === 'number') return chars;
+  } catch {}
+  return (content.value || '').replace(/<[^>]*>/g, '').trim().length;
+});
 
 // ---------------------------------------------------------------------------
 // 自定义样式依赖指示：文档用到多栏布局时，“复制样式”按钮高亮呼吸提示
@@ -312,6 +338,63 @@ function closePreviewModal() {
 }
 
 // ---------------------------------------------------------------------------
+// 打印清样：渲染一份仅含正文的打印区并调用系统打印
+// ---------------------------------------------------------------------------
+
+const isPrinting = ref(false);
+
+// 打印样式只注入一次（普通 DOM 操作，不进 Vue 渲染树）
+let printCssInjected = false;
+
+function ensurePrintCss() {
+  if (printCssInjected || typeof document === 'undefined') return;
+  if (document.getElementById('app-editor-print-css')) {
+    printCssInjected = true;
+    return;
+  }
+  try {
+    const style = document.createElement('style');
+    style.id = 'app-editor-print-css';
+    style.textContent = printBaseCss;
+    document.head.appendChild(style);
+    printCssInjected = true;
+  } catch (err) {
+    console.warn('[app-editor] 打印样式注入失败:', err);
+  }
+}
+
+function printDocument() {
+  if (isPrinting.value) return;
+  ensurePrintCss();
+  isPrinting.value = true;
+  nextTick(() => {
+    const cleanup = () => {
+      isPrinting.value = false;
+      window.removeEventListener('afterprint', cleanup);
+    };
+    window.addEventListener('afterprint', cleanup);
+    try {
+      window.print();
+    } catch {
+      cleanup();
+    }
+    // 兜底：afterprint 未触发时 2s 后自动清理
+    setTimeout(() => {
+      if (isPrinting.value) cleanup();
+    }, 2000);
+  });
+}
+
+// 打印清样内联样式：复用输出样式定义 + 打印基准（黑字/表格线）
+const printBaseCss = `${contentStylesCss}
+.app-editor-print { font-size: 14px; line-height: 1.75; color: #111111; }
+.app-editor-print img, .app-editor-print video { max-width: 100%; height: auto; }
+.app-editor-print table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+.app-editor-print td, .app-editor-print th { border: 1px solid #999999; padding: 6px 10px; }
+.app-editor-print a { color: #111111; text-decoration: underline; }
+`;
+
+// ---------------------------------------------------------------------------
 // HTML 源码美化格式化函数
 // ---------------------------------------------------------------------------
 
@@ -379,9 +462,26 @@ function toggleSourceMode() {
 
 function enterSourceMode() {
   clearSelection();
+  hideShortcutMenus();
   const currentHtml = editorInstance.value?.getHTML() ?? content.value ?? '';
   sourceCode.value = formatHtml(currentHtml);
   isSourceMode.value = true;
+}
+
+/**
+ * 显式隐藏 Bubble / Floating 快捷菜单（发 hide meta，不拆 DOM，见模板注释）
+ */
+function hideShortcutMenus() {
+  const editor = editorInstance.value;
+  if (!editor || editor.isDestroyed) return;
+  try {
+    const tr = editor.state.tr;
+    tr.setMeta('appEditorBubble', 'hide');
+    tr.setMeta('appEditorFloatingMenu', 'hide');
+    editor.view.dispatch(tr);
+  } catch {
+    /* 忽略 */
+  }
 }
 
 function exitSourceMode() {
@@ -666,6 +766,129 @@ function clearColumnsSelection() {
 function clearAllSelection() {
   clearSelection();
   clearColumnsSelection();
+  clearTableSelection();
+}
+
+// ---------------------------------------------------------------------------
+// 表格（Table）选择与 Dock 工具条系统
+// ---------------------------------------------------------------------------
+
+const selectedTableTarget = ref(null);
+// 结构: { el: HTMLElement, pos: number, node: Node }
+
+const currentTableDims = computed(() => {
+  const node = selectedTableTarget.value?.node;
+  if (!node || node.type.name !== 'table') return { rows: 0, cols: 0 };
+  return getTableDimensions(node);
+});
+
+function syncTableHighlight(pos) {
+  const editor = editorInstance.value;
+  if (!editor || typeof pos !== 'number') return;
+  try {
+    const cur = appEditorSelectionKey.getState(editor.state)?.tablePos;
+    if (cur !== pos) dispatchTableSelected(editor, pos);
+  } catch {
+    /* 忽略 */
+  }
+}
+
+function refreshSelectedTableNode() {
+  if (!editorInstance.value || !selectedTableTarget.value) return;
+  const editor = editorInstance.value;
+  const { pos, el } = selectedTableTarget.value;
+  let node = editor.state.doc.nodeAt(pos);
+  if (!node || node.type.name !== 'table') {
+    if (el && el.isConnected) {
+      const fresh = findTableNodeAndPos(editor.view, el);
+      if (fresh) {
+        node = fresh.node;
+        selectedTableTarget.value.pos = fresh.pos;
+      }
+    }
+    if (!node || node.type.name !== 'table') {
+      clearTableSelection();
+      return;
+    }
+  }
+  selectedTableTarget.value.node = node;
+  syncTableHighlight(selectedTableTarget.value.pos);
+}
+
+function selectTable(tableEl) {
+  if (!tableEl || !editorInstance.value || !isEditable.value || isSourceMode.value) return;
+  const found = findTableNodeAndPos(editorInstance.value.view, tableEl);
+  if (!found) return;
+
+  // 高亮统一走 selection-plugin 的 Decorations，禁止 classList 直改
+  selectedTableTarget.value = {
+    el: tableEl,
+    pos: found.pos,
+    node: found.node,
+  };
+  syncTableHighlight(found.pos);
+}
+
+function clearTableSelection() {
+  selectedTableTarget.value = null;
+  if (editorInstance.value) {
+    try {
+      const cur = appEditorSelectionKey.getState(editorInstance.value.state)?.tablePos;
+      if (cur !== null && cur !== undefined) {
+        dispatchSelectionCleared(editorInstance.value, 'table');
+      }
+    } catch {
+      /* 忽略 */
+    }
+  }
+}
+
+// 表格结构操作后刷新（行列增删/合并/底色均保持容器起始位，刷新节点与徽标）
+function afterTableMutation(messageText = null) {
+  refreshSelectedTableNode();
+  if (messageText) message.success(messageText);
+}
+
+function deleteCurrentTable() {
+  const editor = editorInstance.value;
+  if (!editor || !selectedTableTarget.value) return;
+  if (editor.chain().focus().deleteTable().run()) {
+    afterTableMutation('已删除整个表格');
+  }
+}
+
+// 单元格底色预设（与高亮色系保持一致）
+const CELL_BG_PRESETS = [
+  { label: '黄', value: '#fef08a' },
+  { label: '绿', value: '#bbf7d0' },
+  { label: '蓝', value: '#bae6fd' },
+  { label: '粉', value: '#fbcfe8' },
+  { label: '灰', value: '#f3f4f6' },
+];
+
+function runTableAction(fn, failText = '当前状态无法执行该操作') {
+  const editor = editorInstance.value;
+  if (!editor || !selectedTableTarget.value) return false;
+  let ok;
+  try {
+    ok = fn();
+  } catch {
+    ok = false;
+  }
+  if (ok) {
+    refreshSelectedTableNode();
+  } else if (failText) {
+    message.warning(failText);
+  }
+  return ok;
+}
+
+function setCellBackgroundUi(color) {
+  const editor = editorInstance.value;
+  if (!editor || !selectedTableTarget.value) return;
+  if (editor.chain().focus().setCellBackground(color).run()) {
+    refreshSelectedTableNode();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -709,6 +932,156 @@ async function copyContentStyles() {
   } catch {
     message.warning('复制失败，请重试');
   }
+}
+
+// ---------------------------------------------------------------------------
+// Bubble / Floating 快捷菜单
+// ---------------------------------------------------------------------------
+
+function shouldShowBubbleMenu({ state, editor }) {
+  if (!editor?.isEditable || isSourceMode.value) return false;
+  const { from, to } = state.selection;
+  if (from === to) return false;
+  try {
+    const $from = state.doc.resolve(from);
+    // 代码块内不打扰
+    for (let d = $from.depth; d > 0; d -= 1) {
+      if ($from.node(d).type.name === 'codeBlock') return false;
+    }
+  } catch {}
+  return true;
+}
+
+function shouldShowFloatingMenu({ state, editor }) {
+  if (!editor?.isEditable || isSourceMode.value) return false;
+  try {
+    const { $from } = state.selection;
+    // 仅顶层空段落（与官方默认一致，避免栏内/表格内误弹）
+    return $from.depth <= 1 && $from.parent.isTextblock && !$from.parent.textContent;
+  } catch {
+    return false;
+  }
+}
+
+function floatingInsert(kind) {
+  const editor = editorInstance.value;
+  if (!editor || !isEditable.value || isSourceMode.value) return;
+  const chain = editor.chain().focus();
+  if (kind === 'paragraph') {
+    chain.setParagraph().run();
+    return;
+  }
+  if (kind === 'columns') {
+    chain.insertColumns({ cols: 2, layout: '1:1', keepContent: true }).run();
+    return;
+  }
+  if (kind === 'table') {
+    chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 中文校对（服务经 fetchProofread 注入；问题模型 { id, snippet, message, suggestions[] }）
+// ---------------------------------------------------------------------------
+
+const proofreadIssues = ref([]);
+const proofreading = ref(false);
+let proofreadSeq = 0;
+
+const proofreadConfigured = computed(() => {
+  const fn = props.fetchProofread;
+  return typeof fn === 'function';
+});
+
+async function runProofread() {
+  const editor = editorInstance.value;
+  const fn = props.fetchProofread;
+  if (!editor || typeof fn !== 'function' || proofreading.value) return;
+  proofreading.value = true;
+  try {
+    const text = editor.getText();
+    const list = await fn(text);
+    proofreadIssues.value = (Array.isArray(list) ? list : [])
+      .filter((it) => it && it.text)
+      .slice(0, 100)
+      .map((it) => ({
+        id: `pr-${(proofreadSeq += 1)}`,
+        snippet: String(it.text),
+        message: String(it.message || '疑似问题'),
+        suggestions: Array.isArray(it.suggestions) ? it.suggestions.map(String).slice(0, 3) : [],
+      }));
+    if (proofreadIssues.value.length === 0) {
+      message.success('校对完成，未发现问题');
+    } else {
+      message.warning(`发现 ${proofreadIssues.value.length} 处疑似问题`);
+    }
+  } catch (error) {
+    console.error('[app-editor] 校对失败:', error);
+    message.error('校对服务调用失败');
+  } finally {
+    proofreading.value = false;
+  }
+}
+
+function locateProofreadIssue(issue) {
+  const editor = editorInstance.value;
+  if (!editor || !issue?.snippet) return;
+  const range = findTextRange(editor.state.doc, issue.snippet);
+  if (!range) {
+    message.info('文中已找不到该片段，可能已修改');
+    return;
+  }
+  selectRangeInEditorAt(editor, range.from, range.to);
+}
+
+function selectRangeInEditorAt(editor, from, to) {
+  try {
+    const doc = editor.state.doc;
+    const maxPos = Math.max(0, doc.content.size - 1);
+    const safeFrom = Math.max(0, Math.min(from, maxPos));
+    const safeTo = Math.max(safeFrom, Math.min(to, doc.content.size));
+    editor.view.dispatch(
+      editor.state.tr.setSelection(TextSelection.create(doc, safeFrom, safeTo)),
+    );
+    editor.commands.focus();
+    editor.commands.scrollIntoView();
+  } catch {
+    try {
+      editor.chain().focus().run();
+    } catch {}
+  }
+}
+
+function applyProofreadSuggestion(issue, suggestion) {
+  const editor = editorInstance.value;
+  if (!editor || !issue?.snippet || suggestion === undefined) return;
+  const range = findTextRange(editor.state.doc, issue.snippet);
+  if (!range) {
+    message.info('文中已找不到该片段，可能已修改');
+    return;
+  }
+  try {
+    const tr = editor.state.tr.replaceWith(
+      range.from,
+      range.to,
+      editor.schema.text(String(suggestion)),
+    );
+    editor.view.dispatch(tr);
+    // 位置可能整体漂移，清空剩余并提示重查（诚实简单，避免错改）
+    proofreadIssues.value = [];
+    message.success('已应用替换，建议重新检查');
+  } catch (err) {
+    console.error('[app-editor] 应用校对替换失败:', err);
+  }
+}
+
+function dismissProofreadIssue(issue) {
+  if (!issue) return;
+  proofreadIssues.value = proofreadIssues.value.filter((it) => it.id !== issue.id);
+}
+
+function clearProofreadIssues() {
+  proofreadIssues.value = [];
 }
 
 const selectedTarget = ref(null);
@@ -1564,6 +1937,11 @@ function stashPendingClick(target) {
   const columnsEl = target.closest('.cms-columns');
   if (columnsEl) {
     pendingClickSelect.value = { kind: 'columns', el: columnsEl, targetEl: target };
+    return;
+  }
+  const tableEl = target.closest('table');
+  if (tableEl) {
+    pendingClickSelect.value = { kind: 'table', el: tableEl };
   }
 }
 
@@ -1578,14 +1956,27 @@ function flushPendingClickSelect() {
       const columnsEl = p.el.closest?.('.cms-columns');
       if (columnsEl) selectColumns(columnsEl, p.el);
       else clearColumnsSelection();
+      const tableEl = p.el.closest?.('table');
+      if (tableEl) selectTable(tableEl);
+      else clearTableSelection();
     } else if (p.kind === 'video') {
       selectVideo(p.el);
       const columnsEl = p.el.closest?.('.cms-columns');
       if (columnsEl) selectColumns(columnsEl, p.el);
       else clearColumnsSelection();
+      const tableEl = p.el.closest?.('table');
+      if (tableEl) selectTable(tableEl);
+      else clearTableSelection();
     } else if (p.kind === 'columns') {
       clearSelection();
       selectColumns(p.el, p.targetEl || p.el);
+      const tableEl = (p.targetEl || p.el)?.closest?.('table');
+      if (tableEl) selectTable(tableEl);
+      else clearTableSelection();
+    } else if (p.kind === 'table') {
+      clearSelection();
+      clearColumnsSelection();
+      selectTable(p.el);
     }
   } catch (err) {
     console.warn('[app-editor] pending click 回放失败:', err);
@@ -1613,8 +2004,9 @@ function onContentClick(event) {
   }
 
   const columnsEl = target.closest('.cms-columns');
+  const tableEl = target.closest('table');
 
-  // 1. 点击图片：选中图片，若在多栏内部则同时激活多栏工具条（实现双块堆叠显示）
+  // 1. 点击图片：选中图片，若在多栏/表格内部则同时激活对应工具条（堆叠显示）
   const imgEl = target.tagName === 'IMG' ? target : target.closest('img');
   if (imgEl) {
     selectImage(imgEl);
@@ -1623,10 +2015,15 @@ function onContentClick(event) {
     } else {
       clearColumnsSelection();
     }
+    if (tableEl) {
+      selectTable(tableEl);
+    } else {
+      clearTableSelection();
+    }
     return;
   }
 
-  // 2. 点击视频：拦截原生自动触发，选中视频，若在多栏内部则同时激活多栏工具条（实现双块堆叠显示）
+  // 2. 点击视频：拦截原生自动触发，选中视频，若在多栏/表格内部则同时激活对应工具条
   const videoEl = target.tagName === 'VIDEO' ? target : target.closest('video');
   if (videoEl) {
     if (!videoEl.paused && !isVideoPlaying.value) {
@@ -1638,17 +2035,36 @@ function onContentClick(event) {
     } else {
       clearColumnsSelection();
     }
+    if (tableEl) {
+      selectTable(tableEl);
+    } else {
+      clearTableSelection();
+    }
     return;
   }
 
-  // 3. 点击多栏内部的常规元素（段落、文本、空白区域等）：激活多栏工具条，清除媒体工具条
+  // 3. 点击多栏内部的常规元素：激活多栏工具条，清除媒体工具条；
+  //    若同时处于表格内（如栏内表格），表格工具条一并激活
   if (columnsEl) {
     clearSelection();
     selectColumns(columnsEl, target);
+    if (tableEl) {
+      selectTable(tableEl);
+    } else {
+      clearTableSelection();
+    }
     return;
   }
 
-  // 4. 点击多栏外部的常规段落：清除全部浮动选中
+  // 4. 点击表格内部常规元素：激活表格工具条
+  if (tableEl) {
+    clearSelection();
+    clearColumnsSelection();
+    selectTable(tableEl);
+    return;
+  }
+
+  // 5. 其他常规段落：清除全部选中
   clearAllSelection();
 }
 
@@ -1733,13 +2149,59 @@ function onEditorSelectionUpdate() {
       };
       // 高亮跟随光标所在多栏（Decorations 机制，仅变化时 dispatch）
       syncColumnsHighlight(info.columnsPos);
+    } else if (selectedColumnsTarget.value && !selectedTarget.value) {
+      // 在多栏内但拿不到容器 DOM：同样清理，避免残留
+      clearColumnsSelection();
+    }
+  } else if (selectedColumnsTarget.value && !selectedTarget.value) {
+    // 脱离多栏且没有选中的内部媒体时清理多栏选中
+    clearColumnsSelection();
+  }
+
+  // 表格跟随：光标在表格内则同步表格选中（与多栏逻辑对称）
+  syncTableFromSelection();
+}
+
+/**
+ * 按当前光标同步表格选中；脱离表格且无内部媒体选中时清理。
+ */
+function syncTableFromSelection() {
+  const editor = editorInstance.value;
+  if (!editor || isSourceMode.value || !isEditable.value) return;
+
+  const { $from } = editor.state.selection;
+  let tablePos = null;
+  let tableNode = null;
+  for (let d = $from.depth; d >= 0; d -= 1) {
+    const node = $from.node(d);
+    if (node && node.type.name === 'table') {
+      tableNode = node;
+      tablePos = $from.before(d);
+      break;
+    }
+  }
+
+  if (tableNode && typeof tablePos === 'number') {
+    let tableDom = null;
+    try {
+      const dom = editor.view.nodeDOM(tablePos);
+      if (dom instanceof HTMLElement) {
+        tableDom = dom.tagName === 'TABLE' ? dom : dom.querySelector?.('table') || dom.closest?.('table');
+      }
+    } catch {}
+    if (tableDom) {
+      selectedTableTarget.value = {
+        el: tableDom,
+        pos: tablePos,
+        node: tableNode,
+      };
+      syncTableHighlight(tablePos);
       return;
     }
   }
 
-  // 只有当脱离多栏且没有选中的内部媒体时才清理多栏选中
-  if (selectedColumnsTarget.value && !selectedTarget.value) {
-    clearColumnsSelection();
+  if (selectedTableTarget.value && !selectedTarget.value) {
+    clearTableSelection();
   }
 }
 
@@ -1758,7 +2220,72 @@ const extensions = createEditorExtensions({
   upload: uploadImage,
   onEditorReady,
   onPasteHtml: handlePasteHtml,
+  onOpenMedia: openInsertMedia,
+  getFetchMentions: () => fetchMentionsRef.value,
 });
+
+// Mention 数据源（支持调用方热切换）
+const fetchMentionsRef = ref(props.fetchMentions ?? null);
+
+watch(
+  () => props.fetchMentions,
+  (val) => {
+    fetchMentionsRef.value = val ?? null;
+  },
+);
+
+/**
+ * Slash / FloatingMenu 的图片视频插入：打开插入模式媒体库
+ */
+const insertMediaModalOpen = ref(false);
+const insertMediaType = ref('image');
+
+function openInsertMedia(type = 'image') {
+  if (!isEditable.value || isSourceMode.value) return;
+  if (hasMediaLibrary.value) {
+    insertMediaType.value = type === 'video' ? 'video' : 'image';
+    insertMediaModalOpen.value = true;
+    return;
+  }
+  // 无媒体库时回退：图片走顶栏本地上传，视频提示
+  if (type === 'video') {
+    message.info('未配置媒体库，请使用顶栏视频按钮上传或填链接');
+    return;
+  }
+  triggerLocalImagePickForInsert();
+}
+
+function triggerLocalImagePickForInsert() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.addEventListener('change', async () => {
+    const file = input.files?.[0];
+    if (!file || !editorInstance.value) return;
+    try {
+      const url = await uploadImage(file);
+      if (url) editorInstance.value.chain().focus().setImage({ src: url }).run();
+    } catch (err) {
+      console.error('[app-editor] 本地图片插入失败:', err);
+    }
+  });
+  input.click();
+}
+
+function onInsertMediaSelect(item) {
+  if (!item?.url || !editorInstance.value) return;
+  const editor = editorInstance.value;
+  const isVideo =
+    insertMediaType.value === 'video' ||
+    item.type === 'video' ||
+    item.mime?.startsWith('video/');
+  if (isVideo) {
+    editor.chain().focus().setVideo({ src: item.url }).run();
+  } else {
+    editor.chain().focus().setImage({ src: stripThumbnailParam(item.url) }).run();
+  }
+  insertMediaModalOpen.value = false;
+}
 
 watch(
   () => props.value,
@@ -1848,10 +2375,18 @@ onBeforeUnmount(() => {
         :fetch-media="props.fetchMedia !== undefined ? props.fetchMedia : defaultFetchMedia"
         :thumbnail-process="props.thumbnailProcess"
         :external-assets-count="externalAssetsCount"
+        :proofread-issues="proofreadIssues"
+        :proofreading="proofreading"
+        :proofread-configured="proofreadConfigured"
         @toggle-fullscreen="toggleFullscreen"
         @open-external-assets="openExternalModal"
         @open-preview="openPreviewModal"
         @toggle-source-mode="toggleSourceMode"
+        @run-proofread="runProofread"
+        @locate-proofread="locateProofreadIssue"
+        @apply-proofread="applyProofreadSuggestion"
+        @dismiss-proofread="dismissProofreadIssue"
+        @clear-proofread="clearProofreadIssues"
       />
 
       <!-- 头部外链标注通知条 -->
@@ -1937,7 +2472,98 @@ onBeforeUnmount(() => {
           @input="onSourceInput"
         ></textarea>
       </div>
-    <!-- 底部固定 Dock 工具条：上下文模式（多栏/媒体）与全局模式（页面宽度/一键排版）互斥显示，永不遮挡菜单与正文 -->
+    <!-- 选区 Bubble 菜单：行内格式快捷操作（AI 写作入口预留位）
+      常驻挂载（仅跟随 editor 实例），显隐由 shouldShow + hide meta 控制；
+      禁止用 v-if 跟随源码模式反复拆装——插件内部有延迟更新与异步定位，
+      卸载后回调操作已摘除 DOM 会抛 insertBefore 空指针 -->
+    <BubbleMenu
+      v-if="editorInstance"
+      :editor="editorInstance"
+      plugin-key="appEditorBubble"
+      :should-show="shouldShowBubbleMenu"
+      :update-delay="0"
+    >
+      <div class="app-editor-bubble">
+        <button
+          class="app-editor-btn"
+          title="加粗"
+          type="button"
+          @click="editorInstance.chain().focus().toggleBold().run()"
+        >
+          <span class="font-bold">B</span>
+        </button>
+        <button
+          class="app-editor-btn"
+          title="斜体"
+          type="button"
+          @click="editorInstance.chain().focus().toggleItalic().run()"
+        >
+          <span class="italic">I</span>
+        </button>
+        <button
+          class="app-editor-btn"
+          title="删除线"
+          type="button"
+          @click="editorInstance.chain().focus().toggleStrike().run()"
+        >
+          <span class="line-through">S</span>
+        </button>
+        <button
+          class="app-editor-btn"
+          title="行内代码"
+          type="button"
+          @click="editorInstance.chain().focus().toggleCode().run()"
+        >
+          <span class="font-mono text-[11px]">&lt;&gt;</span>
+        </button>
+      </div>
+    </BubbleMenu>
+
+    <!-- 空行 Floating 菜单：块级快捷插入（常驻挂载，原因同上） -->
+    <FloatingMenu
+      v-if="editorInstance"
+      :editor="editorInstance"
+      plugin-key="appEditorFloatingMenu"
+      :should-show="shouldShowFloatingMenu"
+      :update-delay="0"
+    >
+      <div class="app-editor-bubble">
+        <button
+          class="app-editor-btn"
+          title="正文 / 标题"
+          type="button"
+          @click="floatingInsert('paragraph')"
+        >
+          <span class="text-[11px] font-bold">T</span>
+        </button>
+        <button
+          class="app-editor-btn"
+          title="图片"
+          type="button"
+          @click="openInsertMedia('image')"
+        >
+          <ImagePlus class="size-4" />
+        </button>
+        <button
+          class="app-editor-btn"
+          title="两栏布局"
+          type="button"
+          @click="floatingInsert('columns')"
+        >
+          <span class="text-[11px]">分栏</span>
+        </button>
+        <button
+          class="app-editor-btn"
+          title="表格"
+          type="button"
+          @click="floatingInsert('table')"
+        >
+          <span class="text-[11px]">表格</span>
+        </button>
+      </div>
+    </FloatingMenu>
+
+    <!-- 底部固定 Dock 工具条：上下文模式（多栏/媒体）与全局模式（编辑视口/一键排版）互斥显示，永不遮挡菜单与正文 -->
     <div
       v-if="!isSourceMode"
       class="app-editor-dock"
@@ -2293,6 +2919,168 @@ onBeforeUnmount(() => {
               </button>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- 表格专用设置工具栏（点击表格即显示，可与多栏/媒体堆叠） -->
+      <div
+        v-if="selectedTableTarget"
+        class="app-editor-floating__toolbar app-editor-table-toolbar"
+      >
+        <div class="app-editor-floating__header">
+          <div class="flex items-center gap-1.5">
+            <span class="app-editor-tag">
+              <svg
+                class="size-3.5"
+                fill="none"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                viewBox="0 0 24 24"
+              >
+                <rect height="18" rx="2" width="18" x="3" y="3" />
+                <line x1="3" x2="21" y1="9" y2="9" />
+                <line x1="3" x2="21" y1="15" y2="15" />
+                <line x1="9" x2="9" y1="3" y2="21" />
+                <line x1="15" x2="15" y1="3" y2="21" />
+              </svg>
+              表格
+            </span>
+            <span class="app-editor-tag-badge">{{ currentTableDims.rows }} 行 × {{ currentTableDims.cols }} 列</span>
+          </div>
+          <button
+            class="text-[11px] text-muted-foreground hover:text-foreground px-1"
+            title="关闭表格工具栏"
+            type="button"
+            @click="clearTableSelection"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div class="app-editor-floating__actions">
+          <!-- 行操作 -->
+          <button
+            class="app-editor-btn app-editor-btn--pill"
+            title="在上方插入行"
+            type="button"
+            @click="runTableAction(() => editorInstance.chain().focus().addRowBefore().run())"
+          >
+            <span class="app-editor-btn-label">上插行</span>
+          </button>
+          <button
+            class="app-editor-btn app-editor-btn--pill"
+            title="在下方插入行"
+            type="button"
+            @click="runTableAction(() => editorInstance.chain().focus().addRowAfter().run())"
+          >
+            <span class="app-editor-btn-label">下插行</span>
+          </button>
+          <button
+            class="app-editor-btn app-editor-btn--pill"
+            title="复制当前行（含内容）"
+            type="button"
+            @click="runTableAction(() => editorInstance.chain().focus().duplicateRow().run(), '含合并单元格的行暂不支持复制')"
+          >
+            <span class="app-editor-btn-label">复制行</span>
+          </button>
+          <button
+            class="app-editor-btn app-editor-btn--danger"
+            title="删除当前行"
+            type="button"
+            @click="runTableAction(() => editorInstance.chain().focus().deleteRow().run())"
+          >
+            <span class="text-[11px] font-medium">删行</span>
+          </button>
+
+          <span class="app-editor-divider"></span>
+
+          <!-- 列操作 -->
+          <button
+            class="app-editor-btn app-editor-btn--pill"
+            title="在左侧插入列"
+            type="button"
+            @click="runTableAction(() => editorInstance.chain().focus().addColumnBefore().run())"
+          >
+            <span class="app-editor-btn-label">左插列</span>
+          </button>
+          <button
+            class="app-editor-btn app-editor-btn--pill"
+            title="在右侧插入列"
+            type="button"
+            @click="runTableAction(() => editorInstance.chain().focus().addColumnAfter().run())"
+          >
+            <span class="app-editor-btn-label">右插列</span>
+          </button>
+          <button
+            class="app-editor-btn app-editor-btn--pill"
+            title="复制当前列（含内容，合并单元格列暂不支持）"
+            type="button"
+            @click="runTableAction(() => editorInstance.chain().focus().duplicateColumn().run(), '含合并单元格的列暂不支持复制')"
+          >
+            <span class="app-editor-btn-label">复制列</span>
+          </button>
+          <button
+            class="app-editor-btn app-editor-btn--danger"
+            title="删除当前列"
+            type="button"
+            @click="runTableAction(() => editorInstance.chain().focus().deleteColumn().run())"
+          >
+            <span class="text-[11px] font-medium">删列</span>
+          </button>
+
+          <span class="app-editor-divider"></span>
+
+          <!-- 合并 / 表头 / 删除 -->
+          <button
+            class="app-editor-btn app-editor-btn--pill"
+            title="合并所选单元格，再点一次拆分"
+            type="button"
+            @click="runTableAction(() => editorInstance.chain().focus().mergeOrSplit().run())"
+          >
+            <span class="app-editor-btn-label">合并/拆分</span>
+          </button>
+          <button
+            class="app-editor-btn app-editor-btn--pill"
+            title="切换首行表头"
+            type="button"
+            @click="runTableAction(() => editorInstance.chain().focus().toggleHeaderRow().run())"
+          >
+            <span class="app-editor-btn-label">表头行</span>
+          </button>
+          <button
+            class="app-editor-btn app-editor-btn--danger"
+            title="删除整个表格"
+            type="button"
+            @click="deleteCurrentTable"
+          >
+            <svg class="size-3.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
+          </button>
+
+          <span class="app-editor-divider"></span>
+
+          <!-- 单元格底色 -->
+          <span class="app-editor-panel-title">底色</span>
+          <button
+            class="app-editor-preset-btn"
+            title="清除单元格底色"
+            type="button"
+            @click="setCellBackgroundUi(null)"
+          >
+            无
+          </button>
+          <button
+            v-for="c in CELL_BG_PRESETS"
+            :key="c.value"
+            class="app-editor-preset-btn"
+            :style="{ backgroundColor: c.value }"
+            :title="`单元格底色 ${c.label}`"
+            type="button"
+            @click="setCellBackgroundUi(c.value)"
+          >
+            {{ c.label }}
+          </button>
         </div>
       </div>
 
@@ -2828,7 +3616,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="app-editor-floating__actions">
-          <span class="app-editor-panel-title">页面宽度</span>
+          <span class="app-editor-panel-title" title="仅调整编辑区显示宽度，用于预览窄屏排版效果，不会改变发布后的页面宽度">编辑视口</span>
           <div class="inline-flex rounded-md border border-border bg-background p-0.5">
             <button
               type="button"
@@ -3002,23 +3790,32 @@ onBeforeUnmount(() => {
               >
                 <span>📰 公众号 (677px)</span>
               </button>
-              <button
-                class="flex items-center gap-1.5 rounded-md px-3 py-1 font-medium transition-colors"
-                :class="previewDevice === 'full' ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'"
-                type="button"
-                title="PC/大屏 100% 自适应流式宽度"
-                @click="previewDevice = 'full'"
-              >
-                <span>💻 宽屏大屏 (100%)</span>
-              </button>
+            <button
+              class="flex items-center gap-1.5 rounded-md px-3 py-1 font-medium transition-colors"
+              :class="previewDevice === 'full' ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'"
+              type="button"
+              title="PC/大屏 100% 自适应流式宽度"
+              @click="previewDevice = 'full'"
+            >
+              <span>💻 宽屏大屏 (100%)</span>
+            </button>
             </div>
 
-            <button
-              class="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-              title="关闭预览"
-              type="button"
-              @click="closePreviewModal"
-            >
+            <div class="flex items-center gap-1">
+              <button
+                class="rounded-md px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                title="打印当前文档（清样）"
+                type="button"
+                @click="printDocument"
+              >
+                打印
+              </button>
+              <button
+                class="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                title="关闭预览"
+                type="button"
+                @click="closePreviewModal"
+              >
               <svg
                 class="size-4"
                 fill="none"
@@ -3032,6 +3829,7 @@ onBeforeUnmount(() => {
                 <line x1="6" x2="18" y1="6" y2="18" />
               </svg>
             </button>
+          </div>
           </div>
 
           <!-- 预览内容展示区 -->
@@ -3060,6 +3858,14 @@ onBeforeUnmount(() => {
       </div>
     </Teleport>
 
+    <!-- 打印清样区：仅打印时渲染，平时隐藏（样式见 printDocument 注入 head） -->
+    <div
+      v-if="isPrinting"
+      class="app-editor-print"
+    >
+      <div v-html="content"></div>
+    </div>
+
 
 
     <!-- 换图用媒体库弹窗 -->
@@ -3071,6 +3877,16 @@ onBeforeUnmount(() => {
       :upload-file="uploadImage"
       :thumbnail-process="props.thumbnailProcess"
       @select="onReplaceImageSelect"
+    />
+    <!-- Slash / 空行菜单用插入模式媒体库弹窗 -->
+    <MediaLibraryModal
+      v-if="hasMediaLibrary"
+      v-model:visible="insertMediaModalOpen"
+      :initial-type="insertMediaType"
+      :fetch-media="props.fetchMedia !== undefined ? props.fetchMedia : defaultFetchMedia"
+      :upload-file="uploadGeneralFile || uploadImage"
+      :thumbnail-process="insertMediaType === 'video' ? false : props.thumbnailProcess"
+      @select="onInsertMediaSelect"
     />
     <!-- 换视频用媒体库弹窗 -->
     <MediaLibraryModal
@@ -3258,6 +4074,105 @@ onBeforeUnmount(() => {
 }
 
 /* ---------------------------------------------------------------------------
+ * 新增块级能力样式（待办/折叠/查找高亮/快捷菜单/站内Mention/打印）
+ * --------------------------------------------------------------------------- */
+
+/* 待办清单 */
+.vben-tiptap-content ul[data-type='taskList'] {
+  list-style: none;
+  padding-left: 4px;
+}
+
+.vben-tiptap-content ul[data-type='taskList'] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.vben-tiptap-content ul[data-type='taskList'] li > label {
+  display: flex;
+  padding-top: 4px;
+  user-select: none;
+}
+
+.vben-tiptap-content ul[data-type='taskList'] li > div {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 折叠块 */
+.vben-tiptap-content details {
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 12px 0;
+  background: hsl(var(--muted) / 30%);
+}
+
+.vben-tiptap-content summary {
+  cursor: pointer;
+  font-weight: 600;
+  outline: none;
+}
+
+/* 查找命中高亮（视图 decorations，不进输出） */
+.vben-tiptap-content .app-editor-find-match {
+  background: hsl(var(--primary) / 25%);
+  border-radius: 2px;
+}
+
+.vben-tiptap-content .app-editor-find-current {
+  background: hsl(var(--primary) / 55%);
+  color: #ffffff;
+  border-radius: 2px;
+}
+
+/* 站内Mention 内链（编辑态） */
+.vben-tiptap-content a.edp-mention {
+  color: hsl(var(--primary));
+  text-decoration: none;
+  border-bottom: 1px dashed hsl(var(--primary) / 60%);
+  padding: 0 2px;
+  border-radius: 4px;
+  background: hsl(var(--primary) / 8%);
+}
+
+/* Bubble / Floating 快捷菜单 */
+.app-editor-bubble {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  padding: 4px 6px;
+  background: hsl(var(--popover));
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 16%);
+}
+
+/* 打印清样区（平时隐藏，打印时独占） */
+.app-editor-print {
+  display: none;
+}
+
+@media print {
+  body > * {
+    visibility: hidden;
+  }
+
+  .app-editor-print,
+  .app-editor-print * {
+    visibility: visible;
+  }
+
+  .app-editor-print {
+    position: absolute;
+    inset: 0;
+    display: block;
+    padding: 24px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
  * CMS 多栏布局（Columns）标准与交互样式规范
  * --------------------------------------------------------------------------- */
 .cms-columns {
@@ -3321,6 +4236,16 @@ onBeforeUnmount(() => {
 
 /* 编辑器多栏选中指示：内收描边（满宽不被内容区裁剪）+ 圆角 + 淡底 */
 .app-editor-wrapper .cms-columns.app-editor-columns--selected {
+  outline: 2px solid hsl(var(--primary) / 85%);
+  outline-offset: -2px;
+  background-color: hsl(var(--primary) / 5%);
+  border-radius: 10px;
+}
+
+/* 编辑器表格选中指示（与多栏同语言）
+ * 注意：TableKit 用 div.tableWrapper 包裹 table 做列宽拖拽，
+ * decoration 高亮类落在 wrapper 上；输出 HTML 不受影响（仍是纯 table） */
+.app-editor-wrapper .tableWrapper.app-editor-table--selected {
   outline: 2px solid hsl(var(--primary) / 85%);
   outline-offset: -2px;
   background-color: hsl(var(--primary) / 5%);

@@ -32,11 +32,56 @@ export function cleanEmptyTopParagraphs(editor) {
   if (toDelete.length === 0) return 0;
 
   const tr = editor.state.tr;
-  [...toDelete].sort((a, b) => b.pos - a.pos).forEach(({ pos, size }) => {
+  toDelete.toSorted((a, b) => b.pos - a.pos).forEach(({ pos, size }) => {
     tr.delete(pos, pos + size);
   });
   editor.view.dispatch(tr);
   return toDelete.length;
+}
+
+/**
+ * 收集文档大纲（标题位置/层级/文本，供跳转面板使用）。
+ * 按位置跳转，不依赖 id 属性，输出保持纯净。
+ * @returns {Array<{ key: string, level: number, text: string, pos: number }>}
+ */
+export function collectHeadingOutline(doc) {
+  const items = [];
+  if (!doc) return items;
+  try {
+    doc.descendants((node, pos) => {
+      if (node.type.name === 'heading') {
+        items.push({
+          key: `h-${pos}`,
+          level: node.attrs.level || 1,
+          text: node.textContent || '(空标题)',
+          pos,
+        });
+      }
+      return true;
+    });
+  } catch {
+    /* 忽略 */
+  }
+  return items;
+}
+
+/**
+ * 在文档中查找纯文本片段的首个出现位置（校对定位/应用替换用）。
+ * 只在文本块内匹配，返回 { from, to } 或 null。
+ */
+export function findTextRange(doc, snippet) {
+  if (!doc || !snippet || typeof snippet !== 'string') return null;
+  let found = null;
+  doc.descendants((node, pos) => {
+    if (found || !node.isTextblock) return true;
+    const idx = node.textContent.indexOf(snippet);
+    if (idx !== -1) {
+      found = { from: pos + 1 + idx, to: pos + 1 + idx + snippet.length };
+      return false;
+    }
+    return true;
+  });
+  return found;
 }
 
 /**

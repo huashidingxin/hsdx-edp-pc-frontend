@@ -16,11 +16,17 @@
  *    支撑独立增强排版工具栏、单例悬浮工具条与 135 式交互。
  */
 import { Extension, Mark, mergeAttributes, Node } from '@tiptap/core';
+import { CharacterCount } from '@tiptap/extension-character-count';
+import { Details, DetailsContent, DetailsSummary } from '@tiptap/extension-details';
+import { Emoji } from '@tiptap/extension-emoji';
+import { FileHandler } from '@tiptap/extension-file-handler';
 import Highlight from '@tiptap/extension-highlight';
 import Image from '@tiptap/extension-image';
 import Link from '@tiptap/extension-link';
 import Placeholder from '@tiptap/extension-placeholder';
 import { TableKit } from '@tiptap/extension-table';
+import { TaskItem } from '@tiptap/extension-task-item';
+import { TaskList } from '@tiptap/extension-task-list';
 import TextAlign from '@tiptap/extension-text-align';
 import {
   BackgroundColor,
@@ -34,7 +40,12 @@ import StarterKit from '@tiptap/starter-kit';
 
 import { PasteSanitizer, RichTextStyle, Section } from './paste-preserve';
 import { Column, Columns, createColumnsResizerPlugin } from './columns';
+import { findPlugin } from './find-plugin';
+import { createAppMentionExtension } from './mention';
 import { selectionPlugin } from './selection-plugin';
+import { createSlashExtension } from './slash-menu';
+import { TableTools } from './table-tools';
+import { TextIndent } from './text-indent';
 
 // 需要保留 style / class 的节点类型（块级节点 + 行内标记）
 const PRESERVE_TYPES = [
@@ -161,6 +172,27 @@ export const Subscript = Mark.create({
     return {
       'Mod-,': () => this.editor.commands.toggleSubscript(),
     };
+  },
+});
+
+/**
+ * 超链接：默认行为上，仅在解析时对站内Mention 让路。
+ * Mention 输出原生 `<a class="edp-mention">`，其节点规则与 Link mark
+ * 都会命中 `<a>`；parser 按 schema 顺序取首条，Link 在前会吞掉 Mention。
+ * 这里用 extend（注意：parseHTML 是扩展字段，configure 传参无效）
+ * 让 Link 遇到 edp-mention 返回 false，把解析权还给 Mention 节点。
+ */
+const AppLink = Link.extend({
+  parseHTML() {
+    return [
+      {
+        tag: 'a[href]',
+        getAttrs: (el) => {
+          if (el.classList && el.classList.contains('edp-mention')) return false;
+          return null;
+        },
+      },
+    ];
   },
 });
 
@@ -404,6 +436,8 @@ function createImageUploadPlugin(upload) {
   return new Plugin({
     key: new PluginKey('appEditorImageUpload'),
     props: {
+      // 仅处理纯文件粘贴（含截图）；拖拽投放交由官方 FileHandler，
+      // 富文本粘贴交由 PasteSanitizer，三者互不重叠。
       handlePaste(view, event) {
         const html = event.clipboardData?.getData('text/html');
         if (html) return false;
@@ -411,16 +445,6 @@ function createImageUploadPlugin(upload) {
         if (files.length === 0) return false;
         event.preventDefault();
         const pos = view.state.selection.from;
-        files.forEach((file) => insertUploadedImage(view, file, upload, pos));
-        return true;
-      },
-      handleDrop(view, event) {
-        const files = extractImageFiles(event.dataTransfer);
-        if (files.length === 0) return false;
-        event.preventDefault();
-        const pos =
-          view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ??
-          view.state.selection.from;
         files.forEach((file) => insertUploadedImage(view, file, upload, pos));
         return true;
       },
@@ -476,9 +500,18 @@ function createEditorBridgeExtension(onEditorReady) {
  * @param {(file: File) => Promise<string>} [options.upload] 图片上传函数，返回图片 URL
  * @param {(editor: object) => void} [options.onEditorReady] 编辑器初始化就绪回调
  * @param {(html: string, view: object) => void} [options.onPasteHtml] 粘贴富文本监听回调（用于自动转存）
+ * @param {(type: 'image'|'video') => void} [options.onOpenMedia] slash 菜单请求打开媒体库
+ * @param {() => null | ((query: string) => Promise<Array<object>>)} [options.getFetchMentions] 内链数据源获取器
  */
 export function createEditorExtensions(options = {}) {
-  const { placeholder = '请输入内容...', upload, onEditorReady, onPasteHtml } = options;
+  const {
+    placeholder = '请输入内容...',
+    upload,
+    onEditorReady,
+    onPasteHtml,
+    onOpenMedia,
+    getFetchMentions,
+  } = options;
 
   return [
     StarterKit.configure({
@@ -491,6 +524,41 @@ export function createEditorExtensions(options = {}) {
     Section,
     Columns,
     Column,
+    // 待办清单（TaskItem 必须配套注册）
+    TaskList,
+    TaskItem,
+    // 折叠块（问答/收起场景；输出原生 details/summary，无需自定义渲染）
+    Details.configure({ persist: true }),
+    DetailsSummary,
+    DetailsContent,
+    // 注：文末兜底空段落由 StarterKit 内置 TrailingNode 覆盖，不再重复注册；
+    // 大纲面板按位置跳转，不依赖 id，因此 UniqueId / TableOfContents 均不引入，
+    // 避免每个标题输出 data-id + id + data-toc-id 三重冗余属性。
+    // 首行缩进（中文排版）、表格行列复制与单元格底色、查找高亮均为自研小扩展
+    TextIndent,
+    TableTools,
+    Extension.create({
+      name: 'appEditorFind',
+      addProseMirrorPlugins() {
+        return [findPlugin];
+      },
+    }),
+    // 站内 Mention 内链（@ 触发，数据源经 getFetchMentions 注入）
+    createAppMentionExtension({ getFetchMentions }),
+    // Slash `/` 快捷插入（仅行首触发）
+    createSlashExtension({ onOpenMedia }),
+    // Emoji 短码联想（:smile:），默认纯文本输出无图片回退
+    Emoji.configure({ enableEmoticons: false, forceFallbackImages: false }),
+    // 字数统计（storage，无上限；状态条优先读它）
+    CharacterCount,
+    // 官方拖拽投放（仅图片；纯文件粘贴仍走自研插件，富文本粘贴走 PasteSanitizer）
+    FileHandler.configure({
+      allowedMimeTypes: ['image/*'],
+      onDrop: (editor, files, pos) => {
+        if (typeof upload !== 'function') return;
+        files.forEach((file) => insertUploadedImage(editor.view, file, upload, pos));
+      },
+    }),
     Extension.create({
       name: 'columnsResizer',
       addProseMirrorPlugins() {
@@ -515,7 +583,7 @@ export function createEditorExtensions(options = {}) {
     FontSize,
     LineHeight,
     Highlight.configure({ multicolor: true }),
-    Link.configure({
+    AppLink.configure({
       autolink: true,
       defaultProtocol: 'https',
       openOnClick: false,

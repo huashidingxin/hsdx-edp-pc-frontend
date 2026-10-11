@@ -61,6 +61,14 @@ img.vben-tiptap__image {
   height: auto;
 }
 
+/* 站内Mention 内链：输出为原生 a 链接 */
+a.edp-mention {
+  color: #2563eb;
+  text-decoration: none;
+  border-bottom: 1px solid #bfdbfe;
+  padding: 0 2px;
+}
+
 /* 移动端 768px 自适应：默认堆叠，--keep 保持并排 */
 @media (max-width: 768px) {
   .cms-columns:not(.cms-columns--keep),

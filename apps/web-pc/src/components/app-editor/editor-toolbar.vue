@@ -1,7 +1,11 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
+import { TextSelection } from '@tiptap/pm/state';
+
 import MediaLibraryModal from './media-library-modal.vue';
+import { collectHeadingOutline } from './doc-actions';
+import { findPluginKey, getFindState } from './find-plugin';
 import { DEFAULT_THUMBNAIL_PROCESS, defaultFetchMedia, stripThumbnailParam } from './media-api';
 
 const props = defineProps({
@@ -45,6 +49,19 @@ const props = defineProps({
     type: Number,
     default: 0,
   },
+  // 校对：问题列表、检查中状态、是否配置了校对服务（均由 index.vue 下发）
+  proofreadIssues: {
+    type: Array,
+    default: () => [],
+  },
+  proofreading: {
+    type: Boolean,
+    default: false,
+  },
+  proofreadConfigured: {
+    type: Boolean,
+    default: false,
+  },
 });
 
 const emit = defineEmits([
@@ -52,6 +69,11 @@ const emit = defineEmits([
   'open-preview',
   'toggle-source-mode',
   'open-external-assets',
+  'run-proofread',
+  'locate-proofread',
+  'apply-proofread',
+  'dismiss-proofread',
+  'clear-proofread',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -72,8 +94,10 @@ const activeMarks = ref({
 const activeNodes = ref({
   bulletList: false,
   orderedList: false,
+  taskList: false,
   blockquote: false,
   codeBlock: false,
+  details: false,
   table: false,
   columns: false,
 });
@@ -260,8 +284,10 @@ function updateEditorState() {
   activeNodes.value = {
     bulletList: editor.isActive('bulletList'),
     orderedList: editor.isActive('orderedList'),
+    taskList: editor.isActive('taskList'),
     blockquote: editor.isActive('blockquote'),
     codeBlock: editor.isActive('codeBlock'),
+    details: editor.isActive('details'),
     table: editor.isActive('table'),
     columns: Boolean(editor.isActive('columns') || editor.isActive('column')),
   };
@@ -590,6 +616,149 @@ function runColumnsCommand(cmd, arg) {
   else if (cmd === 'insertAfter') chain.insertParagraphAfterColumns().run();
   closeDropdown();
   updateEditorState();
+}
+
+// ---------------------------------------------------------------------------
+// 文档大纲（标题跳转；读取官方 table-of-contents storage，无则回退遍历）
+// ---------------------------------------------------------------------------
+
+const tocItems = ref([]);
+
+function collectTocItems() {
+  const editor = props.editor;
+  if (!editor || editor.isDestroyed) {
+    tocItems.value = [];
+    return;
+  }
+  tocItems.value = collectHeadingOutline(editor.state.doc);
+}
+
+function openTocDropdown() {
+  if (isActionDisabled.value) return;
+  if (activeDropdown.value === 'toc') {
+    closeDropdown();
+    return;
+  }
+  collectTocItems();
+  activeDropdown.value = 'toc';
+  updatePanelPosition();
+}
+
+function jumpToHeading(pos) {
+  if (!props.editor) return;
+  selectRangeInEditor(props.editor, pos + 1, pos + 1, true);
+  closeDropdown();
+  updateEditorState();
+}
+
+// ---------------------------------------------------------------------------
+// 查找替换（视图 decorations，不污染输出）
+// ---------------------------------------------------------------------------
+
+const findQuery = ref('');
+const findReplaceText = ref('');
+
+function openFindDropdown() {
+  if (isActionDisabled.value) return;
+  if (activeDropdown.value === 'find') {
+    closeDropdown();
+    return;
+  }
+  activeDropdown.value = 'find';
+  updatePanelPosition();
+}
+
+function commitFindQuery() {
+  if (!props.editor) return;
+  props.editor.view.dispatch(
+    props.editor.state.tr.setMeta(findPluginKey, {
+      type: 'setQuery',
+      query: findQuery.value,
+    }),
+  );
+  jumpFindMatch(0, true);
+}
+
+function currentFindState() {
+  try {
+    return getFindState(props.editor);
+  } catch {
+    return { query: '', matches: [], index: 0 };
+  }
+}
+
+function jumpFindMatch(delta, absolute = false) {
+  const editor = props.editor;
+  if (!editor) return;
+  const st = currentFindState();
+  if (!st.matches || st.matches.length === 0) return;
+  const next = absolute ? delta : st.index + delta;
+  editor.view.dispatch(
+    editor.state.tr.setMeta(findPluginKey, { type: 'setIndex', index: next }),
+  );
+  const cur = currentFindState();
+  const m = cur.matches[cur.index];
+  if (m) selectRangeInEditor(editor, m.from, m.to);
+}
+
+function selectRangeInEditor(editor, from, to, collapse = false) {
+  try {
+    const doc = editor.state.doc;
+    const maxPos = Math.max(0, doc.content.size - 1);
+    const safeFrom = Math.max(0, Math.min(from, maxPos));
+    const safeTo = collapse ? safeFrom : Math.max(safeFrom, Math.min(to, doc.content.size));
+    const sel = collapse
+      ? TextSelection.near(doc.resolve(safeFrom))
+      : TextSelection.create(doc, safeFrom, safeTo);
+    editor.view.dispatch(editor.state.tr.setSelection(sel));
+    editor.commands.focus();
+    editor.commands.scrollIntoView();
+  } catch {
+    try {
+      editor.chain().focus().run();
+    } catch {}
+  }
+}
+
+function replaceCurrentFindMatch() {
+  const editor = props.editor;
+  if (!editor) return;
+  const st = currentFindState();
+  const m = st.matches?.[st.index];
+  if (!m) return;
+  try {
+    const node = editor.schema.text(findReplaceText.value ?? '');
+    const tr = editor.state.tr.replaceWith(m.from, m.to, node);
+    editor.view.dispatch(tr);
+    updateEditorState();
+  } catch {}
+}
+
+function replaceAllFindMatches() {
+  const editor = props.editor;
+  if (!editor) return;
+  const st = currentFindState();
+  if (!st.matches || st.matches.length === 0) return;
+  try {
+    const tr = editor.state.tr;
+    st.matches
+      .toSorted((a, b) => b.from - a.from)
+      .forEach((m) => {
+        tr.replaceWith(m.from, m.to, editor.schema.text(findReplaceText.value ?? ''));
+      });
+    editor.view.dispatch(tr);
+    updateEditorState();
+  } catch {}
+}
+
+function clearFind() {
+  findQuery.value = '';
+  findReplaceText.value = '';
+  if (props.editor) {
+    props.editor.view.dispatch(
+      props.editor.state.tr.setMeta(findPluginKey, { type: 'clear' }),
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1393,6 +1562,52 @@ const lineHeightLabel = computed(() => {
           <line x1="21" x2="3" y1="18" y2="18" />
         </svg>
       </button>
+      <button
+        class="toolbar-btn"
+        :disabled="isActionDisabled"
+        title="首行缩进（Tab）"
+        type="button"
+        @mousedown.prevent
+        @click="editor?.chain().focus().setTextIndent().run()"
+      >
+        <svg
+          class="size-3.5"
+          fill="none"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+        >
+          <line x1="3" x2="21" y1="6" y2="6" />
+          <line x1="9" x2="21" y1="12" y2="12" />
+          <line x1="9" x2="21" y1="18" y2="18" />
+          <polyline points="9 6 13 6 13 18 9 18" />
+        </svg>
+      </button>
+      <button
+        class="toolbar-btn"
+        :disabled="isActionDisabled"
+        title="取消首行缩进（Shift+Tab）"
+        type="button"
+        @mousedown.prevent
+        @click="editor?.chain().focus().unsetTextIndent().run()"
+      >
+        <svg
+          class="size-3.5"
+          fill="none"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+        >
+          <line x1="3" x2="21" y1="6" y2="6" />
+          <line x1="3" x2="15" y1="12" y2="12" />
+          <line x1="3" x2="15" y1="18" y2="18" />
+          <polyline points="15 6 11 6 11 18 15 18" />
+        </svg>
+      </button>
     </div>
 
     <div class="toolbar-sep"></div>
@@ -1453,6 +1668,31 @@ const lineHeightLabel = computed(() => {
       </button>
       <button
         class="toolbar-btn"
+        :class="{ 'is-active': activeNodes.taskList }"
+        :disabled="isActionDisabled"
+        title="待办清单"
+        type="button"
+        @mousedown.prevent
+        @click="editor?.chain().focus().toggleTaskList().run()"
+      >
+        <svg
+          class="size-3.5"
+          fill="none"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+        >
+          <rect height="5" rx="1" width="5" x="3" y="4" />
+          <path d="m8.5 6.5 5.5 5.5" />
+          <line x1="10" x2="21" y1="12" y2="12" />
+          <rect height="5" rx="1" width="5" x="3" y="15" />
+          <line x1="10" x2="16" y1="17.5" y2="17.5" />
+        </svg>
+      </button>
+      <button
+        class="toolbar-btn"
         :class="{ 'is-active': activeNodes.blockquote }"
         :disabled="isActionDisabled"
         title="引用"
@@ -1498,6 +1738,28 @@ const lineHeightLabel = computed(() => {
           <rect height="18" rx="2" width="18" x="3" y="3" />
           <path d="m10 10-2 2 2 2" />
           <path d="m14 10 2 2-2 2" />
+        </svg>
+      </button>
+      <button
+        class="toolbar-btn"
+        :class="{ 'is-active': activeNodes.details }"
+        :disabled="isActionDisabled"
+        title="折叠块（问答/收起）"
+        type="button"
+        @mousedown.prevent
+        @click="editor?.chain().focus().setDetails().run()"
+      >
+        <svg
+          class="size-3.5"
+          fill="none"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+        >
+          <path d="m7 15 5 5 5-5" />
+          <path d="m7 9 5-5 5 5" />
         </svg>
       </button>
       <button
@@ -1863,6 +2125,61 @@ const lineHeightLabel = computed(() => {
       </div>
     </div>
 
+    <!-- 组 7.6：文档大纲（标题跳转） -->
+    <div class="relative">
+      <button
+        class="toolbar-btn"
+        :disabled="isActionDisabled"
+        title="文档大纲（点击跳转到标题）"
+        type="button"
+        @mousedown.prevent
+        @click="openTocDropdown"
+      >
+        <svg
+          class="size-3.5"
+          fill="none"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+        >
+          <line x1="8" x2="21" y1="6" y2="6" />
+          <line x1="8" x2="21" y1="12" y2="12" />
+          <line x1="8" x2="21" y1="18" y2="18" />
+          <line x1="3" x2="5" y1="6" y2="6" />
+          <line x1="3" x2="5" y1="12" y2="12" />
+          <line x1="3" x2="5" y1="18" y2="18" />
+        </svg>
+      </button>
+      <div
+        v-if="activeDropdown === 'toc'"
+        ref="activeDropdownPanelRef"
+        class="dropdown-panel right-0 min-w-[220px] max-w-[320px] p-1.5"
+      >
+        <div class="px-2 py-1 text-[11px] font-semibold text-muted-foreground">
+          文档大纲
+        </div>
+        <div v-if="tocItems.length === 0" class="px-2 py-2 text-[11px] text-muted-foreground">
+          暂无标题（使用 H1~H6 后在此跳转）
+        </div>
+        <div v-else class="max-h-64 overflow-y-auto">
+          <button
+            v-for="item in tocItems"
+            :key="item.key"
+            class="dropdown-item"
+            type="button"
+            :style="{ paddingLeft: `${8 + (item.level - 1) * 12}px` }"
+            :title="`H${item.level}：${item.text}`"
+            @mousedown.prevent
+            @click="jumpToHeading(item.pos)"
+          >
+            <span class="truncate">H{{ item.level }} · {{ item.text }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- 组 8：超链接（右侧向左展开） -->
     <div class="relative">
       <button
@@ -1918,6 +2235,96 @@ const lineHeightLabel = computed(() => {
           >
             确定
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 组 8.5：查找替换（右侧向左展开） -->
+    <div class="relative">
+      <button
+        class="toolbar-btn"
+        :disabled="isActionDisabled"
+        title="查找替换"
+        type="button"
+        @mousedown.prevent
+        @click="openFindDropdown"
+      >
+        <svg
+          class="size-3.5"
+          fill="none"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+        >
+          <circle cx="11" cy="11" r="7" />
+          <line x1="21" x2="16.5" y1="21" y2="16.5" />
+        </svg>
+      </button>
+      <div
+        v-if="activeDropdown === 'find'"
+        ref="activeDropdownPanelRef"
+        class="dropdown-panel right-0 w-72 p-2.5"
+      >
+        <div class="mb-1.5 text-[11px] font-medium text-muted-foreground">
+          查找替换
+        </div>
+        <input
+          v-model="findQuery"
+          class="w-full rounded border border-border bg-background px-2 py-1 text-xs outline-none focus:border-primary"
+          placeholder="查找内容"
+          type="text"
+          @keydown.enter.prevent="commitFindQuery"
+        />
+        <input
+          v-model="findReplaceText"
+          class="mt-1.5 w-full rounded border border-border bg-background px-2 py-1 text-xs outline-none focus:border-primary"
+          placeholder="替换为"
+          type="text"
+          @keydown.enter.prevent="replaceCurrentFindMatch"
+        />
+        <div class="mt-2 flex items-center justify-between gap-1.5">
+          <span class="text-[11px] text-muted-foreground">
+            {{ currentFindState().matches.length > 0 ? `${currentFindState().index + 1} / ${currentFindState().matches.length}` : '无匹配' }}
+          </span>
+          <div class="flex items-center gap-1">
+            <button
+              class="rounded px-2 py-0.5 text-xs hover:bg-muted"
+              type="button"
+              @click="jumpFindMatch(-1)"
+            >
+              上一个
+            </button>
+            <button
+              class="rounded px-2 py-0.5 text-xs hover:bg-muted"
+              type="button"
+              @click="jumpFindMatch(1)"
+            >
+              下一个
+            </button>
+            <button
+              class="rounded px-2 py-0.5 text-xs hover:bg-muted"
+              type="button"
+              @click="replaceCurrentFindMatch"
+            >
+              替换
+            </button>
+            <button
+              class="rounded bg-primary px-2 py-0.5 text-xs text-primary-foreground hover:opacity-90"
+              type="button"
+              @click="replaceAllFindMatches"
+            >
+              全部替换
+            </button>
+            <button
+              class="rounded px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted"
+              type="button"
+              @click="clearFind"
+            >
+              清除
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -2170,6 +2577,113 @@ const lineHeightLabel = computed(() => {
           {{ externalAssetsCount > 99 ? '99+' : externalAssetsCount }}
         </span>
       </button>
+
+      <!-- 中文校对按钮（问题数徽标） -->
+      <div class="relative">
+        <button
+          class="toolbar-btn relative"
+          :class="{ '!text-violet-500 hover:bg-violet-500/10': proofreadIssues.length > 0 }"
+          :title="proofreadConfigured ? (proofreadIssues.length > 0 ? `发现 ${proofreadIssues.length} 处疑似问题，点击查看` : '中文校对（暂无问题）') : '中文校对（未配置校对服务，可通过 fetch-proofread 接入）'"
+          type="button"
+          @mousedown.prevent
+          @click="toggleDropdown('proofread')"
+        >
+          <svg
+            class="size-3.5"
+            fill="none"
+            stroke="currentColor"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            viewBox="0 0 24 24"
+          >
+            <path d="m5 8 6 6" />
+            <path d="m4 14 6-6 2-3" />
+            <path d="M2 5h12" />
+            <path d="M7 2h1" />
+            <path d="m22 22-5-10-5 10" />
+            <path d="M14 18h6" />
+          </svg>
+          <span
+            v-if="proofreadIssues.length > 0"
+            class="absolute -top-1 -right-1 flex min-w-3.5 h-3.5 items-center justify-center rounded-full bg-violet-500 px-0.5 text-[9px] font-bold text-white shadow-xs"
+          >
+            {{ proofreadIssues.length > 99 ? '99+' : proofreadIssues.length }}
+          </span>
+        </button>
+        <div
+          v-if="activeDropdown === 'proofread'"
+          ref="activeDropdownPanelRef"
+          class="dropdown-panel right-0 w-80 p-2.5"
+        >
+          <div class="mb-1.5 flex items-center justify-between">
+            <span class="text-[11px] font-medium text-muted-foreground">中文校对</span>
+            <div class="flex items-center gap-1">
+              <button
+                v-if="proofreadIssues.length > 0"
+                class="rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+                type="button"
+                @click="emit('clear-proofread')"
+              >
+                全部忽略
+              </button>
+              <button
+                class="rounded bg-primary px-2.5 py-0.5 text-[11px] text-primary-foreground hover:opacity-90 disabled:opacity-40"
+                :disabled="proofreading || isActionDisabled"
+                type="button"
+                @click="emit('run-proofread')"
+              >
+                {{ proofreading ? '检查中...' : '开始检查' }}
+              </button>
+            </div>
+          </div>
+          <div v-if="!proofreadConfigured" class="rounded bg-muted/60 px-2 py-1.5 text-[11px] text-muted-foreground">
+            未配置校对服务，可通过 fetch-proofread 接入中文校对接口。
+          </div>
+          <div v-else-if="proofreadIssues.length === 0" class="px-2 py-2 text-[11px] text-muted-foreground">
+            {{ proofreading ? '正在检查全文...' : '暂无问题，点击右上开始检查。' }}
+          </div>
+          <div v-else class="max-h-64 space-y-1.5 overflow-y-auto">
+            <div
+              v-for="issue in proofreadIssues"
+              :key="issue.id"
+              class="rounded border border-border/70 p-2"
+            >
+              <div class="text-xs text-foreground">
+                <span class="text-muted-foreground">“</span>{{ issue.snippet }}<span class="text-muted-foreground">”</span>
+              </div>
+              <div class="mt-0.5 text-[11px] text-muted-foreground">{{ issue.message }}</div>
+              <div v-if="issue.suggestions?.length" class="mt-1 flex flex-wrap gap-1">
+                <button
+                  v-for="(sug, si) in issue.suggestions.slice(0, 3)"
+                  :key="si"
+                  class="rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[11px] text-primary hover:bg-primary/20"
+                  type="button"
+                  @click="emit('apply-proofread', issue, sug)"
+                >
+                  改为“{{ sug }}”
+                </button>
+              </div>
+              <div class="mt-1 flex items-center justify-end gap-1">
+                <button
+                  class="rounded px-1.5 py-0.5 text-[11px] text-primary hover:bg-muted"
+                  type="button"
+                  @click="emit('locate-proofread', issue)"
+                >
+                  定位
+                </button>
+                <button
+                  class="rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+                  type="button"
+                  @click="emit('dismiss-proofread', issue)"
+                >
+                  忽略
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <!-- 源代码编辑切换按钮 -->
       <button

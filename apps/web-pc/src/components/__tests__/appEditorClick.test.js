@@ -233,3 +233,79 @@ describe('app-editor 多栏点击选中', () => {
     plain.unmount();
   }, 90000);
 });
+
+describe('app-editor 表格 Dock', () => {
+  const TABLE_HTML = [
+    '<p>表前文字</p>',
+    '<table><tbody>',
+    '<tr><th><p>姓名</p></th><th><p>年龄</p></th></tr>',
+    '<tr><td><p>张三</p></td><td><p>20</p></td></tr>',
+    '</tbody></table>',
+    '<p>表后文字</p>',
+  ].join('');
+
+  async function mountTable() {
+    const { default: AppEditor } = await import('../app-editor/index.vue');
+    return mount(AppEditor, {
+      attachTo: document.body,
+      props: { modelValue: TABLE_HTML },
+      global: {
+        stubs: {
+          EditorToolbar: true,
+          MediaLibraryModal: true,
+          ExternalAssetsModal: true,
+          VbenTiptap: VbenTiptapStub,
+        },
+      },
+    });
+  }
+
+  it('点击表格弹出表格卡并显示行列数，点外部收起', async () => {
+    const wrapper = await mountTable();
+    await settle();
+    await waitForEditorReady();
+
+    const cellP = wrapper.find('table td p');
+    expect(cellP.exists()).toBe(true);
+    // 真实点击顺序：mousedown 落光标，click 选中（合成 click 不带 selection）
+    await cellP.trigger('mousedown');
+    await cellP.trigger('click');
+    await settle();
+
+    const card = bodyQuery('.app-editor-table-toolbar');
+    expect(card).not.toBeNull();
+    expect(card.textContent).toContain('2 行');
+    expect(card.textContent).toContain('2 列');
+    // 表格高亮落在 wrapper 上（TableKit 结构），输出不受影响
+    expect(bodyQuery('.tableWrapper.app-editor-table--selected')).not.toBeNull();
+
+    // 点击表格外部：卡片收起，回到全局
+    const outside = wrapper.find('.vben-tiptap-content > p');
+    await outside.trigger('click');
+    await settle();
+    expect(bodyQuery('.app-editor-table-toolbar')).toBeNull();
+    expect(bodyQuery('.app-editor-global-toolbar')).not.toBeNull();
+
+    wrapper.unmount();
+  }, 60000);
+
+  it('表格行列命令走官方 TableKit（单测覆盖），此处仅确认卡片按钮齐备', async () => {
+    const wrapper = await mountTable();
+    await settle();
+    await waitForEditorReady();
+
+    const cellP2 = wrapper.find('table td p');
+    await cellP2.trigger('mousedown');
+    await cellP2.trigger('click');
+    await settle();
+
+    const labels = Array.from(
+      document.body.querySelectorAll('.app-editor-table-toolbar button'),
+    ).map((b) => (b.textContent || '').trim());
+    for (const t of ['上插行', '下插行', '复制行', '删行', '左插列', '右插列', '复制列', '删列', '合并/拆分', '表头行', '无']) {
+      expect(labels.some((l) => l.includes(t))).toBe(true);
+    }
+
+    wrapper.unmount();
+  }, 60000);
+});

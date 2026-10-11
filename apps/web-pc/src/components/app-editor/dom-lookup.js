@@ -163,8 +163,7 @@ export function findVideoNodeAndPos(view, videoEl) {
 
 /**
  * 反查多栏容器节点位置（DOM 身份优先）。
- */
-export function findColumnsNodeAndPos(view, columnsEl) {
+ */export function findColumnsNodeAndPos(view, columnsEl) {
   if (!view || !columnsEl) return null;
   const byDom = findNodePosByDOM(view, columnsEl, 'columns');
   if (byDom) return byDom;
@@ -196,6 +195,49 @@ export function findColumnsNodeAndPos(view, columnsEl) {
           return false;
         }
         currentColIndex += 1;
+      }
+      return true;
+    });
+    return fallbackMatched;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 反查表格容器节点位置（DOM 身份优先）。
+ */
+export function findTableNodeAndPos(view, tableEl) {
+  if (!view || !tableEl) return null;
+  const byDom = findNodePosByDOM(view, tableEl, 'table');
+  if (byDom) return byDom;
+
+  try {
+    const pos = view.posAtDOM(tableEl, 0);
+    const $pos = view.state.doc.resolve(pos);
+    for (let d = $pos.depth; d >= 0; d -= 1) {
+      const node = $pos.node(d);
+      if (node && node.type.name === 'table') {
+        return { pos: $pos.before(d), node };
+      }
+    }
+  } catch {
+    /* 继续序号回退 */
+  }
+
+  try {
+    const allTablesInDoc = Array.from(view.dom.querySelectorAll('table'));
+    const tableIndexInDoc = allTablesInDoc.indexOf(tableEl);
+    if (tableIndexInDoc < 0) return null;
+    let currentIndex = 0;
+    let fallbackMatched = null;
+    view.state.doc.descendants((n, p) => {
+      if (n.type?.name === 'table') {
+        if (currentIndex === tableIndexInDoc) {
+          fallbackMatched = { pos: p, node: n };
+          return false;
+        }
+        currentIndex += 1;
       }
       return true;
     });

@@ -7,7 +7,7 @@
  * 浮动工具条因 target 失联而隐藏”。官方正确做法是 Decorations：高亮由
  * 视图状态驱动，随每次渲染自动应用，不与 DOMObserver 打架。
  *
- * 状态：{ columnsPos: number | null, mediaPos: number | null, mediaType: 'image' | 'video' | null }
+ * 状态：{ columnsPos, mediaPos, mediaType, tablePos }
  * 经 tr.mapping 自动跟随文档变化；节点被删则自动落空（渲染时再按类型校验）。
  */
 import { Plugin, PluginKey } from '@tiptap/pm/state';
@@ -21,6 +21,8 @@ export const MEDIA_SELECTED_CLASS = {
 };
 
 export const COLUMNS_SELECTED_CLASS = 'app-editor-columns--selected';
+
+export const TABLE_SELECTED_CLASS = 'app-editor-table--selected';
 
 function mapPos(mapping, pos) {
   if (typeof pos !== 'number') return null;
@@ -38,13 +40,14 @@ export const selectionPlugin = new Plugin({
 
   state: {
     init() {
-      return { columnsPos: null, mediaPos: null, mediaType: null };
+      return { columnsPos: null, mediaPos: null, mediaType: null, tablePos: null };
     },
     apply(tr, prev) {
       let next = {
         columnsPos: mapPos(tr.mapping, prev.columnsPos),
         mediaPos: mapPos(tr.mapping, prev.mediaPos),
         mediaType: prev.mediaType,
+        tablePos: mapPos(tr.mapping, prev.tablePos),
       };
       const meta = tr.getMeta(appEditorSelectionKey);
       if (meta) {
@@ -58,8 +61,12 @@ export const selectionPlugin = new Plugin({
         } else if (meta.type === 'clearMedia') {
           next.mediaPos = null;
           next.mediaType = null;
+        } else if (meta.type === 'setTable') {
+          next.tablePos = meta.pos;
+        } else if (meta.type === 'clearTable') {
+          next.tablePos = null;
         } else if (meta.type === 'clearAll') {
-          next = { columnsPos: null, mediaPos: null, mediaType: null };
+          next = { columnsPos: null, mediaPos: null, mediaType: null, tablePos: null };
         }
       }
       return next;
@@ -95,6 +102,16 @@ export const selectionPlugin = new Plugin({
             }
           }
         }
+        if (typeof sel.tablePos === 'number') {
+          const node = state.doc.nodeAt(sel.tablePos);
+          if (node && node.type.name === 'table') {
+            decos.push(
+              Decoration.node(sel.tablePos, sel.tablePos + node.nodeSize, {
+                class: TABLE_SELECTED_CLASS,
+              }),
+            );
+          }
+        }
       } catch {
         /* 忽略，返回已收集的 decorations */
       }
@@ -126,9 +143,22 @@ export function dispatchMediaSelected(editor, pos, mediaType) {
   );
 }
 
+/** 高亮表格容器（pos 必须为 table 节点起始位置） */
+export function dispatchTableSelected(editor, pos) {
+  if (!editor || typeof pos !== 'number') return;
+  editor.view.dispatch(editor.state.tr.setMeta(appEditorSelectionKey, { type: 'setTable', pos }));
+}
+
 /** 清除全部选中高亮 */
 export function dispatchSelectionCleared(editor, scope = 'clearAll') {
   if (!editor) return;
-  const type = scope === 'columns' ? 'clearColumns' : scope === 'media' ? 'clearMedia' : 'clearAll';
+  const type =
+    scope === 'columns'
+      ? 'clearColumns'
+      : scope === 'media'
+        ? 'clearMedia'
+        : scope === 'table'
+          ? 'clearTable'
+          : 'clearAll';
   editor.view.dispatch(editor.state.tr.setMeta(appEditorSelectionKey, { type }));
 }

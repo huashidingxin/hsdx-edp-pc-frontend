@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest';
 import { Editor } from '@tiptap/core';
+import { emojis, shortcodeToEmoji } from '@tiptap/extension-emoji';
 import { createEditorExtensions } from '../app-editor/extensions';
 import {
   findColumnsNodeAndPos,
@@ -9,9 +10,13 @@ import {
 } from '../app-editor/dom-lookup';
 import {
   cleanEmptyTopParagraphs,
+  collectHeadingOutline,
+  findTextRange,
   justifyAllContent,
   unifyAllLineHeight,
 } from '../app-editor/doc-actions';
+import { collectMatches } from '../app-editor/find-plugin';
+import { SLASH_COMMANDS } from '../app-editor/slash-menu';
 import { contentStylesCss, usesCustomStyleBlocks } from '../app-editor/content-styles.js';
 import {
   appEditorSelectionKey,
@@ -317,6 +322,7 @@ describe('app-editor 扩展与保真解析验证', () => {
     expect(contentStylesCss).toContain('.cms-columns--keep');
     expect(contentStylesCss).toContain('@media (max-width: 768px)');
     expect(contentStylesCss).toContain('img.vben-tiptap__image');
+    expect(contentStylesCss).toContain('a.edp-mention');
     // 编辑器内部类（选中高亮/拖拽手柄/提示）不得混入对外样式
     expect(contentStylesCss).not.toContain('app-editor-columns--selected');
     expect(contentStylesCss).not.toContain('app-editor-image--selected');
@@ -334,5 +340,329 @@ describe('app-editor 扩展与保真解析验证', () => {
     expect(
       usesCustomStyleBlocks("<div class='cms-column'><p>22</p></div>"),
     ).toBe(true);
+  });
+});
+
+describe('app-editor P0/P1 新增能力验证', () => {
+  function makeEditor(content, options = {}) {
+    return new Editor({
+      extensions: createEditorExtensions(options),
+      content,
+    });
+  }
+
+  it('注册表：新扩展齐备，无重复 id 污染', () => {
+    const editor = makeEditor('<p>hi</p>');
+    const names = editor.extensionManager.extensions.map((e) => e.name);
+    for (const n of [
+      'taskList',
+      'taskItem',
+      'details',
+      'detailsSummary',
+      'detailsContent',
+      'textIndent',
+      'appEditorFind',
+      'appEditorSlash',
+      'mention',
+      'emoji',
+      'characterCount',
+      'fileHandler',
+    ]) {
+      expect(names).toContain(n);
+    }
+    // trailingNode 仅 StarterKit 内置一份（不重复注册）
+    expect(names.filter((n) => n === 'trailingNode')).toHaveLength(1);
+    // 大纲按位置跳转，不引入 id 属性污染输出
+    expect(names).not.toContain('uniqueID');
+    expect(names).not.toContain('tableOfContents');
+    editor.destroy();
+  });
+
+  it('文末兜底：多栏结尾自动补空段落', () => {
+    const editor = makeEditor('<p>前言</p>');
+    editor.commands.insertColumns({ cols: 2, layout: '1:1', gap: '16px' });
+    expect(editor.state.doc.lastChild?.type.name).toBe('paragraph');
+    editor.destroy();
+  });
+
+  it('字数统计 storage 可用', () => {
+    const editor = makeEditor('<p>标题一</p><p>正文</p>');
+    expect(editor.storage.characterCount.characters()).toBeGreaterThan(0);
+    editor.destroy();
+  });
+
+  it('待办清单切换与输出', () => {
+    const editor = makeEditor('<p>买牛奶</p>');
+    expect(editor.commands.toggleTaskList()).toBe(true);
+    const html = editor.getHTML();
+    expect(html).toContain('taskList');
+    editor.destroy();
+  });
+
+  it('折叠块插入与原生输出', () => {
+    const editor = makeEditor('<p>问答内容</p>');
+    expect(editor.commands.setDetails()).toBe(true);
+    const html = editor.getHTML();
+    expect(html).toContain('<details>');
+    expect(html).toContain('<summary>');
+    editor.destroy();
+  });
+
+  it('Emoji 数据集可用（短码可解析）', () => {
+    expect(Array.isArray(emojis) && emojis.length).toBeGreaterThan(0);
+    const item = shortcodeToEmoji('smile', emojis);
+    expect(item?.emoji).toBeTruthy();
+  });
+
+  it('Mention 内链：输出原生 a.edp-mention，回解析正常', () => {
+    const editor = makeEditor('<p>看看这个</p>', {
+      getFetchMentions: () => async () => [{ url: 'https://site/p/1', label: '产品一' }],
+    });
+    editor.commands.insertContent({
+      type: 'mention',
+      attrs: { id: 'https://site/p/1', label: '产品一' },
+    });
+    const html = editor.getHTML();
+    expect(html).toContain('class="edp-mention"');
+    expect(html).toContain('https://site/p/1');
+    expect(html).toContain('产品一');
+    expect(html).not.toContain('data-');
+
+    const editor2 = makeEditor(html);
+    let foundMention = false;
+    editor2.state.doc.descendants((node) => {
+      if (node.type.name === 'mention') foundMention = true;
+      return true;
+    });
+    expect(foundMention).toBe(true);
+    editor.destroy();
+    editor2.destroy();
+  });
+
+  it('首行缩进：设置/切换/取消均走内联 style', () => {
+    const editor = makeEditor('<p>需要缩进的段落</p>');
+    expect(editor.commands.setTextIndent()).toBe(true);
+    expect(editor.getHTML()).toContain('text-indent');
+    // 再切一次即取消
+    expect(editor.commands.toggleTextIndent()).toBe(true);
+    expect(editor.getHTML()).not.toContain('text-indent');
+    // 显式取消（无缩进时返回 false，不报错）
+    expect(editor.commands.unsetTextIndent()).toBe(false);
+    editor.destroy();
+  });
+
+  it('查找：collectMatches 命中位置正确', () => {
+    const editor = makeEditor('<p>苹果香蕉苹果</p><p>菠萝</p>');
+    const matches = collectMatches(editor.state.doc, '苹果');
+    expect(matches).toHaveLength(2);
+    expect(matches[0].to - matches[0].from).toBe(2);
+    expect(collectMatches(editor.state.doc, '')).toHaveLength(0);
+    editor.destroy();
+  });
+
+  it('查找替换往返：替换后命中更新', () => {
+    const editor = makeEditor('<p>猫和猫</p>');
+    const before = collectMatches(editor.state.doc, '猫');
+    expect(before).toHaveLength(2);
+    const tr = editor.state.tr;
+    [...before]
+      .sort((a, b) => b.from - a.from)
+      .forEach((m) => {
+        tr.replaceWith(m.from, m.to, editor.schema.text('狗'));
+      });
+    editor.view.dispatch(tr);
+    expect(collectMatches(editor.state.doc, '猫')).toHaveLength(0);
+    expect(collectMatches(editor.state.doc, '狗')).toHaveLength(2);
+    editor.destroy();
+  });
+
+  it('Slash 命令表完整且 h2 可执行', () => {
+    const ids = SLASH_COMMANDS.map((c) => c.id);
+    for (const id of [
+      'paragraph', 'h1', 'h2', 'bulletList', 'taskList', 'blockquote',
+      'codeBlock', 'details', 'image', 'video', 'table', 'columns2', 'hr',
+    ]) {
+      expect(ids).toContain(id);
+    }
+    const editor = makeEditor('<p></p>');
+    const h2 = SLASH_COMMANDS.find((c) => c.id === 'h2');
+    const { from } = editor.state.selection;
+    h2.run({ editor, range: { from, to: from } });
+    expect(editor.getHTML()).toContain('<h2>');
+    editor.destroy();
+  });
+
+  it('大纲收集：层级/文本/位置齐备', () => {
+    const editor = makeEditor('<h1>一</h1><p>x</p><h3>三</h3>');
+    const items = collectHeadingOutline(editor.state.doc);
+    expect(items).toHaveLength(2);
+    expect(items[0]).toMatchObject({ level: 1, text: '一' });
+    expect(items[1]).toMatchObject({ level: 3, text: '三' });
+    expect(items[1].pos).toBeGreaterThan(items[0].pos);
+    editor.destroy();
+  });
+
+  it('标题输出纯净：无 data-id / data-toc-id 冗余', () => {
+    const editor = makeEditor('<h1>干净标题</h1>');
+    const html = editor.getHTML();
+    expect(html).toContain('干净标题');
+    expect(html).not.toContain('data-id');
+    expect(html).not.toContain('data-toc-id');
+    editor.destroy();
+  });
+
+  it('校对定位：findTextRange 找到片段位置', () => {
+    const editor = makeEditor('<p>这是一个测试句子</p>');
+    const range = findTextRange(editor.state.doc, '测试');
+    expect(range).not.toBeNull();
+    expect(range.to - range.from).toBe(2);
+    expect(findTextRange(editor.state.doc, '不存在')).toBeNull();
+    editor.destroy();
+  });
+});
+
+describe('app-editor 表格增强验证', () => {
+  const TABLE_HTML = [
+    '<table><tbody>',
+    '<tr><th><p>姓名</p></th><th><p>年龄</p></th></tr>',
+    '<tr><td><p>张三</p></td><td><p>20</p></td></tr>',
+    '<tr><td><p>李四</p></td><td><p>30</p></td></tr>',
+    '</tbody></table>',
+  ].join('');
+
+  function makeTableEditor(html = TABLE_HTML) {
+    return new Editor({
+      extensions: createEditorExtensions(),
+      content: html,
+    });
+  }
+
+  function setCursorInCell(editor, cellText) {
+    let target = null;
+    editor.state.doc.descendants((node, pos) => {
+      if (target) return false;
+      if ((node.type.name === 'tableCell' || node.type.name === 'tableHeader') && node.textContent.includes(cellText)) {
+        target = pos + 2;
+      }
+      return true;
+    });
+    expect(target).not.toBeNull();
+    editor.commands.setTextSelection(target);
+  }
+
+  it('复制行：内容完整复制，行数+1', () => {
+    const editor = makeTableEditor();
+    setCursorInCell(editor, '张三');
+    expect(editor.commands.duplicateRow()).toBe(true);
+    const html = editor.getHTML();
+    expect(html.match(/张三/g)?.length).toBe(2);
+    let rows = 0;
+    editor.state.doc.descendants((node) => {
+      if (node.type.name === 'tableRow') rows += 1;
+      return true;
+    });
+    expect(rows).toBe(4);
+    editor.destroy();
+  });
+
+  it('复制列：内容完整复制，列数+1', () => {
+    const editor = makeTableEditor();
+    setCursorInCell(editor, '张三');
+    expect(editor.commands.duplicateColumn()).toBe(true);
+    const html = editor.getHTML();
+    expect(html.match(/张三/g)?.length).toBe(2);
+    expect(html.match(/李四/g)?.length).toBe(2);
+    editor.destroy();
+  });
+
+  it('合并单元格的列拒绝复制（防非法表）', () => {
+    const editor = makeTableEditor(
+      '<table><tbody><tr><td colspan="2"><p>通栏</p></td></tr><tr><td><p>A</p></td><td><p>B</p></td></tr></tbody></table>',
+    );
+    setCursorInCell(editor, '通栏');
+    expect(editor.commands.duplicateColumn()).toBe(false);
+    setCursorInCell(editor, 'A');
+    expect(editor.commands.duplicateRow()).toBe(true);
+    editor.destroy();
+  });
+
+  it('单元格底色：设置与清除均走内联 style', () => {
+    const editor = makeTableEditor();
+    setCursorInCell(editor, '张三');
+    expect(editor.commands.setCellBackground('#fef08a')).toBe(true);
+    let html = editor.getHTML();
+    expect(html).toContain('background-color: #fef08a');
+    expect(editor.commands.setCellBackground(null)).toBe(true);
+    html = editor.getHTML();
+    expect(html).not.toContain('background-color');
+    editor.destroy();
+  });
+
+  it('多格拖选统一设底色：矩形内全部格子生效', () => {
+    const editor = makeTableEditor();
+    // 选中“张三”所在格到“30”所在格的矩形（2行×2列，共4格）
+    const posOf = (text) => {
+      let target = null;
+      editor.state.doc.descendants((node, pos) => {
+        if (target !== null) return false;
+        if ((node.type.name === 'tableCell' || node.type.name === 'tableHeader') && node.textContent.includes(text)) {
+          target = pos;
+        }
+        return true;
+      });
+      return target;
+    };
+    const anchorCell = posOf('张三');
+    const headCell = posOf('30');
+    expect(anchorCell).not.toBeNull();
+    expect(headCell).not.toBeNull();
+    expect(editor.commands.setCellSelection({ anchorCell, headCell })).toBe(true);
+    expect(editor.commands.setCellBackground('#bae6fd')).toBe(true);
+    const html = editor.getHTML();
+    // 4 格全部带底色
+    expect(html.match(/background-color: #bae6fd/g)?.length).toBe(4);
+    editor.destroy();
+  });
+
+  it('表格维度统计与查找定位', async () => {
+    const { getTableDimensions } = await import('../app-editor/table-tools.js');
+    const { findTableNodeAndPos } = await import('../app-editor/dom-lookup.js');
+    const editor = makeTableEditor();
+    let tableNode = null;
+    editor.state.doc.descendants((node) => {
+      if (!tableNode && node.type.name === 'table') tableNode = node;
+      return true;
+    });
+    expect(getTableDimensions(tableNode)).toEqual({ rows: 3, cols: 2 });
+
+    const tableEl = editor.view.dom.querySelector('table');
+    expect(tableEl).not.toBeNull();
+    const found = findTableNodeAndPos(editor.view, tableEl);
+    expect(found).not.toBeNull();
+    expect(found.node.type.name).toBe('table');
+    editor.destroy();
+  });
+
+  it('表格高亮走 Decorations：dispatch 后带类，输出不受影响', async () => {
+    const { dispatchTableSelected, dispatchSelectionCleared, appEditorSelectionKey } = await import(
+      '../app-editor/selection-plugin.js'
+    );
+    const editor = makeTableEditor();
+    let tablePos = null;
+    editor.state.doc.descendants((node, pos) => {
+      if (tablePos === null && node.type.name === 'table') tablePos = pos;
+      return true;
+    });
+    dispatchTableSelected(editor, tablePos);
+    // 注意：TableKit 的 table 包在 div.tableWrapper 内，高亮类落在 wrapper 上
+    expect(
+      editor.view.dom.querySelector('.tableWrapper.app-editor-table--selected'),
+    ).not.toBeNull();
+    expect(editor.getHTML()).not.toContain('app-editor-table--selected');
+    expect(editor.getHTML()).not.toContain('tableWrapper');
+    expect(appEditorSelectionKey.getState(editor.state)?.tablePos).toBe(tablePos);
+    dispatchSelectionCleared(editor, 'table');
+    expect(editor.view.dom.querySelector('.tableWrapper.app-editor-table--selected')).toBeNull();
+    editor.destroy();
   });
 });
