@@ -487,6 +487,8 @@ onMounted(async () => {
               v-model="forms[activeCode][f.field]"
               :placeholder="f.placeholder || ''"
               :min-height="f.attrs?.minHeight || 240"
+              :auto-transfer-on-paste="Boolean(f.attrs?.autoTransferOnPaste)"
+              v-bind="f.attrs || {}"
               @update:model-value="handleFieldChange(activeCode)"
             />
             <Input.TextArea

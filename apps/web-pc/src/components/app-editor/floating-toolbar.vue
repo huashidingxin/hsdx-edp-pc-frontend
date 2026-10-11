@@ -13,7 +13,7 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
-  // 目标 DOM 元素，例如 img、section 等
+  // 目标 DOM 元素，例如 img、section、columns 等
   target: {
     type: null,
     default: null,
@@ -55,7 +55,6 @@ function updatePosition() {
 
   let targetRect = el.getBoundingClientRect();
 
-  // 若元素本身没有宽高（如 display: contents 或 0 尺寸容器），尝试查找内部首个可见子元素定位
   if (targetRect.width === 0 && targetRect.height === 0) {
     const visibleChild = el.querySelector(':scope > *:not(style):not(script)');
     if (visibleChild) {
@@ -63,83 +62,64 @@ function updatePosition() {
     }
   }
 
-  // 若仍无法获取有效尺寸，隐藏浮层，坚决不降级到屏幕 (0, 0) 左上角
   if (targetRect.width === 0 && targetRect.height === 0) {
     coords.value = { ...coords.value, visible: false };
     return;
   }
 
   const editorEl =
+    el.closest('.app-editor-wrapper') ||
     el.closest('.vben-tiptap-content') ||
     el.closest('.vben-tiptap') ||
     document.querySelector('.vben-tiptap-content') ||
     document.querySelector('.vben-tiptap');
   const editorRect = editorEl?.getBoundingClientRect();
 
-  // 滚动超出可见区检测：目标完全滚出编辑器可见区时隐藏
-  if (editorRect) {
-    if (
-      targetRect.bottom < editorRect.top ||
-      targetRect.top > editorRect.bottom
-    ) {
-      coords.value = { ...coords.value, visible: false };
-      return;
-    }
-  }
+  // 若完全超出屏幕视口则隐藏
   if (targetRect.bottom < 0 || targetRect.top > window.innerHeight) {
     coords.value = { ...coords.value, visible: false };
     return;
   }
 
   const floatingEl = floatingRef.value;
-  const toolbarWidth = floatingEl?.offsetWidth || 180;
-  const toolbarHeight = floatingEl?.offsetHeight || 38;
+  const toolbarWidth = floatingEl?.offsetWidth || 320;
+  const toolbarHeight = floatingEl?.offsetHeight || 44;
 
   const containerRight = editorRect ? editorRect.right : window.innerWidth;
   const containerLeft = editorRect ? editorRect.left : 0;
-  const rightSpace = containerRight - targetRect.right;
-  const leftSpace = targetRect.left - containerLeft;
+  const containerTop = editorRect ? editorRect.top : 0;
+  const containerBottom = editorRect ? editorRect.bottom : window.innerHeight;
 
-  let left;
-  let top;
+  let left = 0;
+  let top = 0;
 
   if (props.placement === 'right') {
-    // 优先右侧外侧停靠（0 遮挡，方便动态观察调节）
-    if (rightSpace >= toolbarWidth + 12) {
-      left = targetRect.right + 10;
-      top = targetRect.top;
-    } else if (leftSpace >= toolbarWidth + 12) {
-      // 右侧不足但左侧充足，停靠在左侧外侧
-      left = targetRect.left - toolbarWidth - 10;
+    const idealLeft = targetRect.right + 12;
+    // 右侧有空间停靠在右侧
+    if (idealLeft + toolbarWidth <= containerRight - 8 && idealLeft + toolbarWidth <= window.innerWidth - 8) {
+      left = idealLeft;
       top = targetRect.top;
     } else {
-      // 左右均不足（全宽大图/排版块），停靠于右上角上方
-      const topSpace = targetRect.top - (editorRect ? editorRect.top : 0);
+      // 右侧不足（如全宽多栏布局或右侧内容）
+      const topSpace = targetRect.top - containerTop;
       if (topSpace >= toolbarHeight + 10) {
+        // 上方空间充足停靠在顶部上方靠右
         top = targetRect.top - toolbarHeight - 8;
       } else {
+        // 上方空间不足（如分栏处于编辑器最顶端），停靠在元素顶端内侧靠右
         top = targetRect.top + 8;
       }
-      left = Math.max(containerLeft + 8, containerRight - toolbarWidth - 12);
+      left = Math.min(
+        targetRect.right - toolbarWidth,
+        containerRight - toolbarWidth - 12,
+      );
     }
   } else {
-    // 顶部优先模式
     top = targetRect.top - toolbarHeight - 8;
     left = targetRect.left + targetRect.width / 2 - toolbarWidth / 2;
   }
 
-  // 严格的边界 clamp 防护，杜绝超出编辑器或屏幕边界
-  const minTop = Math.max(8, editorRect ? editorRect.top + 8 : 8);
-  const maxTop = Math.min(
-    window.innerHeight - toolbarHeight - 8,
-    editorRect
-      ? editorRect.bottom - toolbarHeight - 8
-      : window.innerHeight - toolbarHeight - 8,
-  );
-  if (maxTop >= minTop) {
-    top = Math.max(minTop, Math.min(maxTop, top));
-  }
-
+  // 严格边界安全保护：确保工具条不超出编辑器容器与视口边界
   const minLeft = Math.max(8, containerLeft + 8);
   const maxLeft = Math.min(
     window.innerWidth - toolbarWidth - 8,
@@ -147,9 +127,21 @@ function updatePosition() {
   );
   if (maxLeft >= minLeft) {
     left = Math.max(minLeft, Math.min(maxLeft, left));
+  } else {
+    left = Math.max(8, containerLeft + 8);
   }
 
-  // 防御性校验：若计算结果非有限数值，不显示
+  const minTop = Math.max(8, containerTop + 8);
+  const maxTop = Math.min(
+    window.innerHeight - toolbarHeight - 8,
+    containerBottom - toolbarHeight - 8,
+  );
+  if (maxTop >= minTop) {
+    top = Math.max(minTop, Math.min(maxTop, top));
+  } else {
+    top = Math.max(8, targetRect.top);
+  }
+
   if (!Number.isFinite(left) || !Number.isFinite(top)) {
     coords.value = { ...coords.value, visible: false };
     return;
@@ -169,43 +161,58 @@ const floatingStyle = computed(() => ({
 }));
 
 watch(
-  () => props.visible,
-  (visible) => {
-    if (!visible) return;
+  [() => props.visible, () => props.target],
+  ([visible, target]) => {
+    if (!visible || !target) {
+      coords.value = { ...coords.value, visible: false };
+      return;
+    }
     nextTick(() => {
       updatePosition();
+      requestAnimationFrame(() => {
+        updatePosition();
+      });
     });
   },
   { immediate: true },
 );
 
-function onGlobalClick(event) {
+function onGlobalPointerDown(event) {
   if (!props.visible) return;
   const floatingEl = floatingRef.value;
   const targetEl = resolveTargetEl();
+  if (floatingEl && floatingEl.contains(event.target)) return;
+  if (targetEl && targetEl.contains(event.target)) return;
   if (
-    floatingEl &&
-    !floatingEl.contains(event.target) &&
-    targetEl &&
-    !targetEl.contains(event.target) &&
-    !event.target.closest('.app-editor-floating') &&
-    !event.target.closest('.app-editor-section-badge') &&
-    !event.target.closest('.app-editor-resize-handle')
+    event.target.closest('.app-editor-floating') ||
+    event.target.closest('.app-editor-resize-handle') ||
+    event.target.closest('.ant-modal') ||
+    event.target.closest('.ant-popover')
   ) {
-    emit('close');
+    return;
   }
+  // 若点击发生在编辑器区域内部，由编辑器内部 onContentClick 统一处理切换与清除，避免全局误杀
+  if (
+    event.target.closest('.app-editor-wrapper') ||
+    event.target.closest('.app-editor-tiptap') ||
+    event.target.closest('.vben-tiptap')
+  ) {
+    return;
+  }
+
+  emit('close');
 }
 
 onMounted(() => {
   window.addEventListener('scroll', updatePosition, true);
   window.addEventListener('resize', updatePosition);
-  document.addEventListener('mousedown', onGlobalClick);
+  document.addEventListener('pointerdown', onGlobalPointerDown);
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener('scroll', updatePosition, true);
   window.removeEventListener('resize', updatePosition);
-  document.removeEventListener('mousedown', onGlobalClick);
+  document.removeEventListener('pointerdown', onGlobalPointerDown);
 });
 
 defineExpose({
@@ -223,18 +230,7 @@ defineExpose({
       contenteditable="false"
       @mousedown.prevent
     >
-      <!-- 主工具条卡片 -->
-      <div class="app-editor-floating__toolbar">
-        <slot name="header"></slot>
-        <div class="app-editor-floating__actions">
-          <slot></slot>
-        </div>
-      </div>
-
-      <!-- 二级调节面板区（尺寸、对齐等） -->
-      <div class="app-editor-floating__panels">
-        <slot name="panels"></slot>
-      </div>
+      <slot></slot>
     </div>
   </Teleport>
 </template>
@@ -246,6 +242,7 @@ defineExpose({
   z-index: 9999;
   display: flex;
   flex-direction: column;
+  gap: 6px;
   align-items: flex-start;
   pointer-events: auto;
   user-select: none;
@@ -280,6 +277,15 @@ defineExpose({
   align-items: center;
   gap: 4px;
   letter-spacing: 0.5px;
+}
+
+.app-editor-tag-badge {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: hsl(var(--primary) / 12%);
+  color: hsl(var(--primary));
 }
 
 .app-editor-parent-btn {
@@ -371,7 +377,7 @@ defineExpose({
 
 /* 二级调节弹层规范 */
 .app-editor-panel {
-  margin-top: 6px;
+  margin-top: 4px;
   padding: 10px;
   background: hsl(var(--card));
   border: 1px solid hsl(var(--border));

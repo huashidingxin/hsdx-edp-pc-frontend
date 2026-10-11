@@ -10,6 +10,8 @@ import { useCurrentAppStore } from '#/store/current-app';
 import ContentPublishModal from '../_components/ContentPublishModal.vue';
 import { useAppQueryFilter } from '../_components/useAppQueryFilter.js';
 
+import { useCustomFieldSchemas } from '../_components/useCustomFieldSchemas.js';
+
 import LocaleManager from '../_components/LocaleManager.vue';
 
 /**
@@ -35,6 +37,7 @@ const statusItems = [
 
 const appStore = useCurrentAppStore();
 const crudRef = ref(null);
+const cf = useCustomFieldSchemas('honor');
 const props = defineProps({ appId: { type: [Number, String], default: null } });
 const { appFilterDefault, suggestedAppId, onFiltersUpdate, embedded } = useAppQueryFilter(crudRef, () => props.appId);
 
@@ -193,7 +196,20 @@ function categoryName(id) {
   return categories.value.find((c) => c.id === id)?.name || '-';
 }
 
+/** 语言 tabs 内的字段：固定字段 + 租户声明的自定义字段（动态）。 */
+const localeFields = computed(() => [
+  { field: 'title', label: '标题', type: 'text' },
+  { field: 'slug', label: 'Slug', type: 'text' },
+  { field: 'summary', label: '摘要', type: 'textarea' },
+  { field: 'body', label: '详情', type: 'editor' },
+  { field: 'seo_title', label: 'SEO 标题', type: 'text' },
+  { field: 'seo_description', label: 'SEO 描述', type: 'textarea' },
+  { field: 'seo_keywords', label: 'SEO 关键词', type: 'text' },  ...cf.localeFields.value,
+]);
+
 onMounted(async () => {
+  // 租户自定义字段：按内容模型拉声明（未声明时静默为空）
+  await cf.load();
   try {
     await appStore.loadApplications();
   } catch (error) {
@@ -231,6 +247,8 @@ onMounted(async () => {
     }"
     :open-mode="{ create: 'modal', detail: 'modal' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
+    :detail-format="cf.detailFormat"
+    :save-format="cf.saveFormat"
     :actions-config="[
       {
         key: 'publish',
@@ -290,15 +308,7 @@ onMounted(async () => {
         :locales="formValue?.locales || []"
         @update:locales="(v) => { if (formValue) formValue.locales = v; }"
         :locales-pool="localeOptions"
-        :fields="[
-          { field: 'title', label: '标题', type: 'text' },
-          { field: 'slug', label: 'Slug', type: 'text' },
-          { field: 'summary', label: '摘要', type: 'textarea' },
-          { field: 'body', label: '详情', type: 'editor' },
-          { field: 'seo_title', label: 'SEO 标题', type: 'text' },
-          { field: 'seo_description', label: 'SEO 描述', type: 'textarea' },
-          { field: 'seo_keywords', label: 'SEO 关键词', type: 'text' },
-        ]"
+        :fields="localeFields"
       />
     </template>
   </AppCrudTable>

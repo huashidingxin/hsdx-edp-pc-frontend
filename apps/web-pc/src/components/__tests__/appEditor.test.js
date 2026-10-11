@@ -1,6 +1,18 @@
+// @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest';
 import { Editor } from '@tiptap/core';
 import { createEditorExtensions } from '../app-editor/extensions';
+import {
+  findColumnsNodeAndPos,
+  findImageNodeAndPos,
+  findNodePosByDOM,
+} from '../app-editor/dom-lookup';
+import {
+  appEditorSelectionKey,
+  dispatchColumnsSelected,
+  dispatchMediaSelected,
+  dispatchSelectionCleared,
+} from '../app-editor/selection-plugin';
 import { sanitizePastedHtml } from '../app-editor/paste-preserve';
 
 describe('app-editor 扩展与保真解析验证', () => {
@@ -57,5 +69,168 @@ describe('app-editor 扩展与保真解析验证', () => {
     expect(cleaned).not.toContain('mso-padding-alt');
     expect(cleaned).toContain('font-size: 14px');
     expect(cleaned).toContain('内容');
+  });
+
+  it('CMS 多栏扩展：标准 HTML 输出、无 data-*、间隙 gap 与 768px 自适应模式验证', () => {
+    const extensions = createEditorExtensions();
+    expect(extensions.some((ext) => ext.name === 'columns')).toBe(true);
+    expect(extensions.some((ext) => ext.name === 'column')).toBe(true);
+
+    const editor = new Editor({
+      extensions,
+      content: '<p>初始内容</p>',
+    });
+
+    editor.commands.insertColumns({ cols: 2, layout: '1:2', gap: '24px', responsive: 'stack', keepContent: true });
+    let html = editor.getHTML();
+
+    expect(html).toContain('cms-columns');
+    expect(html).toContain('cms-columns--stack');
+    expect(html).toContain('cms-column');
+    expect(html).toContain('gap: 24px');
+    expect(html).not.toContain('data-');
+
+    editor.commands.setColumnsResponsive('keep');
+    html = editor.getHTML();
+    expect(html).toContain('cms-columns--keep');
+    expect(html).not.toContain('cms-columns--stack');
+
+    editor.commands.setColumnsGap('8px');
+    html = editor.getHTML();
+    expect(html).toContain('gap: 8px');
+
+    editor.commands.unsetColumns();
+    html = editor.getHTML();
+    expect(html).not.toContain('cms-columns');
+    expect(html).toContain('初始内容');
+
+    editor.destroy();
+  });
+
+  it('多栏嵌套图片节点查找与双重定位能力验证', () => {
+    const extensions = createEditorExtensions();
+    const editor = new Editor({
+      extensions,
+      content: '<p>前文</p>',
+    });
+
+    editor.commands.insertColumns({ cols: 2, layout: '1:1', gap: '16px' });
+    // 在多栏第 1 栏内插入图片
+    editor.commands.setImage({ src: 'https://example.com/column-img.png' });
+
+    const html = editor.getHTML();
+    expect(html).toContain('column-img.png');
+    expect(html).toContain('cms-columns');
+
+    // 验证能够精确匹配到内部的 image 节点
+    let foundImg = null;
+    let foundColumns = null;
+    editor.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'image' && node.attrs.src === 'https://example.com/column-img.png') {
+        foundImg = { node, pos };
+      }
+      if (node.type.name === 'columns') {
+        foundColumns = { node, pos };
+      }
+    });
+
+    expect(foundImg).not.toBeNull();
+    expect(foundColumns).not.toBeNull();
+    expect(foundImg.pos).toBeGreaterThan(foundColumns.pos);
+
+    editor.destroy();
+  });
+
+  it('同 src 图片：栏内图片按 DOM 身份精确命中，不误匹配栏外图片', () => {
+    const extensions = createEditorExtensions();
+    const editor = new Editor({
+      extensions,
+      content: '<p>外部段落<img src="https://example.com/same.png"></p>',
+    });
+
+    editor.commands.insertColumns({ cols: 2, layout: '1:1', gap: '16px' });
+    // 光标在第 1 栏内，插入相同 src 的图片
+    editor.commands.setImage({ src: 'https://example.com/same.png' });
+
+    const view = editor.view;
+    const domImgs = Array.from(view.dom.querySelectorAll('img'));
+    expect(domImgs.length).toBe(2);
+
+    // 文档中两张同 src 图片的位置
+    const docPositions = [];
+    editor.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'image') docPositions.push(pos);
+    });
+    expect(docPositions.length).toBe(2);
+    const [firstPos, secondPos] = [...docPositions].sort((a, b) => a - b);
+
+    // DOM 身份优先：第二张 DOM 图片必须命中第二个（栏内）位置，而非栏外第一张
+    const hitInner = findImageNodeAndPos(view, domImgs[1]);
+    expect(hitInner).not.toBeNull();
+    expect(hitInner.pos).toBe(secondPos);
+
+    const hitOuter = findImageNodeAndPos(view, domImgs[0]);
+    expect(hitOuter).not.toBeNull();
+    expect(hitOuter.pos).toBe(firstPos);
+
+    // nodeDOM 身份直查同样精确
+    expect(findNodePosByDOM(view, domImgs[1], 'image')?.pos).toBe(secondPos);
+
+    // 多栏容器按 DOM 身份命中
+    const columnsEl = view.dom.querySelector('.cms-columns');
+    const hitColumns = findColumnsNodeAndPos(view, columnsEl);
+    expect(hitColumns).not.toBeNull();
+    expect(hitColumns.node.type.name).toBe('columns');
+
+    // 脱离 view 的元素不盲猜，返回 null（宁可不选中也不删错）
+    const detached = document.createElement('img');
+    detached.setAttribute('src', 'https://example.com/same.png');
+    expect(findImageNodeAndPos(view, detached)).toBeNull();
+
+    editor.destroy();
+  });
+
+  it('选中高亮走 Decorations：dispatch 后视图带选中类，输出 HTML 保持纯净', () => {
+    const extensions = createEditorExtensions();
+    const editor = new Editor({
+      extensions,
+      content: '<p>前言</p>',
+    });
+    editor.commands.insertColumns({ cols: 2, layout: '1:1', gap: '16px' });
+
+    let columnsPos = null;
+    editor.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'columns') columnsPos = pos;
+    });
+    expect(columnsPos).not.toBeNull();
+
+    // 高亮多栏：视图 DOM 带类，但 getHTML 不污染
+    dispatchColumnsSelected(editor, columnsPos);
+    expect(
+      editor.view.dom.querySelector('.cms-columns.app-editor-columns--selected'),
+    ).not.toBeNull();
+    expect(editor.getHTML()).not.toContain('app-editor-columns--selected');
+    expect(appEditorSelectionKey.getState(editor.state)?.columnsPos).toBe(columnsPos);
+
+    // 在栏内插入图片并高亮：图片带类
+    editor.commands.setImage({ src: 'https://example.com/deco.png' });
+    let imgPos = null;
+    editor.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'image') imgPos = pos;
+    });
+    expect(imgPos).not.toBeNull();
+    dispatchMediaSelected(editor, imgPos, 'image');
+    const decoImg = editor.view.dom.querySelector('img.app-editor-image--selected');
+    expect(decoImg).not.toBeNull();
+    expect(decoImg.getAttribute('src')).toBe('https://example.com/deco.png');
+
+    // 清除后两类高亮同时消失
+    dispatchSelectionCleared(editor);
+    expect(
+      editor.view.dom.querySelector('.app-editor-columns--selected'),
+    ).toBeNull();
+    expect(editor.view.dom.querySelector('.app-editor-image--selected')).toBeNull();
+
+    editor.destroy();
   });
 });

@@ -34,8 +34,22 @@ export const Section = Node.create({
   // 跨 section 的选区删除时不拆壳
   defining: true,
   parseHTML() {
-    // section: 秀米/135 素材骨架；div: Word/网页粘贴的通用容器
-    return [{ tag: 'section' }, { tag: 'div' }];
+    // section: 秀米/135 素材骨架；div: Word/网页粘贴的通用容器（排除 CMS 多栏布局结构）
+    return [
+      { tag: 'section' },
+      {
+        tag: 'div',
+        getAttrs: (element) => {
+          if (
+            element.classList?.contains('cms-columns') ||
+            element.classList?.contains('cms-column')
+          ) {
+            return false;
+          }
+          return null;
+        },
+      },
+    ];
   },
   renderHTML({ HTMLAttributes }) {
     return ['section', HTMLAttributes, 0];
@@ -168,15 +182,55 @@ function isOfficeTag(element) {
   return OFFICE_TAG_PREFIXES.some((prefix) => tag.startsWith(prefix));
 }
 
+/**
+ * 规范化样式字符串：清理 Word 无效属性，并智能重写公众号/第三方写死的固宽（如 max-width: 677px、width: 677px），
+ * 确保移动端小屏（375px）不溢出、大屏（100%）自由流式自适应。
+ */
+export function normalizeResponsiveStyle(rawStyle, tagName = '') {
+  if (!rawStyle || typeof rawStyle !== 'string') return '';
+  let s = rawStyle;
+
+  // 1. 清理 Word/Office 专有无意义声明 (mso-*, tab-stops)
+  s = s.replace(/\b(?:mso-[^:;]+|tab-stops)\s*:[^;]+;?/gi, '');
+
+  // 2. 公众号/外部文章固宽自适应规范化策略：
+  // (a) 将公众号固宽限制（max-width: 677px、640px 等）及大尺寸 max-width (>= 500px) 重写为 100% 流式宽度
+  s = s.replace(/max-width\s*:\s*(?:677px|640px|670px|680px|700px)\b\s*(!important)?/gi, 'max-width: 100%$1');
+  s = s.replace(/max-width\s*:\s*([5-9]\d{2}|\d{4,})px\b\s*(!important)?/gi, (match, px, imp) => {
+    return `max-width: 100%${imp ? ` ${imp}` : ''}`;
+  });
+
+  // (b) 将容器级固宽 677px 及大尺寸 width (>= 400px) 重写为流式自适应 width: 100%; max-width: 100%
+  const tag = (tagName || '').toLowerCase();
+  const isContainer = ['section', 'div', 'article', 'main', 'p', 'table', 'tbody', 'thead'].includes(tag);
+  if (isContainer) {
+    s = s.replace(/(?<![a-zA-Z-])width\s*:\s*677px\b\s*(!important)?/gi, 'width: 100%; max-width: 100%$1');
+    s = s.replace(/(?<![a-zA-Z-])width\s*:\s*([4-9]\d{2}|\d{4,})px\b\s*(!important)?/gi, (match, px, imp) => {
+      return `width: 100%; max-width: 100%${imp ? ` ${imp}` : ''}`;
+    });
+  } else {
+    s = s.replace(/(?<![a-zA-Z-])width\s*:\s*677px\b\s*(!important)?/gi, 'max-width: 100%$1');
+  }
+
+  // (c) 消除导致小屏/移动端横向滚动的硬编码 min-width (>= 360px 或 677px)
+  s = s.replace(/min-width\s*:\s*(?:677px|[4-9]\d{2}px|\d{4,}px)\b\s*(!important)?/gi, 'min-width: auto$1');
+
+  // (d) 为被重写或包含宽度的块级容器补充 box-sizing: border-box，防止 padding 产生溢出
+  if (isContainer && !/box-sizing\s*:/i.test(s)) {
+    s += '; box-sizing: border-box;';
+  }
+
+  s = s.replace(/;{2,}/g, ';').trim();
+  if (s && !s.endsWith(';')) s += ';';
+  return s;
+}
+
 function cleanStyleAttr(element) {
   const raw = element.getAttribute('style');
   if (!raw) return;
-  const kept = raw
-    .split(';')
-    .map((decl) => decl.trim())
-    .filter((decl) => decl && !WORD_STYLE_DECL.test(decl));
-  if (kept.length > 0) {
-    element.setAttribute('style', `${kept.join('; ')};`);
+  const cleaned = normalizeResponsiveStyle(raw, element.tagName);
+  if (cleaned) {
+    element.setAttribute('style', cleaned);
   } else {
     element.removeAttribute('style');
   }
@@ -204,6 +258,37 @@ export function sanitizePastedHtml(html) {
     const { body } = dom;
     if (!body) return html;
 
+    // 1. 微信图片预处理：将 data-src / data-original 提升为 src（微信富文本中经常使用 1x1 svg 占位）
+    dom.querySelectorAll('img').forEach((img) => {
+      const dataSrc = img.getAttribute('data-src') || img.getAttribute('data-original');
+      const src = img.getAttribute('src');
+      if (dataSrc && (!src || src.startsWith('data:image/svg') || src.startsWith('data:image/gif'))) {
+        img.setAttribute('src', dataSrc);
+      }
+    });
+
+    // 2. 微信视频 iframe 预处理：保留视频特征转换为原生 video 标签，防止后续被 REMOVED_SELECTOR 误删
+    dom.querySelectorAll('iframe').forEach((iframe) => {
+      const mpvid = iframe.getAttribute('data-mpvid') || iframe.getAttribute('data-src') || '';
+      const cls = iframe.getAttribute('class') || '';
+      if (mpvid.includes('wxv_') || cls.includes('video_iframe')) {
+        const vidMatch = mpvid.match(/wxv_\d+/);
+        const vid = vidMatch ? vidMatch[0] : '';
+        const videoEl = dom.createElement('video');
+        videoEl.setAttribute('controls', 'true');
+        videoEl.setAttribute('referrerpolicy', 'no-referrer');
+        videoEl.setAttribute('style', 'max-width: 100%; border-radius: 8px; margin: 12px auto; display: block;');
+        if (vid) {
+          videoEl.setAttribute('data-mpvid', vid);
+        }
+        const src = iframe.getAttribute('data-src') || iframe.getAttribute('src') || '';
+        if (src && !src.includes('mp.weixin.qq.com/mp/readtemplate')) {
+          videoEl.setAttribute('src', src);
+        }
+        iframe.parentNode?.replaceChild(videoEl, iframe);
+      }
+    });
+
     dom.querySelectorAll(REMOVED_SELECTOR).forEach((el) => el.remove());
 
     // 注释（含 Word 的 StartFragment 标记等）
@@ -222,6 +307,24 @@ export function sanitizePastedHtml(html) {
       if (!parent) return;
       while (el.firstChild) parent.insertBefore(el.firstChild, el);
       el.remove();
+    });
+
+    // 3. 提升 data-lazy-bgimg（微信动态 SVG 与图片背景常用）至内联 style background-image
+    body.querySelectorAll('[data-lazy-bgimg]').forEach((el) => {
+      const bgImg = el.getAttribute('data-lazy-bgimg');
+      const curStyle = el.getAttribute('style') || '';
+      if (bgImg && !curStyle.includes('background-image')) {
+        el.setAttribute('style', `${curStyle ? `${curStyle}; ` : ''}background-image: url("${bgImg}");`);
+      }
+    });
+
+    // 4. 清洗写死的 HTML 容器固宽属性 (如 width="677")
+    body.querySelectorAll('[width]').forEach((el) => {
+      const w = el.getAttribute('width');
+      const tag = (el.tagName || '').toLowerCase();
+      if (w === '677' || (['section', 'div', 'table'].includes(tag) && Number(w) >= 400)) {
+        el.setAttribute('width', '100%');
+      }
     });
 
     body.querySelectorAll('[style]').forEach((element) => cleanStyleAttr(element));

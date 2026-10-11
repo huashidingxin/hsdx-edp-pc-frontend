@@ -10,6 +10,7 @@ import { useCurrentAppStore } from '#/store/current-app';
 import ContentPublishModal from '../_components/ContentPublishModal.vue';
 import { useAppQueryFilter } from '../_components/useAppQueryFilter.js';
 import { useCustomCategoryFields } from '../_components/useCustomCategoryFields.js';
+import { useCustomFieldSchemas } from '../_components/useCustomFieldSchemas.js';
 
 import LocaleManager from '../_components/LocaleManager.vue';
 
@@ -80,6 +81,7 @@ const filterFields = ref([
 ]);
 
 const cc = useCustomCategoryFields('product');
+const cf = useCustomFieldSchemas('product');
 
 const baseFormFields = [
   { field: 'id', type: 'text', label: 'ID', span: 12, displayOnly: true },
@@ -91,16 +93,15 @@ const baseFormFields = [
     attrs: { options: categories, fieldNames: { label: 'name', value: 'id' }, showSearch: true },
   },
   { field: 'sku', type: 'text', label: 'SKU', span: 12 },
-  { field: 'cover', type: 'text', label: '封面', span: 12 },
+  { field: 'cover', type: 'file', label: '封面', span: 24 },
   { field: 'price', type: 'number', label: '价格', span: 12 },
   { field: 'sort', type: 'number', label: '排序', span: 12 },
   {
     field: 'media',
-    type: 'textarea',
-    label: '媒体（JSON）',
+    type: 'file',
+    label: '图集',
     span: 24,
-    displayOnly: true,
-    attrs: { rows: 3 },
+    attrs:{multiple:true},
   },
   // 附件以 uploads 为唯一来源（object_field=attachments），提交时是 URL 数组
   { field: 'attachments', type: 'files', label: '附件', span: 24 },
@@ -126,6 +127,27 @@ const baseFormFields = [
  */
 const formFields = computed(() => [...baseFormFields, ...cc.fields.value]);
 
+/** 语言 tabs 内的字段：固定字段 + 租户声明的自定义字段（动态）。 */
+const localeFields = computed(() => [
+  { field: 'title', label: '标题', type: 'text' },
+  { field: 'slug', label: 'Slug', type: 'text' },
+  { field: 'summary', label: '摘要', type: 'textarea' },
+  { field: 'body', label: '详情', type: 'editor' },
+  { field: 'seo_title', label: 'SEO 标题', type: 'text' },
+  { field: 'seo_description', label: 'SEO 描述', type: 'textarea' },
+  { field: 'seo_keywords', label: 'SEO 关键词', type: 'text' },
+  ...cf.localeFields.value,
+]);
+
+/** 详情/保存形状转换：先过自定义字段（语种 custom_fields 展开/折叠），再过扩展分类。 */
+function detailFormat(data) {
+  return cf.detailFormat(cc.detailFormat(data));
+}
+
+function saveFormat(payload) {
+  return cf.saveFormat(cc.saveFormat(payload));
+}
+
 const gridColumns = ref([
   { field: 'id', title: 'ID', width: 70 },
   {
@@ -134,6 +156,7 @@ const gridColumns = ref([
     minWidth: 200,
     formatter: ({ row }) => row.locales?.[0]?.title || '-',
   },
+  { field: 'cover', title: '封面', minWidth: 120, customRender:{type:'image'} },
   {
     field: 'category',
     title: '分类',
@@ -200,6 +223,8 @@ onMounted(async () => {
   }
   // 扩展分类：按内容模型拉适用维度 + 各维度节点选项（未声明维度时静默为空）
   await cc.load();
+  // 租户自定义字段：按内容模型拉声明（未声明时静默为空）
+  await cf.load();
   try {
     const { data } = await new Resource('categories').list({ per_page: 100, type: 3 });
     categories.value = data || [];
@@ -237,8 +262,8 @@ onMounted(async () => {
     }"
     :open-mode="{ create: 'modal', detail: 'modal' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
-    :detail-format="cc.detailFormat"
-    :save-format="cc.saveFormat"
+    :detail-format="detailFormat"
+    :save-format="saveFormat"
     :actions-config="[
       {
         key: 'publish',
@@ -291,15 +316,7 @@ onMounted(async () => {
         :locales="formValue?.locales || []"
         @update:locales="(v) => { if (formValue) formValue.locales = v; }"
         :locales-pool="localeOptions"
-        :fields="[
-          { field: 'title', label: '标题', type: 'text' },
-          { field: 'slug', label: 'Slug', type: 'text' },
-          { field: 'summary', label: '摘要', type: 'textarea' },
-          { field: 'body', label: '详情', type: 'textarea' },
-          { field: 'seo_title', label: 'SEO 标题', type: 'text' },
-          { field: 'seo_description', label: 'SEO 描述', type: 'textarea' },
-          { field: 'seo_keywords', label: 'SEO 关键词', type: 'text' },
-        ]"
+        :fields="localeFields"
       />
     </template>
   </AppCrudTable>
