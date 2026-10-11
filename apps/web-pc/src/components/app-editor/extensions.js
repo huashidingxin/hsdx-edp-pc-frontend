@@ -192,6 +192,19 @@ export const RichImage = Image.extend({
         renderHTML: (attributes) =>
           attributes.height ? { height: attributes.height } : {},
       },
+      // 最高兼容：图片输出自带 max-width: 100%，在无 class / 无外部 CSS
+      // 的终端（如微信公众号）窄屏下不溢出。已有 max-width 则保持原样。
+      // 注意：与 PreserveAttributes 的全局 style 同名，类型自身定义优先。
+      style: {
+        default: null,
+        parseHTML: (element) => element.getAttribute('style'),
+        renderHTML: (attributes) => {
+          const raw = attributes.style || '';
+          if (/max-width\s*:/i.test(raw)) return { style: raw };
+          const sep = raw && !/;\s*$/.test(raw) ? '; ' : '';
+          return { style: `${raw}${sep}max-width: 100%;` };
+        },
+      },
     };
   },
 });

@@ -154,6 +154,14 @@ describe('app-editor 多栏点击选中', () => {
     await settle();
     expect(bodyQuery('.app-editor-columns-toolbar')).not.toBeNull();
 
+    // 1b. 点击 Dock 中的选项（比例）→ 面板展开，工具条不得被关闭
+    const ratioBtn = wrapper.find('button[title="调整列宽比例"]');
+    expect(ratioBtn.exists()).toBe(true);
+    await ratioBtn.trigger('click');
+    await settle();
+    expect(bodyQuery('.app-editor-columns-toolbar')).not.toBeNull();
+    expect(document.body.innerHTML).toContain('快捷比例切换');
+
     // 2. 点击栏外图片 → 图片工具条出现、多栏工具条消失
     await outsideImg.trigger('click');
     await settle();
@@ -166,6 +174,62 @@ describe('app-editor 多栏点击选中', () => {
     expect(bodyQuery('.app-editor-columns-toolbar')).not.toBeNull();
     expect(bodyQuery('.app-editor-image-toolbar')).toBeNull();
 
+    // 4. 点空白处回到全局模式：上下文卡消失，全局卡（页面设置）出现
+    const preface = wrapper.find('.vben-tiptap-content > p');
+    await preface.trigger('click');
+    await settle();
+    expect(bodyQuery('.app-editor-columns-toolbar')).toBeNull();
+    expect(bodyQuery('.app-editor-image-toolbar')).toBeNull();
+    expect(bodyQuery('.app-editor-global-toolbar')).not.toBeNull();
+
+    // 5. 全局一键排版：点击两端对齐，正文出现 text-align
+    const justifyBtn = Array.from(
+      document.body.querySelectorAll('.app-editor-global-toolbar button'),
+    ).find((b) => b.textContent?.includes('两端对齐'));
+    expect(justifyBtn).toBeTruthy();
+    justifyBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    await settle();
+    expect(
+      document.body.querySelector('.vben-tiptap-content').innerHTML,
+    ).toContain('text-align: justify');
+
     wrapper.unmount();
-  });
+  }, 60000);
+
+  it('复制样式按钮状态：用多栏才高亮呼吸，纯文本保持常态', async () => {
+    const { default: AppEditor } = await import('../app-editor/index.vue');
+    const mountOne = (html) =>
+      mount(AppEditor, {
+        attachTo: document.body,
+        props: { modelValue: html },
+        global: {
+          stubs: {
+            EditorToolbar: true,
+            MediaLibraryModal: true,
+            ExternalAssetsModal: true,
+            VbenTiptap: VbenTiptapStub,
+          },
+        },
+      });
+    const copyBtnOf = () =>
+      document.body.querySelector('.app-editor-copy-styles-btn');
+
+    // 含多栏 → 按钮高亮（is-active）+ 呼吸点
+    const withColumns = mountOne(INITIAL_HTML);
+    await settle();
+    const activeBtn = copyBtnOf();
+    expect(activeBtn).not.toBeNull();
+    expect(activeBtn.classList.contains('is-active')).toBe(true);
+    expect(activeBtn.querySelector('.animate-pulse')).not.toBeNull();
+    withColumns.unmount();
+
+    // 纯文本 → 按钮常态，无高亮无呼吸点（不打扰，但功能仍在）
+    const plain = mountOne('<p>纯文本，无多栏</p>');
+    await settle();
+    const calmBtn = copyBtnOf();
+    expect(calmBtn).not.toBeNull();
+    expect(calmBtn.classList.contains('is-active')).toBe(false);
+    expect(calmBtn.querySelector('.animate-pulse')).toBeNull();
+    plain.unmount();
+  }, 90000);
 });

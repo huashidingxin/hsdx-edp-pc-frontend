@@ -8,6 +8,12 @@ import {
   findNodePosByDOM,
 } from '../app-editor/dom-lookup';
 import {
+  cleanEmptyTopParagraphs,
+  justifyAllContent,
+  unifyAllLineHeight,
+} from '../app-editor/doc-actions';
+import { contentStylesCss, usesCustomStyleBlocks } from '../app-editor/content-styles.js';
+import {
   appEditorSelectionKey,
   dispatchColumnsSelected,
   dispatchMediaSelected,
@@ -232,5 +238,101 @@ describe('app-editor 扩展与保真解析验证', () => {
     expect(editor.view.dom.querySelector('.app-editor-image--selected')).toBeNull();
 
     editor.destroy();
+  });
+
+  it('Dock 全局一键排版：两端对齐 / 统一行高 / 清除空段', () => {
+    const extensions = createEditorExtensions();
+    const editor = new Editor({
+      extensions,
+      content: '<p>第一段</p><p></p><p>第二段</p><p></p>',
+    });
+
+    expect(justifyAllContent(editor)).toBe(true);
+    let html = editor.getHTML();
+    expect(html).toContain('text-align: justify');
+
+    expect(unifyAllLineHeight(editor, '1.75')).toBe(true);
+    html = editor.getHTML();
+    expect(html).toContain('line-height: 1.75');
+
+    const removed = cleanEmptyTopParagraphs(editor);
+    expect(removed).toBe(2);
+    html = editor.getHTML();
+    expect(html).toContain('第一段');
+    expect(html).toContain('第二段');
+    expect(html).not.toMatch(/<p><\/p>/);
+
+    editor.destroy();
+  });
+
+  it('清除空段落：全空文档至少保留一个块', () => {
+    const extensions = createEditorExtensions();
+    const editor = new Editor({
+      extensions,
+      content: '<p></p>',
+    });
+
+    expect(cleanEmptyTopParagraphs(editor)).toBe(0);
+    expect(editor.state.doc.childCount).toBe(1);
+
+    editor.destroy();
+  });
+
+  it('最高兼容内联：裸图片输出自带 max-width，已有样式不重复追加', () => {
+    const extensions = createEditorExtensions();
+
+    const bare = new Editor({
+      extensions,
+      content: '<p><img src="https://example.com/a.png"></p>',
+    });
+    expect(bare.getHTML()).toContain('max-width: 100%');
+    bare.destroy();
+
+    const styled = new Editor({
+      extensions,
+      content: '<p><img src="https://example.com/b.png" style="width: 50%;"></p>',
+    });
+    const styledHtml = styled.getHTML();
+    expect(styledHtml).toContain('width: 50%');
+    expect(styledHtml).toContain('max-width: 100%');
+    // max-width 只出现一次，不重复追加
+    expect(styledHtml.match(/max-width/g)?.length).toBe(1);
+    styled.destroy();
+
+    const already = new Editor({
+      extensions,
+      content: '<p><img src="https://example.com/c.png" style="max-width: 80%;"></p>',
+    });
+    const alreadyHtml = already.getHTML();
+    expect(alreadyHtml).toContain('max-width: 80%');
+    expect(alreadyHtml.match(/max-width/g)?.length).toBe(1);
+    already.destroy();
+  });
+
+  it('输出样式定义可复制：包含多栏/响应式/图片兜底，不含编辑器内部类', () => {
+    expect(typeof contentStylesCss).toBe('string');
+    expect(contentStylesCss).toContain('.cms-columns');
+    expect(contentStylesCss).toContain('.cms-column');
+    expect(contentStylesCss).toContain('.cms-columns--stack');
+    expect(contentStylesCss).toContain('.cms-columns--keep');
+    expect(contentStylesCss).toContain('@media (max-width: 768px)');
+    expect(contentStylesCss).toContain('img.vben-tiptap__image');
+    // 编辑器内部类（选中高亮/拖拽手柄/提示）不得混入对外样式
+    expect(contentStylesCss).not.toContain('app-editor-columns--selected');
+    expect(contentStylesCss).not.toContain('app-editor-image--selected');
+    expect(contentStylesCss).not.toContain('cms-columns-resize-tooltip');
+  });
+
+  it('样式依赖检测：仅多栏布局触发提示，纯文本/纯图片不打扰', () => {
+    expect(usesCustomStyleBlocks('<p>纯文本</p>')).toBe(false);
+    expect(usesCustomStyleBlocks('<p><img src="https://example.com/a.png"></p>')).toBe(false);
+    expect(usesCustomStyleBlocks('')).toBe(false);
+    expect(usesCustomStyleBlocks(null)).toBe(false);
+    expect(
+      usesCustomStyleBlocks('<div class="cms-columns cms-columns--stack"><div class="cms-column"><p>11</p></div></div>'),
+    ).toBe(true);
+    expect(
+      usesCustomStyleBlocks("<div class='cms-column'><p>22</p></div>"),
+    ).toBe(true);
   });
 });

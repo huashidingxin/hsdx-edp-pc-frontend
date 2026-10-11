@@ -28,6 +28,13 @@ import { VbenTiptap } from '@vben/plugins/tiptap';
 import { upload as uploadFile } from '#/api';
 
 import { findActiveColumnsInfo } from './columns';
+// 输出样式定义原文，供“复制样式”按钮使用，单一来源
+import { contentStylesCss, usesCustomStyleBlocks } from './content-styles.js';
+import {
+  cleanEmptyTopParagraphs,
+  justifyAllContent as justifyAllContentDoc,
+  unifyAllLineHeight as unifyAllLineHeightDoc,
+} from './doc-actions';
 import {
   findColumnsNodeAndPos,
   findImageNodeAndPos,
@@ -35,13 +42,7 @@ import {
 } from './dom-lookup';
 import EditorToolbar from './editor-toolbar.vue';
 import { createEditorExtensions } from './extensions';
-import FloatingToolbar from './floating-toolbar.vue';
 import { DEFAULT_THUMBNAIL_PROCESS, defaultFetchMedia, stripThumbnailParam } from './media-api';
-import {
-  appEditorSelectionKey,
-  dispatchColumnsSelected,
-  dispatchSelectionCleared,
-} from './selection-plugin';
 import MediaLibraryModal from './media-library-modal.vue';
 import ExternalAssetsModal from './external-assets-modal.vue';
 import { message } from 'antdv-next';
@@ -53,6 +54,11 @@ import {
   replaceAssetUrlsInHtml,
   transferRemoteAsset,
 } from './external-assets';
+import {
+  appEditorSelectionKey,
+  dispatchColumnsSelected,
+  dispatchSelectionCleared,
+} from './selection-plugin';
 
 const props = defineProps({
   value: {
@@ -154,6 +160,12 @@ const externalAssetsCount = computed(() => externalAssets.value.length);
 const plainTextCount = computed(
   () => (content.value || '').replace(/<[^>]*>/g, '').trim().length,
 );
+
+// ---------------------------------------------------------------------------
+// 自定义样式依赖指示：文档用到多栏布局时，“复制样式”按钮高亮呼吸提示
+// （图片已内联兜底，不计入，避免无谓打扰）
+// ---------------------------------------------------------------------------
+const needsCustomStyles = computed(() => usesCustomStyleBlocks(content.value));
 
 function openExternalModal() {
   isExternalModalOpen.value = true;
@@ -443,8 +455,6 @@ function getContentContainerEl() {
 // 特殊块单选体系（图片、视频专属浮动工具条）
 // ---------------------------------------------------------------------------
 
-const compoundFloatingRef = ref(null);
-
 // ---------------------------------------------------------------------------
 // 多栏布局（Columns）选择与浮动工具条系统
 // ---------------------------------------------------------------------------
@@ -525,7 +535,6 @@ function setColumnsLayoutPreset(layoutStr) {
   editorInstance.value.chain().focus().setColumnsLayout(layoutStr, pos).run();
   refreshSelectedColumnsNode();
   columnsActivePanel.value = null;
-  updateActiveFloating();
 }
 
 function resetColumnsEqualWidth() {
@@ -534,7 +543,6 @@ function resetColumnsEqualWidth() {
   editorInstance.value.chain().focus().resetColumnsEqual(pos).run();
   refreshSelectedColumnsNode();
   columnsActivePanel.value = null;
-  updateActiveFloating();
 }
 
 function setColumnsGapValue(gap) {
@@ -543,7 +551,6 @@ function setColumnsGapValue(gap) {
   editorInstance.value.chain().focus().setColumnsGap(gap, pos).run();
   refreshSelectedColumnsNode();
   columnsActivePanel.value = null;
-  updateActiveFloating();
 }
 
 function setColumnsResponsiveMode(mode) {
@@ -552,7 +559,6 @@ function setColumnsResponsiveMode(mode) {
   editorInstance.value.chain().focus().setColumnsResponsive(mode, pos).run();
   refreshSelectedColumnsNode();
   columnsActivePanel.value = null;
-  updateActiveFloating();
 }
 
 function addColumnToCurrent() {
@@ -560,7 +566,6 @@ function addColumnToCurrent() {
   const { pos } = selectedColumnsTarget.value;
   editorInstance.value.chain().focus().addColumn('after', pos).run();
   refreshSelectedColumnsNode();
-  updateActiveFloating();
 }
 
 function deleteCurrentActiveColumn() {
@@ -568,7 +573,6 @@ function deleteCurrentActiveColumn() {
   const { pos, activeColIndex } = selectedColumnsTarget.value;
   editorInstance.value.chain().focus().deleteColumnAtIndex(activeColIndex, pos).run();
   refreshSelectedColumnsNode();
-  updateActiveFloating();
 }
 
 function moveCurrentActiveColumnLeft() {
@@ -578,7 +582,6 @@ function moveCurrentActiveColumnLeft() {
   editorInstance.value.chain().focus().moveColumnLeft(activeColIndex, pos).run();
   selectedColumnsTarget.value.activeColIndex -= 1;
   refreshSelectedColumnsNode();
-  updateActiveFloating();
 }
 
 function moveCurrentActiveColumnRight() {
@@ -588,7 +591,6 @@ function moveCurrentActiveColumnRight() {
   editorInstance.value.chain().focus().moveColumnRight(activeColIndex, pos).run();
   selectedColumnsTarget.value.activeColIndex += 1;
   refreshSelectedColumnsNode();
-  updateActiveFloating();
 }
 
 function insertParagraphBeforeCurrentColumns() {
@@ -644,7 +646,6 @@ function selectColumns(columnsEl, targetEl = null) {
     activeColIndex: colIndex,
   };
   syncColumnsHighlight(found.pos);
-  updateActiveFloating();
 }
 
 function clearColumnsSelection() {
@@ -667,17 +668,51 @@ function clearAllSelection() {
   clearColumnsSelection();
 }
 
+// ---------------------------------------------------------------------------
+// Dock 全局模式：文档级一键排版（全部可撤销）
+// ---------------------------------------------------------------------------
+
+const isGlobalActionDisabled = computed(() => !isEditable.value || isSourceMode.value);
+
+function justifyAllContent() {
+  if (!editorInstance.value || isGlobalActionDisabled.value) return;
+  if (justifyAllContentDoc(editorInstance.value)) {
+    message.success('已将全文设置为两端对齐');
+  }
+}
+
+function unifyAllLineHeight() {
+  if (!editorInstance.value || isGlobalActionDisabled.value) return;
+  if (unifyAllLineHeightDoc(editorInstance.value, '1.75')) {
+    message.success('已将全文行高统一为 1.75');
+  }
+}
+
+function cleanEmptyParagraphsUi() {
+  if (!editorInstance.value || isGlobalActionDisabled.value) return;
+  const removed = cleanEmptyTopParagraphs(editorInstance.value);
+  if (removed > 0) {
+    message.success(`已清除 ${removed} 个空段落`);
+  } else {
+    message.info('没有可清除的空段落');
+  }
+}
+
+/**
+ * 复制输出样式定义（content-styles.css 全文）：供自有站点落地页粘贴使用。
+ * 不支持自定义 class 的终端（如微信公众号）可忽略，内联样式已兜底。
+ */
+async function copyContentStyles() {
+  try {
+    await navigator.clipboard.writeText(contentStylesCss);
+    message.success('已复制输出样式定义，可粘贴到落地页使用');
+  } catch {
+    message.warning('复制失败，请重试');
+  }
+}
+
 const selectedTarget = ref(null);
 // 结构: { type: 'image' | 'video', el, pos, node }
-
-function updateActiveFloating() {
-  nextTick(() => {
-    compoundFloatingRef.value?.updatePosition();
-    requestAnimationFrame(() => {
-      compoundFloatingRef.value?.updatePosition();
-    });
-  });
-}
 
 function onVideoPlayStateChange() {
   const el = selectedTarget.value?.el;
@@ -784,7 +819,6 @@ function selectImage(imgEl) {
   } catch {}
 
   sliderValue.value = getCurrentImagePercent();
-  updateActiveFloating();
   nextTick(() => {
     updateHandlePosition();
   });
@@ -822,7 +856,6 @@ function selectVideo(videoEl) {
   videoEl.addEventListener('ended', onVideoPlayStateChange);
 
   sliderValue.value = getCurrentImagePercent();
-  updateActiveFloating();
   nextTick(() => {
     updateHandlePosition();
   });
@@ -871,7 +904,6 @@ function triggerLocalVideoPick() {
           src: url,
         });
         editor.view.dispatch(tr);
-        updateActiveFloating();
         nextTick(() => {
           updateHandlePosition();
         });
@@ -896,7 +928,6 @@ function onReplaceVideoSelect(item) {
       src: insertUrl,
     });
     editor.view.dispatch(tr);
-    updateActiveFloating();
     nextTick(() => {
       updateHandlePosition();
     });
@@ -949,7 +980,6 @@ function toggleCurrentVideoControls() {
   });
   editor.view.dispatch(tr);
   selectedTarget.value.node = editor.state.doc.nodeAt(pos);
-  updateActiveFloating();
 }
 
 function saveCurrentVideoPoster() {
@@ -968,7 +998,6 @@ function saveCurrentVideoPoster() {
   editor.view.dispatch(tr);
   selectedTarget.value.node = editor.state.doc.nodeAt(pos);
   activePanel.value = null;
-  updateActiveFloating();
 }
 
 // ---------------------------------------------------------------------------
@@ -1105,7 +1134,6 @@ function commitImagePercent(percent) {
   previewWidth.value = null;
   previewPercent.value = null;
 
-  updateActiveFloating();
   nextTick(() => {
     updateHandlePosition();
   });
@@ -1170,7 +1198,6 @@ function setImageAlign(side) {
   editor.view.dispatch(tr);
   activePanel.value = null;
 
-  updateActiveFloating();
   nextTick(() => {
     updateHandlePosition();
   });
@@ -1212,7 +1239,6 @@ function triggerLocalImagePick() {
           src: url,
         });
         editor.view.dispatch(tr);
-        updateActiveFloating();
         nextTick(() => {
           updateHandlePosition();
         });
@@ -1237,7 +1263,6 @@ function onReplaceImageSelect(item) {
       src: insertUrl,
     });
     editor.view.dispatch(tr);
-    updateActiveFloating();
     nextTick(() => {
       updateHandlePosition();
     });
@@ -1309,7 +1334,6 @@ function onHandleMouseDown(event) {
     img.style.height = 'auto';
 
     updateHandlePosition();
-    updateActiveFloating();
   };
 
   const onUp = () => {
@@ -1575,7 +1599,9 @@ function onContentClick(event) {
     !target ||
     target.closest('.app-editor-floating') ||
     target.closest('.app-editor-resize-handle') ||
-    target.closest('.app-editor-toolbar')
+    target.closest('.app-editor-toolbar') ||
+    // Dock 在编辑器根容器内部，其按钮点击不得视为“点空白处”清除选中
+    target.closest('.app-editor-dock')
   ) {
     return;
   }
@@ -1637,10 +1663,10 @@ function unbindEditorDOM() {
 }
 
 function onScrollOrResize() {
+  // Dock 固定在底部无需跟随定位，仅维护图片拖拽手柄位置
   if (['image', 'video'].includes(selectedTarget.value?.type)) {
     updateHandlePosition();
   }
-  updateActiveFloating();
 }
 
 function onKeyDown(event) {
@@ -1707,7 +1733,6 @@ function onEditorSelectionUpdate() {
       };
       // 高亮跟随光标所在多栏（Decorations 机制，仅变化时 dispatch）
       syncColumnsHighlight(info.columnsPos);
-      updateActiveFloating();
       return;
     }
   }
@@ -1769,7 +1794,6 @@ function onChange(payload) {
   if (selectedTarget.value?.type === 'image') {
     nextTick(() => {
       updateHandlePosition();
-      updateActiveFloating();
     });
   }
 }
@@ -1913,200 +1937,10 @@ onBeforeUnmount(() => {
           @input="onSourceInput"
         ></textarea>
       </div>
-      <!-- 底部状态条与外链标注 -->
-      <div
-        class="flex flex-wrap items-center justify-between border-t border-border bg-muted/20 px-4 py-1.5 text-[11px] text-muted-foreground select-none"
-      >
-        <div class="flex items-center gap-3">
-          <span>字符数: {{ plainTextCount }}</span>
-          <span class="text-border">|</span>
-          <!-- 底部外链资源标注 -->
-          <div
-            v-if="externalAssetsCount > 0"
-            class="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-medium cursor-pointer hover:underline"
-            @click="openExternalModal"
-          >
-            <span class="inline-block size-1.5 rounded-full bg-amber-500 animate-pulse"></span>
-            <span>外链资源: {{ externalAssetsCount }} 项</span>
-            <span class="opacity-80">[查看与转存]</span>
-          </div>
-          <div v-else class="flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
-            <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-            <span>全站内资源 (安全)</span>
-          </div>
-
-          <!-- 当前光标所在排版块指示与快速跳出插行（已下线：Section 块体系移除，多栏/媒体统一走浮动工具条） -->
-        </div>
-
-        <div class="flex items-center gap-3">
-          <!-- 视口宽度调节 -->
-          <div class="hidden sm:flex items-center gap-1.5 text-[10px]">
-            <span class="opacity-75">编辑视口:</span>
-            <div class="inline-flex rounded-md border border-border bg-background p-0.5">
-              <button
-                type="button"
-                class="rounded px-1.5 py-0.5 font-medium transition-colors"
-                :class="editorCanvasWidth === 'auto' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
-                title="自适应跟随外部宽度"
-                @click="editorCanvasWidth = 'auto'"
-              >
-                自适应
-              </button>
-              <button
-                type="button"
-                class="rounded px-1.5 py-0.5 font-medium transition-colors"
-                :class="editorCanvasWidth === '677px' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
-                title="微信公众号标准宽 (677px)"
-                @click="editorCanvasWidth = '677px'"
-              >
-                公众号 (677px)
-              </button>
-              <button
-                type="button"
-                class="rounded px-1.5 py-0.5 font-medium transition-colors"
-                :class="editorCanvasWidth === '375px' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
-                title="手机端真实视口 (375px)"
-                @click="editorCanvasWidth = '375px'"
-              >
-                手机 (375px)
-              </button>
-            </div>
-          </div>
-          <span class="text-border hidden sm:inline">|</span>
-          <span class="hidden sm:inline opacity-75">免检域名: cdn-edp.hsdxchina.com</span>
-          <button
-            class="text-primary hover:underline"
-            type="button"
-            @click="openExternalModal"
-          >
-            管理外链
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <Teleport to="body">
-
-      <!-- 图片拖拽调宽手柄（仅在选中图片时显示于右下角） -->
-      <div
-        v-if="handleVisible && !isSourceMode"
-        class="app-editor-resize-handle"
-        :style="{
-          left: `${handleCoords.left}px`,
-          top: `${handleCoords.top}px`,
-        }"
-        contenteditable="false"
-        title="拖拽调整宽度"
-        @mousedown.prevent="onHandleMouseDown"
-      ></div>
-
-      <!-- 全局预览模态弹窗 -->
-      <div
-        v-if="isPreviewModalOpen"
-        class="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 backdrop-blur-xs p-2 sm:p-4"
-        @click.self="closePreviewModal"
-      >
-        <div
-          class="flex h-full max-h-[92vh] w-full max-w-5xl flex-col rounded-xl border border-border bg-card shadow-2xl overflow-hidden"
-        >
-          <!-- 预览顶栏：设备切换 -->
-          <div
-            class="flex items-center justify-between border-b border-border bg-muted/40 px-4 py-2.5"
-          >
-            <div class="flex items-center gap-2">
-              <span class="text-sm font-semibold text-foreground">文档排版预览</span>
-              <span class="text-xs text-muted-foreground hidden md:inline">（多端视口仿真）</span>
-            </div>
-
-            <!-- 设备视口切换按钮组 -->
-            <div class="flex items-center gap-1 rounded-lg border border-border/80 bg-background/80 p-0.5 text-xs shadow-xs">
-              <button
-                class="flex items-center gap-1.5 rounded-md px-3 py-1 font-medium transition-colors"
-                :class="previewDevice === 'mobile' ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'"
-                type="button"
-                title="手机端真实视口 (375px)"
-                @click="previewDevice = 'mobile'"
-              >
-                <span>📱 手机 (375px)</span>
-              </button>
-              <button
-                class="flex items-center gap-1.5 rounded-md px-3 py-1 font-medium transition-colors"
-                :class="previewDevice === 'wechat' ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'"
-                type="button"
-                title="微信公众号官方标准宽度 (677px)"
-                @click="previewDevice = 'wechat'"
-              >
-                <span>📰 公众号 (677px)</span>
-              </button>
-              <button
-                class="flex items-center gap-1.5 rounded-md px-3 py-1 font-medium transition-colors"
-                :class="previewDevice === 'full' ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'"
-                type="button"
-                title="PC/大屏 100% 自适应流式宽度"
-                @click="previewDevice = 'full'"
-              >
-                <span>💻 宽屏大屏 (100%)</span>
-              </button>
-            </div>
-
-            <button
-              class="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-              title="关闭预览"
-              type="button"
-              @click="closePreviewModal"
-            >
-              <svg
-                class="size-4"
-                fill="none"
-                stroke="currentColor"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                viewBox="0 0 24 24"
-              >
-                <line x1="18" x2="6" y1="6" y2="18" />
-                <line x1="6" x2="18" y1="6" y2="18" />
-              </svg>
-            </button>
-          </div>
-
-          <!-- 预览内容展示区 -->
-          <div class="flex-1 overflow-y-auto bg-muted/20 p-4 sm:p-6 flex justify-center items-start">
-            <div
-              class="w-full transition-all duration-300"
-              :class="{
-                'max-w-[375px] bg-card rounded-[2.5rem] shadow-2xl border-[6px] border-slate-800 p-5 min-h-[667px]': previewDevice === 'mobile',
-                'max-w-[677px] bg-card rounded-xl shadow-xl border border-border p-6 sm:p-8 min-h-[500px]': previewDevice === 'wechat',
-                'max-w-full bg-card rounded-xl border border-border p-6 min-h-[500px]': previewDevice === 'full',
-              }"
-            >
-              <!-- 手机顶栏装饰 -->
-              <div v-if="previewDevice === 'mobile'" class="flex justify-between items-center text-[10px] text-muted-foreground pb-3 mb-3 border-b border-border/50 select-none">
-                <span>9:41</span>
-                <span class="size-2 rounded-full bg-slate-400"></span>
-                <span>100%</span>
-              </div>
-              <div
-                class="vben-tiptap-content"
-                v-html="content"
-              ></div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </Teleport>
-
-    <!-- 统一复合浮动工具条（支持多栏布局工具条与图片/视频工具条上下堆叠显示） -->
-    <FloatingToolbar
-      v-if="(selectedColumnsTarget || selectedTarget) && !isSourceMode"
-      ref="compoundFloatingRef"
-      :visible="true"
-      :target="selectedTarget?.el || selectedColumnsTarget?.el"
-      placement="right"
-      :editor="editorInstance"
-      @close="clearAllSelection"
+    <!-- 底部固定 Dock 工具条：上下文模式（多栏/媒体）与全局模式（页面宽度/一键排版）互斥显示，永不遮挡菜单与正文 -->
+    <div
+      v-if="!isSourceMode"
+      class="app-editor-dock"
     >
       <!-- 上层卡片：多栏布局专用设置工具栏（只要处于多栏中即显示） -->
       <div
@@ -2469,6 +2303,14 @@ onBeforeUnmount(() => {
       >
         <div class="app-editor-floating__header">
           <span class="app-editor-tag">图片</span>
+          <button
+            class="text-[11px] text-muted-foreground hover:text-foreground px-1"
+            title="取消图片选中"
+            type="button"
+            @click="clearSelection"
+          >
+            ✕
+          </button>
         </div>
         <div class="app-editor-floating__actions">
           <!-- 换图 -->
@@ -2684,6 +2526,14 @@ onBeforeUnmount(() => {
       >
         <div class="app-editor-floating__header">
           <span class="app-editor-tag bg-indigo-500/10 text-indigo-600 border-indigo-200">视频</span>
+          <button
+            class="text-[11px] text-muted-foreground hover:text-foreground px-1"
+            title="取消视频选中"
+            type="button"
+            @click="clearSelection"
+          >
+            ✕
+          </button>
         </div>
         <div class="app-editor-floating__actions">
           <!-- 1. 播放 / 暂停 -->
@@ -2967,7 +2817,250 @@ onBeforeUnmount(() => {
         </div>
         </div>
       </div>
-    </FloatingToolbar>
+      <!-- 全局模式：未选中任何节点时的文档级调整 -->
+      <div
+        v-if="!selectedColumnsTarget && !selectedTarget"
+        class="app-editor-floating__toolbar app-editor-global-toolbar"
+      >
+        <div class="app-editor-floating__header">
+          <span class="app-editor-tag">页面设置</span>
+          <span class="text-[10px] text-muted-foreground">未选中节点时显示</span>
+        </div>
+
+        <div class="app-editor-floating__actions">
+          <span class="app-editor-panel-title">页面宽度</span>
+          <div class="inline-flex rounded-md border border-border bg-background p-0.5">
+            <button
+              type="button"
+              class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
+              :class="editorCanvasWidth === 'auto' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+              title="自适应跟随外部宽度"
+              @click="editorCanvasWidth = 'auto'"
+            >
+              自适应
+            </button>
+            <button
+              type="button"
+              class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
+              :class="editorCanvasWidth === '677px' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+              title="微信公众号标准宽 (677px)"
+              @click="editorCanvasWidth = '677px'"
+            >
+              公众号 (677px)
+            </button>
+            <button
+              type="button"
+              class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
+              :class="editorCanvasWidth === '375px' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+              title="手机端真实视口 (375px)"
+              @click="editorCanvasWidth = '375px'"
+            >
+              手机 (375px)
+            </button>
+          </div>
+
+          <span class="app-editor-divider"></span>
+
+          <span class="app-editor-panel-title">一键排版</span>
+          <button
+            class="app-editor-btn app-editor-btn--pill"
+            :disabled="!isEditable"
+            title="全文设置为两端对齐（可撤销）"
+            type="button"
+            @click="justifyAllContent"
+          >
+            <span class="app-editor-btn-label">两端对齐</span>
+          </button>
+          <button
+            class="app-editor-btn app-editor-btn--pill"
+            :disabled="!isEditable"
+            title="全文行高统一为 1.75（可撤销）"
+            type="button"
+            @click="unifyAllLineHeight"
+          >
+            <span class="app-editor-btn-label">行高 1.75</span>
+          </button>
+          <button
+            class="app-editor-btn app-editor-btn--pill"
+            :disabled="!isEditable"
+            title="删除顶层多余空段落（至少保留一个块，可撤销）"
+            type="button"
+            @click="cleanEmptyParagraphsUi"
+          >
+            <span class="app-editor-btn-label">清除空段</span>
+          </button>
+
+          <span class="app-editor-divider"></span>
+
+          <button
+            class="app-editor-btn app-editor-btn--pill app-editor-copy-styles-btn"
+            :class="{ 'is-active': needsCustomStyles }"
+            :title="needsCustomStyles ? '文档使用了多栏布局，发布到自有站点前建议复制样式定义（公众号等终端可忽略）' : '复制输出样式定义（当前文档未使用多栏，可忽略）'"
+            type="button"
+            @click="copyContentStyles"
+          >
+            <span
+              v-if="needsCustomStyles"
+              class="inline-block size-1.5 rounded-full bg-primary animate-pulse shrink-0"
+            ></span>
+            <span class="app-editor-btn-label">复制样式</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+      <!-- 底部状态条与外链标注 -->
+      <div
+        class="flex flex-wrap items-center justify-between border-t border-border bg-muted/20 px-4 py-1.5 text-[11px] text-muted-foreground select-none"
+      >
+        <div class="flex items-center gap-3">
+          <span>字符数: {{ plainTextCount }}</span>
+          <span class="text-border">|</span>
+          <!-- 底部外链资源标注 -->
+          <div
+            v-if="externalAssetsCount > 0"
+            class="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-medium cursor-pointer hover:underline"
+            @click="openExternalModal"
+          >
+            <span class="inline-block size-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+            <span>外链资源: {{ externalAssetsCount }} 项</span>
+            <span class="opacity-80">[查看与转存]</span>
+          </div>
+          <div v-else class="flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+            <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+            <span>全站内资源 (安全)</span>
+          </div>
+
+          <!-- 当前光标所在排版块指示与快速跳出插行（已下线：Section 块体系移除，多栏/媒体统一走底部 Dock 工具条） -->
+        </div>
+
+        <div class="flex items-center gap-3">
+          <span class="hidden sm:inline opacity-75">免检域名: cdn-edp.hsdxchina.com</span>
+          <button
+            class="text-primary hover:underline"
+            type="button"
+            @click="openExternalModal"
+          >
+            管理外链
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <Teleport to="body">
+
+      <!-- 图片拖拽调宽手柄（仅在选中图片时显示于右下角） -->
+      <div
+        v-if="handleVisible && !isSourceMode"
+        class="app-editor-resize-handle"
+        :style="{
+          left: `${handleCoords.left}px`,
+          top: `${handleCoords.top}px`,
+        }"
+        contenteditable="false"
+        title="拖拽调整宽度"
+        @mousedown.prevent="onHandleMouseDown"
+      ></div>
+
+      <!-- 全局预览模态弹窗 -->
+      <div
+        v-if="isPreviewModalOpen"
+        class="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 backdrop-blur-xs p-2 sm:p-4"
+        @click.self="closePreviewModal"
+      >
+        <div
+          class="flex h-full max-h-[92vh] w-full max-w-5xl flex-col rounded-xl border border-border bg-card shadow-2xl overflow-hidden"
+        >
+          <!-- 预览顶栏：设备切换 -->
+          <div
+            class="flex items-center justify-between border-b border-border bg-muted/40 px-4 py-2.5"
+          >
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-semibold text-foreground">文档排版预览</span>
+              <span class="text-xs text-muted-foreground hidden md:inline">（多端视口仿真）</span>
+            </div>
+
+            <!-- 设备视口切换按钮组 -->
+            <div class="flex items-center gap-1 rounded-lg border border-border/80 bg-background/80 p-0.5 text-xs shadow-xs">
+              <button
+                class="flex items-center gap-1.5 rounded-md px-3 py-1 font-medium transition-colors"
+                :class="previewDevice === 'mobile' ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'"
+                type="button"
+                title="手机端真实视口 (375px)"
+                @click="previewDevice = 'mobile'"
+              >
+                <span>📱 手机 (375px)</span>
+              </button>
+              <button
+                class="flex items-center gap-1.5 rounded-md px-3 py-1 font-medium transition-colors"
+                :class="previewDevice === 'wechat' ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'"
+                type="button"
+                title="微信公众号官方标准宽度 (677px)"
+                @click="previewDevice = 'wechat'"
+              >
+                <span>📰 公众号 (677px)</span>
+              </button>
+              <button
+                class="flex items-center gap-1.5 rounded-md px-3 py-1 font-medium transition-colors"
+                :class="previewDevice === 'full' ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'"
+                type="button"
+                title="PC/大屏 100% 自适应流式宽度"
+                @click="previewDevice = 'full'"
+              >
+                <span>💻 宽屏大屏 (100%)</span>
+              </button>
+            </div>
+
+            <button
+              class="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+              title="关闭预览"
+              type="button"
+              @click="closePreviewModal"
+            >
+              <svg
+                class="size-4"
+                fill="none"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                viewBox="0 0 24 24"
+              >
+                <line x1="18" x2="6" y1="6" y2="18" />
+                <line x1="6" x2="18" y1="6" y2="18" />
+              </svg>
+            </button>
+          </div>
+
+          <!-- 预览内容展示区 -->
+          <div class="flex-1 overflow-y-auto bg-muted/20 p-4 sm:p-6 flex justify-center items-start">
+            <div
+              class="w-full transition-all duration-300"
+              :class="{
+                'max-w-[375px] bg-card rounded-[2.5rem] shadow-2xl border-[6px] border-slate-800 p-5 min-h-[667px]': previewDevice === 'mobile',
+                'max-w-[677px] bg-card rounded-xl shadow-xl border border-border p-6 sm:p-8 min-h-[500px]': previewDevice === 'wechat',
+                'max-w-full bg-card rounded-xl border border-border p-6 min-h-[500px]': previewDevice === 'full',
+              }"
+            >
+              <!-- 手机顶栏装饰 -->
+              <div v-if="previewDevice === 'mobile'" class="flex justify-between items-center text-[10px] text-muted-foreground pb-3 mb-3 border-b border-border/50 select-none">
+                <span>9:41</span>
+                <span class="size-2 rounded-full bg-slate-400"></span>
+                <span>100%</span>
+              </div>
+              <div
+                class="vben-tiptap-content"
+                v-html="content"
+              ></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+
 
     <!-- 换图用媒体库弹窗 -->
     <MediaLibraryModal
@@ -3099,17 +3192,16 @@ onBeforeUnmount(() => {
   border-radius: 8px;
 }
 
-/* 选中图片高亮外框 */
+/* 选中图片高亮外框（内收描边：满宽图片也不被内容区裁剪） */
 .vben-tiptap-content img.app-editor-image--selected {
   outline: 2px solid hsl(var(--primary)) !important;
-  outline-offset: 2px !important;
+  outline-offset: -2px !important;
 }
 
-/* 选中视频高亮外框 */
+/* 选中视频高亮外框（内收描边，跟随视频自身圆角） */
 .vben-tiptap-content video.app-editor-video--selected {
   outline: 2px solid hsl(var(--primary)) !important;
-  outline-offset: 2px !important;
-  box-shadow: 0 0 0 4px hsla(var(--primary) / 0.25) !important;
+  outline-offset: -2px !important;
 }
 
 /* 编辑模式下视频悬停指示 */
@@ -3227,10 +3319,12 @@ onBeforeUnmount(() => {
   border-left: 1px solid hsl(var(--primary));
 }
 
-/* 编辑器多栏选中外框指示 */
+/* 编辑器多栏选中指示：内收描边（满宽不被内容区裁剪）+ 圆角 + 淡底 */
 .app-editor-wrapper .cms-columns.app-editor-columns--selected {
-  outline: 1.5px solid hsl(var(--primary));
-  outline-offset: 2px;
+  outline: 2px solid hsl(var(--primary) / 85%);
+  outline-offset: -2px;
+  background-color: hsl(var(--primary) / 5%);
+  border-radius: 10px;
 }
 
 /* 移动端 768px 自适应响应式（支持默认堆叠与保持并排两档模式） */
@@ -3265,5 +3359,278 @@ onBeforeUnmount(() => {
 
 .app-editor-wrapper.viewport--375px .cms-columns--keep {
   flex-direction: row !important;
+}
+
+/* 公用浮动工具弹层（挂载在 body 顶层，全编辑器通用） */
+
+.app-editor-floating__toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 18%);
+}
+
+.app-editor-floating__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding-bottom: 4px;
+  border-bottom: 1px solid hsl(var(--border) / 60%);
+  gap: 8px;
+}
+
+.app-editor-tag {
+  font-size: 11px;
+  font-weight: 600;
+  color: hsl(var(--primary));
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  letter-spacing: 0.5px;
+}
+
+.app-editor-tag-badge {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: hsl(var(--primary) / 12%);
+  color: hsl(var(--primary));
+}
+
+
+
+.app-editor-floating__actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.app-editor-floating__panels {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+/* 公用工具条按钮规范 */
+.app-editor-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  min-width: 28px;
+  padding: 0 6px;
+  color: hsl(var(--foreground));
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  transition: all 0.15s ease;
+}
+
+.app-editor-btn--pill {
+  gap: 4px;
+  padding: 0 8px;
+}
+
+.app-editor-btn-label {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.app-editor-btn-text {
+  font-size: 11px;
+  margin-left: 2px;
+  white-space: nowrap;
+}
+
+.app-editor-btn:hover {
+  background: hsl(var(--accent));
+}
+
+.app-editor-btn.is-active {
+  color: hsl(var(--primary));
+  background: hsl(var(--primary) / 15%);
+}
+
+/* 删除按钮：使用垃圾桶图标（Trash2），带危险提示红底色 */
+.app-editor-btn--danger:hover {
+  color: hsl(var(--destructive));
+  background: hsl(var(--destructive) / 15%);
+}
+
+.app-editor-divider {
+  width: 1px;
+  height: 16px;
+  margin: 0 2px;
+  background: hsl(var(--border));
+}
+
+/* 二级调节弹层规范 */
+.app-editor-panel {
+  margin-top: 4px;
+  padding: 10px;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 200px;
+}
+
+.app-editor-panel-title {
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+  font-weight: 500;
+}
+
+.app-editor-presets {
+  display: flex;
+  gap: 4px;
+}
+
+.app-editor-preset-btn {
+  flex: 1;
+  padding: 4px 6px;
+  font-size: 11px;
+  border-radius: 4px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--secondary) / 50%);
+  color: hsl(var(--foreground));
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+  text-align: center;
+}
+
+.app-editor-preset-btn:hover {
+  background: hsl(var(--accent));
+}
+
+.app-editor-preset-btn.is-active {
+  background: hsl(var(--primary));
+  color: #ffffff;
+  border-color: hsl(var(--primary));
+  font-weight: 500;
+}
+
+.app-editor-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-editor-slider {
+  flex: 1;
+  accent-color: hsl(var(--primary));
+}
+
+.app-editor-pct {
+  min-width: 34px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: hsl(var(--muted-foreground));
+  text-align: right;
+}
+
+.app-editor-align-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.app-editor-align-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: hsl(var(--foreground));
+  cursor: pointer;
+  font-size: 12px;
+  width: 100%;
+  text-align: left;
+  transition: all 0.15s ease;
+}
+
+.app-editor-align-item:hover {
+  background: hsl(var(--accent));
+}
+
+.app-editor-align-item.is-active {
+  background: hsl(var(--primary) / 15%);
+  color: hsl(var(--primary));
+  font-weight: 500;
+}
+
+/* ---------------------------------------------------------------------------
+ * 底部固定 Dock 工具条（替代 Teleport 浮动定位：永不遮挡菜单与正文）
+ * 与下方状态条同底、无缝集成为一整块页脚面板：卡片去卡片化，
+ * 整宽行 + 发丝线分隔，二级面板同样拍平。
+ * --------------------------------------------------------------------------- */
+.app-editor-dock {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 0;
+  border-top: 1px solid hsl(var(--border));
+  background: hsl(var(--muted) / 20%);
+  user-select: none;
+}
+
+/* 卡片在 dock 内去卡片化：透明底、无边框、无阴影、无圆角 */
+.app-editor-dock > .app-editor-floating__toolbar {
+  background: transparent;
+  border: none;
+  padding: 6px 12px 8px;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* 行与行之间发丝线分隔 */
+.app-editor-dock > .app-editor-floating__toolbar + .app-editor-floating__toolbar {
+  border-top: 1px solid hsl(var(--border) / 60%);
+}
+
+/* 标题行与操作行收紧为一组，去掉卡片式下划线 */
+.app-editor-dock .app-editor-floating__header {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+/* 窄屏自动换行 */
+.app-editor-dock .app-editor-floating__actions {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+/* 二级面板同样拍平：透明底、无边框、无阴影，虚线上分隔 */
+.app-editor-dock .app-editor-panel {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 6px 0 2px;
+  box-shadow: none;
+  min-width: 0;
+  margin-top: 6px;
+  border-top: 1px dashed hsl(var(--border) / 70%);
+}
+
+.app-editor-global-toolbar {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 </style>
