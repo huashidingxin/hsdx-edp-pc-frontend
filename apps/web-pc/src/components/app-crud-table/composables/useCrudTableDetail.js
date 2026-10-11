@@ -128,8 +128,12 @@ export function useCrudTableDetail(props, ctx, callbacks) {
       // 编辑/查看：优先用行数据填充，立即打开弹窗，后台加载详情更新
       modelValue.value = formApi.flattenDotFieldValues(rowData);
       await openOverlay(resolved, id, isEdit);
-      // 后台加载详情并更新（用 refreshing 而非 loading，不阻塞表单显示）
-      loadDetail(id, { silent: true }).catch(() => {});
+      // 后台加载详情并更新（用 refreshing 而非 loading，不阻塞表单显示）。
+      // 失败必须提示：否则表单停留在残缺的行快照上（标题有、body 等重字段缺失），
+      // 用户会误以为数据丢失且无从排查。
+      loadDetail(id, { silent: true }).catch(() => {
+        message.warning('详情刷新失败，当前显示列表快照数据，请检查网络后重试');
+      });
       return;
     } else {
       // 编辑/查看：无行数据，等待加载详情后再打开
