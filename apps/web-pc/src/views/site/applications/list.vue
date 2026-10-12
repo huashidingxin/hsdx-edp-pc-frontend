@@ -38,6 +38,9 @@ import SettingsIndex from '../../config/settings/index.vue';
 import UiStringsIndex from '../../config/ui-strings/index.vue';
 // 全景应用的场景/热点管理（同样是应用级接口，走 X-Application-Id）
 import PanoramaScenesList from '../../panorama/scenes/list.vue';
+// 公众号应用的图文同步与设置（仅应用类型=公众号时暴露入口）
+import WechatArticlesList from '../../wechat/articles/list.vue';
+import WechatSettingsIndex from '../../wechat/settings/index.vue';
 import PagesList from '../pages/list.vue';
 // 公共内容模块：也以抽屉打开，传入 appId 自动按应用过滤
 import ArticlesList from '../../content/articles/list.vue';
@@ -107,18 +110,35 @@ const settingLinks = [
   { key: 'settings', label: '站点设置' },
   { key: 'ui-strings', label: 'UI 词条' },
   { key: 'files', label: '媒体库' },
+  { key: 'wechat-articles', label: '图文同步' },
+  { key: 'wechat-settings', label: '公众号设置' },
 ];
 
-/** 全景应用没有页面/菜单/站点设置，只留媒体库（底图存在这里）。 */
-const PANORAMA_SETTING_KEYS = new Set(['files']);
+/**
+ * 各应用类型的「设置类入口」白名单。
+ *
+ * 全景没有页面/菜单/站点设置，只留媒体库（底图存在这里）；
+ * 公众号是独立渠道，只有图文同步与公众号设置，其余（页面/菜单/站点设置）
+ * 属于官网站点，对它没有意义。
+ */
+const SETTING_KEYS_BY_TYPE = {
+  // 公众号的「图文同步」是主入口，放在类型专属组里，这里只留设置
+  3: new Set(['wechat-settings']),
+  4: new Set(['files']),
+};
 function visibleSettingLinks(app) {
-  return app?.type === 4
-    ? settingLinks.filter((link) => PANORAMA_SETTING_KEYS.has(link.key))
-    : settingLinks;
+  const allowed = SETTING_KEYS_BY_TYPE[app?.type];
+  return allowed ? settingLinks.filter((link) => allowed.has(link.key)) : settingLinks;
 }
 
-/** 全景应用专属入口：场景列表 + 热点编辑器。 */
-const panoramaLinks = [{ key: 'panorama', label: '全景场景' }];
+/** 应用类型专属入口：全景→场景，公众号→图文同步。 */
+const typeLinks = {
+  3: [{ key: 'wechat-articles', label: '公众号图文' }],
+  4: [{ key: 'panorama', label: '全景场景' }],
+};
+function visibleTypeLinks(app) {
+  return typeLinks[app?.type] || [];
+}
 
 const moduleMap = {
   pages: { title: '页面管理', component: PagesList, width: 1080 },
@@ -127,6 +147,16 @@ const moduleMap = {
   'ui-strings': { title: 'UI 词条', component: UiStringsIndex, width: 920 },
   files: { title: '媒体库', component: FilesList, width: 1080 },
   panorama: { title: '全景场景', component: PanoramaScenesList, width: 1080 },
+  'wechat-articles': {
+    title: '公众号图文',
+    component: WechatArticlesList,
+    width: 1180,
+  },
+  'wechat-settings': {
+    title: '公众号设置',
+    component: WechatSettingsIndex,
+    width: 920,
+  },
   articles: { title: '文章管理', component: ArticlesList, width: 1080 },
   products: { title: '产品管理', component: ProductsList, width: 1080 },
   categories: { title: '分类管理', component: CategoriesList, width: 920 },
@@ -151,8 +181,16 @@ const currentAppStore = useCurrentAppStore();
 function enterWorkspace(app) {
   currentAppStore.selectApp(app.id);
   message.success(`已切换至应用工作区：${app.name}`);
-  // 全景应用没有「页面」，直接落到场景列表
-  router.push(app.type === 4 ? '/panorama/scenes' : '/site/pages');
+  // 全景/公众号都不是站点型应用，没有「页面」可落，直接进各自的专属模块
+  if (app.type === 4) {
+    router.push('/panorama/scenes');
+    return;
+  }
+  if (app.type === 3) {
+    openModule('wechat-articles', app);
+    return;
+  }
+  router.push('/site/pages');
 }
 
 function navigateModule(key, app) {
@@ -407,10 +445,12 @@ onMounted(async () => {
               {{ link.label }}
             </Button>
           </div>
-          <div v-if="app.type === 4" class="card-group">
-            <span class="group-label">全景</span>
+          <div v-if="visibleTypeLinks(app).length > 0" class="card-group">
+            <span class="group-label">
+              {{ app.type === 3 ? '公众号' : '全景' }}
+            </span>
             <Button
-              v-for="link in panoramaLinks"
+              v-for="link in visibleTypeLinks(app)"
               :key="link.key"
               size="small"
               type="link"

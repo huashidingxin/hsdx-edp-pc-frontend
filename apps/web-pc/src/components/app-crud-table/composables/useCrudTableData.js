@@ -290,14 +290,16 @@ export function useCrudTableData(props, ctx) {
   }
 
   /**
-   * 刷新列表
+   * 刷新列表（保持当前分页）
+   * 行内保存、发布、审核等「当前页数据变了」的场景应使用它。
    */
   function refresh() {
     handlePageData();
   }
 
   /**
-   * 重载列表
+   * 重载列表（回到第一页）
+   * 仅用于筛选/查询范围变化等「结果集已变」的场景。
    */
   function reload() {
     gridOptions.pagerConfig.currentPage = 1;

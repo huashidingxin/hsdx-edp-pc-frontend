@@ -57,6 +57,7 @@ import { useCrudTableDetail } from '../composables/useCrudTableDetail.js';
 
 function createDetail(model = {}, overrides = {}) {
   const emit = vi.fn();
+  const refresh = vi.fn();
   const reload = vi.fn();
   const uploadPendingFiles = vi.fn();
   const validate = vi.fn();
@@ -86,7 +87,7 @@ function createDetail(model = {}, overrides = {}) {
   const api = useCrudTableDetail(
     props,
     { emit },
-    { formApi, modelValue, reload, routeApi },
+    { formApi, modelValue, refresh, reload, routeApi },
   );
   return {
     api,
@@ -94,6 +95,7 @@ function createDetail(model = {}, overrides = {}) {
     formApi,
     modelValue,
     props,
+    refresh,
     reload,
     routeApi,
     uploadPendingFiles,
@@ -120,9 +122,58 @@ describe('useCrudTableDetail requests', () => {
       name: 'Inspection',
     });
     expect(detail.emit).toHaveBeenCalledWith('saved', { uuid: 'task-1' });
-    expect(detail.reload).toHaveBeenCalledOnce();
     expect(mocks.modalApi.close).toHaveBeenCalledOnce();
     expect(detail.api.saving.value).toBe(false);
+  });
+
+  it('refreshes the current page instead of reloading page 1 after save', async () => {
+    const detail = createDetail({ name: 'Updated', uuid: 'task-1' });
+    mocks.resource.update.mockResolvedValue({
+      name: 'Updated',
+      uuid: 'task-1',
+    });
+
+    await detail.api.submit();
+
+    expect(detail.refresh).toHaveBeenCalledOnce();
+    // reload 会把 pagerConfig.currentPage 重置为 1，保存后不能走这条路
+    expect(detail.reload).not.toHaveBeenCalled();
+  });
+
+  it('falls back to reload when no refresh callback is provided', async () => {
+    const emit = vi.fn();
+    const reload = vi.fn();
+    const modelValue = ref({ name: 'Inspection' });
+    const props = {
+      apiPrefix: '',
+      apiUrl: 'tasks',
+      detailFormat: (data) => data,
+      fields: [],
+      idKey: 'id',
+      openMode: { create: 'modal', detail: 'modal' },
+      saveFormat: (payload) => payload,
+    };
+    const api = useCrudTableDetail(props, { emit }, {
+      formApi: {
+        expandDotKeys: (payload) => payload,
+        flattenDotFieldValues: (payload) => payload,
+        formRef: ref(null),
+        uploadPendingFiles: vi.fn(),
+      },
+      modelValue,
+      reload,
+      routeApi: {
+        isNested: false,
+        listRoutePath: ref('/tasks'),
+        navigateToDetail: vi.fn(),
+        navigateToList: vi.fn(),
+      },
+    });
+    mocks.resource.store.mockResolvedValue({ id: 'task-9' });
+
+    await api.submit();
+
+    expect(reload).toHaveBeenCalledOnce();
   });
 
   it('updates through the unprefixed item endpoint', async () => {

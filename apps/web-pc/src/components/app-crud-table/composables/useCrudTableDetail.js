@@ -90,7 +90,14 @@ export function useCrudTableDetail(props, ctx, callbacks) {
   // 详情错误状态（page 模式）
   const detailError = ref(null);
 
-  const { formApi, routeApi, reload: reloadList, modelValue } = callbacks;
+  const {
+    formApi,
+    routeApi,
+    // refresh = 刷新当前页（保持分页）；reload = 重载并回到第一页
+    refresh: refreshList,
+    reload: reloadList,
+    modelValue,
+  } = callbacks;
 
   /**
    * 打开详情
@@ -308,8 +315,10 @@ export function useCrudTableDetail(props, ctx, callbacks) {
       ctx.emit('saved', savedData);
       ctx.emit('detailClose', 'saved');
 
-      // 7. 刷新列表
-      if (typeof reloadList === 'function') {
+      // 7. 刷新当前页（不能用 reload：那会把分页重置回第一页，用户保存后丢失所在页）
+      if (typeof refreshList === 'function') {
+        refreshList();
+      } else if (typeof reloadList === 'function') {
         reloadList();
       }
 

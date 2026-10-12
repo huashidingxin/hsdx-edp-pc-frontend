@@ -237,7 +237,7 @@ onMounted(async () => {
       showOverflow: false,
       columnConfig: { resizable: true },
     }"
-    :open-mode="{ create: 'modal', detail: 'modal' }"
+    :open-mode="{ create: 'drawer', detail: 'drawer' }"
     :form-attrs="{ layout: 'vertical', size: 'medium' }"
     :detail-format="cf.detailFormat"
     :save-format="cf.saveFormat"
