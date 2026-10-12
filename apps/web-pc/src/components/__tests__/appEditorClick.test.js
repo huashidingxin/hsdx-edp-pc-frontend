@@ -372,6 +372,47 @@ describe('app-editor 元素检查器', () => {
     }
   }, 60000);
 
+  it('wrapper 留白点击：不再被当 chrome 清掉，光标兜底选中', async () => {
+    const wrapper = await mountInspector('<p>首段文字</p>');
+    try {
+      await settle();
+      await waitForEditorReady();
+
+      // 点内容区 wrapper 的留白（p-4 内边距，非内容节点本身）
+      const contentEl = wrapper.find('.vben-tiptap-content').element;
+      const paddingHost = contentEl.parentElement;
+      expect(paddingHost.classList.contains('vben-tiptap-content')).toBe(false);
+      paddingHost.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      paddingHost.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      await settle();
+
+      // 不得被清空：至少选中了光标处的块（happy-dom 下为首段）
+      expect(wrapper.find('.app-editor-inspector-toolbar').exists()).toBe(true);
+    } finally {
+      wrapper.unmount();
+    }
+  }, 60000);
+
+  it('状态条点击：不触动已有选中', async () => {
+    const wrapper = await mountInspector();
+    try {
+      await settle();
+      await waitForEditorReady();
+
+      await clickInspect(wrapper, '.vben-tiptap-content > p');
+      expect(wrapper.find('.app-editor-inspector-toolbar').exists()).toBe(true);
+
+      // 点状态条（chrome）：选中保持，不清理
+      const statusBtn = wrapper.find('.app-editor-statusbar button');
+      expect(statusBtn.exists()).toBe(true);
+      await statusBtn.trigger('click');
+      await settle();
+      expect(wrapper.find('.app-editor-inspector-toolbar').exists()).toBe(true);
+    } finally {
+      wrapper.unmount();
+    }
+  }, 60000);
+
   it('单节点元素可点选：hr', async () => {
     const wrapper = await mountInspector('<p>上</p><hr><p>下</p>');
     try {
@@ -491,6 +532,54 @@ describe('app-editor 元素检查器', () => {
       await img.trigger('click');
       await settle();
       expect(wrapper.find('.app-editor-image-toolbar').exists()).toBe(true);
+    } finally {
+      wrapper.unmount();
+    }
+  }, 60000);
+
+  it('盒模型色块仅悬浮显示：移入出现，移出消失', async () => {
+    const wrapper = await mountInspector(
+      '<p style="margin-top: 10px; padding-left: 8px;">悬浮段落</p>',
+    );
+    try {
+      await settle();
+      await waitForEditorReady();
+
+      const p = wrapper.find('.vben-tiptap-content > p');
+      // happy-dom 无布局，mock 出真实盒子
+      const FAKE_RECT = {
+        left: 100, top: 200, width: 300, height: 40,
+        right: 400, bottom: 240, x: 100, y: 200,
+        toJSON() { return this; },
+      };
+      p.element.getBoundingClientRect = () => ({ ...FAKE_RECT });
+      await p.trigger('click');
+      await settle();
+
+      // 选中但未悬浮：无色块（虚线框由 decoration 负责，此处只断言 overlay）
+      expect(document.body.querySelector('.app-editor-boxoverlay')).toBeNull();
+
+    // 移入元素：色块出现，且 margin/padding 分区尺寸正确
+    //（非冒泡，直达容器监听，避免 happy-dom 里表格库全局监听被零布局炸到）
+    wrapper.element.dispatchEvent(
+      new MouseEvent('mousemove', { bubbles: false, clientX: 150, clientY: 210 }),
+    );
+    await settle();
+      const overlay = document.body.querySelector('.app-editor-boxoverlay');
+      expect(overlay).not.toBeNull();
+      const marginLayer = overlay.querySelector('.app-editor-boxoverlay__margin');
+      // margin-top 10px：上沿 = 200 - 10
+      expect(marginLayer.style.top).toBe('190px');
+      const contentLayer = overlay.querySelector('.app-editor-boxoverlay__content');
+      // padding-left 8px：左沿 = 100 + 8
+      expect(contentLayer.style.left).toBe('108px');
+
+    // 移出元素：色块消失
+    wrapper.element.dispatchEvent(
+      new MouseEvent('mouseleave', { bubbles: false, clientX: 5, clientY: 5 }),
+    );
+    await settle();
+      expect(document.body.querySelector('.app-editor-boxoverlay')).toBeNull();
     } finally {
       wrapper.unmount();
     }

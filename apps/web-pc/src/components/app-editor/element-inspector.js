@@ -126,6 +126,61 @@ export function parsePx(value) {
   return m ? Number(m[1]) : null;
 }
 
+/** px 数值解析（overlay 用，非 px 一律按 0 计，不误导） */
+function pxOrZero(value) {
+  const m = String(value || '').trim().match(/^(-?\d+(?:\.\d+)?)px$/i);
+  return m ? Math.max(0, Number(m[1])) : 0;
+}
+
+/**
+ * 盒模型 overlay 矩形计算（纯函数，可单测）。
+ * @param {{ left: number, top: number, width: number, height: number }} borderRect
+ *   目标元素的 border-box（即 getBoundingClientRect）
+ * @param {string} style 内联 style（margin/padding 含速写展开）
+ * @returns {{ margin, padding, content } | null} 各层 { left, top, width, height }，
+ *   rect 为空时返回 null（调用方隐藏 overlay）
+ *
+ * 图层语义（对齐浏览器 devtools 配色）：
+ * - margin 层：border-box 向外扩 margin，全橙色；
+ * - padding 层：border-box 本体，绿色（忽略 border 本身 0~1px 误差）；
+ * - content 层：缩进 padding，蓝色。
+ */
+export function computeBoxOverlay(borderRect, style) {
+  if (
+    !borderRect ||
+    !(borderRect.width > 0) ||
+    !(borderRect.height > 0)
+  ) {
+    return null;
+  }
+  const margin = expandBoxSides(style, 'margin');
+  const padding = expandBoxSides(style, 'padding');
+  const mt = pxOrZero(margin.top);
+  const mr = pxOrZero(margin.right);
+  const mb = pxOrZero(margin.bottom);
+  const ml = pxOrZero(margin.left);
+  const pt = pxOrZero(padding.top);
+  const pr = pxOrZero(padding.right);
+  const pb = pxOrZero(padding.bottom);
+  const pl = pxOrZero(padding.left);
+  const { left, top, width, height } = borderRect;
+  return {
+    margin: {
+      left: left - ml,
+      top: top - mt,
+      width: width + ml + mr,
+      height: height + mt + mb,
+    },
+    padding: { left, top, width, height },
+    content: {
+      left: left + pl,
+      top: top + pt,
+      width: Math.max(0, width - pl - pr),
+      height: Math.max(0, height - pt - pb),
+    },
+  };
+}
+
 /**
  * 盒模型速写展开：longhand 优先，其次解析 margin/padding 1~4 值速写。
  * @returns {{ top: string, right: string, bottom: string, left: string }} 原始值或 ''

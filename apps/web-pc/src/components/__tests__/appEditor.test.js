@@ -1102,3 +1102,30 @@ describe('app-editor 特效与父容器选中验证', () => {
     editor.destroy();
   });
 });
+
+describe('app-editor 盒模型 overlay 计算', () => {
+  it('三层矩形按边距展开、无样式归零、空矩形返回 null', async () => {
+    const { computeBoxOverlay } = await import('../app-editor/element-inspector.js');
+    const rect = { left: 100, top: 200, width: 300, height: 60 };
+
+    // 无样式：三层重合
+    const plain = computeBoxOverlay(rect, '');
+    expect(plain.margin).toEqual({ left: 100, top: 200, width: 300, height: 60 });
+    expect(plain.padding).toEqual({ left: 100, top: 200, width: 300, height: 60 });
+    expect(plain.content).toEqual({ left: 100, top: 200, width: 300, height: 60 });
+
+    // 边距展开（含速写）
+    const styled = computeBoxOverlay(rect, 'margin: 10px 20px; padding-top: 5px;');
+    expect(styled.margin).toEqual({ left: 80, top: 190, width: 340, height: 80 });
+    expect(styled.content).toEqual({ left: 100, top: 205, width: 300, height: 55 });
+
+    // 非 px 单位按 0 计，不误导
+    const em = computeBoxOverlay(rect, 'margin-top: 2em; padding-left: 10%;');
+    expect(em.margin).toEqual({ left: 100, top: 200, width: 300, height: 60 });
+    expect(em.content).toEqual({ left: 100, top: 200, width: 300, height: 60 });
+
+    // 空矩形返回 null（调用方隐藏）
+    expect(computeBoxOverlay({ left: 0, top: 0, width: 0, height: 0 }, '')).toBeNull();
+    expect(computeBoxOverlay(null, '')).toBeNull();
+  });
+});

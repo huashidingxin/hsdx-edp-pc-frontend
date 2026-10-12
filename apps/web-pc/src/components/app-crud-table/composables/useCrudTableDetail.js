@@ -1,4 +1,4 @@
-import { nextTick, ref } from 'vue';
+import { nextTick, provide, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { useVbenDrawer, useVbenModal } from '@vben/common-ui';
@@ -9,6 +9,14 @@ import { message } from 'antdv-next';
 import Resource from '#/api/resource';
 
 import { buildApiUrl } from '../utils/api-url.js';
+
+/**
+ * 详情同步通道（provide/inject）：让详情表单内部（如 LocaleTabsEditor）
+ * 也能触发“后台重新加载当前记录”，而不需要知道 API 细节。
+ * 用法：const detailSync = inject(DETAIL_SYNC_KEY, null);
+ *   detailSync?.reload() -> Promise<boolean>（成功返回 true）。
+ */
+export const DETAIL_SYNC_KEY = 'appCrudDetailSync';
 
 /**
  * OpenMode 解析（确定性映射）
@@ -80,6 +88,8 @@ export function useCrudTableDetail(props, ctx, callbacks) {
   const refreshing = ref(false);
   const saving = ref(false);
   const openType = ref('modal');
+  // 当前打开的记录 ID（新增/关闭时为 null，供详情内重载使用）
+  const detailId = ref(null);
 
   // 审核相关
   const auditDialog = ref(false);
@@ -128,11 +138,13 @@ export function useCrudTableDetail(props, ctx, callbacks) {
 
     if (id === null) {
       // 新增：构建默认值（支持传入 rowData 作为复制/预填来源）
+      detailId.value = null;
       modelValue.value = buildDefaultItem(
         rowData ? formApi.flattenDotFieldValues(rowData) : null,
       );
     } else if (rowData) {
       // 编辑/查看：优先用行数据填充，立即打开弹窗，后台加载详情更新
+      detailId.value = id;
       modelValue.value = formApi.flattenDotFieldValues(rowData);
       await openOverlay(resolved, id, isEdit);
       // 后台加载详情并更新（用 refreshing 而非 loading，不阻塞表单显示）。
@@ -144,6 +156,7 @@ export function useCrudTableDetail(props, ctx, callbacks) {
       return;
     } else {
       // 编辑/查看：无行数据，等待加载详情后再打开
+      detailId.value = id;
       const loadSuccess = await loadDetail(id);
       // 如果加载失败，不打开弹窗
       if (!loadSuccess) {
@@ -181,6 +194,7 @@ export function useCrudTableDetail(props, ctx, callbacks) {
    */
   async function closeDetail(reason = 'cancel') {
     ctx.emit('detailClose', reason);
+    detailId.value = null;
 
     if (reason === 'cancel') {
       modelValue.value = {};
@@ -261,6 +275,20 @@ export function useCrudTableDetail(props, ctx, callbacks) {
       }
     }
   }
+
+  /**
+   * 详情内手动重载当前记录（非静默：loading 骨架 + 失败 toast）。
+   * 调用方（如 LocaleTabsEditor）在成功后自行把新 locales 强合并进表单，
+   * 因为常规合并只补空字段，刷新已填字段必须绕过。
+   * @returns {boolean} 是否加载成功
+   */
+  async function reloadDetail() {
+    if (detailId.value === null || detailId.value === undefined) return false;
+    return await loadDetail(detailId.value);
+  }
+
+  // 详情同步通道：详情表单内部按需重载（provide 必须在 setup 同步阶段调用）
+  provide(DETAIL_SYNC_KEY, { reloadDetail });
 
   /**
    * 提交表单
@@ -504,6 +532,7 @@ export function useCrudTableDetail(props, ctx, callbacks) {
     openDetail,
     closeDetail,
     loadDetail,
+    reloadDetail,
     submit,
     buildDefaultItem,
     audit,

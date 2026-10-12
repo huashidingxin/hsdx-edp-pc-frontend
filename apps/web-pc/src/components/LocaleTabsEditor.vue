@@ -12,12 +12,13 @@
  *
  * 标签名精简：仅显示 native_label（如「中文」「English」），hover/aria 显示 code。
  */
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, inject, nextTick, onMounted, reactive, ref, watch } from 'vue';
 
-import { Button, Empty, Input, Select, Spin, Tabs } from 'antdv-next';
+import { Button, Empty, Input, message, Modal, Select, Spin, Tabs } from 'antdv-next';
 
 import { requestClient } from '#/api/request';
 import AppUpload from '#/components/AppUpload.vue';
+import { DETAIL_SYNC_KEY } from '#/components/app-crud-table/composables/useCrudTableDetail.js';
 
 import AppEditor from './app-editor/index.vue';
 
@@ -41,6 +42,17 @@ const contentMap = reactive({});
 const forms = reactive({});
 const dirty = reactive({});
 const uploadRefs = reactive({});
+
+/**
+ * 每个语种「最近一次回填后的表单指纹」+ 最近一次上抛的 payload 指纹。
+ *
+ * 脏标记不能按「子组件触发过 update:modelValue」来记：AppEditor 这类受控子组件
+ * 收到新的 modelValue 后会把同一个值原样回传（回声），于是刚打开详情就被标成
+ * 「未保存」，之后所有远端更新都会被脏保护挡掉。这里改成取值比较：
+ * 只有表单真的偏离「回填结果」才算用户改动。
+ */
+const appliedForms = reactive({});
+let lastEmittedPayload = null;
 
 const uploadTypes = ['file', 'image', 'video', 'audio'];
 function isUploadField(f) {
@@ -129,6 +141,13 @@ function fillForm(form, data) {
   const next = { ...data };
   for (const f of props.fields) {
     const v = data?.[f.field];
+    // 远端没给这个字段时保留表单现值。
+    // 一律按「缺席即空」回填会把已有内容抹掉：列表行快照与详情接口形状相同，
+    // 但快照仍可能残缺（或只有概览字段），用它覆盖等于把正文/参数清空。
+    if (v === undefined) {
+      next[f.field] = form[f.field];
+      continue;
+    }
     if (f.type === 'json') {
       next[f.field] = v ? JSON.stringify(v, null, 2) : '{}';
     } else if (f.type === 'pairs') {
@@ -136,7 +155,7 @@ function fillForm(form, data) {
       next[f.field] = Array.isArray(v)
         ? v.map((row) => ({ label: row?.label ?? '', value: row?.value ?? '' }))
         : [];
-    } else if (v !== undefined) {
+    } else {
       next[f.field] = v;
     }
   }
@@ -155,39 +174,84 @@ function ensureForm(locale) {
     const form = blankForm();
     fillForm(form, contentMap[locale] || {});
     forms[locale] = form;
+    markApplied(locale);
   }
   return forms[locale];
 }
 
-function isEmptyValue(v) {
-  if (Array.isArray(v)) return v.length === 0;
-  return v === undefined || v === null || v === '';
+/**
+ * 字段值的可比较形式（判断「表单是否偏离最近一次回填结果」用）。
+ *
+ * json 存的是格式化字符串、pairs 是行数组、上传字段是 { url, file } 数组，
+ * 都归一到稳定字符串再比；否则刚打开详情就会被判成「改过」。
+ */
+function canonicalFieldValue(f, value) {
+  if (f.type === 'pairs') {
+    return JSON.stringify(normalizePairRows(value));
+  }
+  if (f.type === 'json') {
+    if (
+      value === undefined ||
+      value === null ||
+      value === '' ||
+      value === '{}'
+    ) {
+      return '{}';
+    }
+    if (typeof value === 'string') {
+      try {
+        return JSON.stringify(JSON.parse(value));
+      } catch {
+        return value;
+      }
+    }
+    return JSON.stringify(value);
+  }
+  if (isUploadField(f)) {
+    // 含 File/blob 对象，只能按可序列化部分比较（blob URL 每个文件唯一）
+    return JSON.stringify(value ?? null);
+  }
+  return value === undefined || value === null ? '' : String(value);
 }
 
-/**
- * 新数据是否带来了当前表单还没有的字段值。
- *
- * 背景：AppCrudTable 打开详情时会先用列表行数据立即填表单，而列表接口的
- * locales 只有 title/slug 等概览字段（index 有意不序列化沉重的 body），
- * 详情接口随后才返回完整字段。若一律「只登记一次」，详情数据会被残缺的
- * 列表快照挡在门外，表现为除标题/Slug 外全部字段不回显。
- * 只有能补上表单空缺的新数据才值得覆盖；用户改动过的表单（dirty）绝不覆盖。
- */
-function isRicherThanForm(data, form) {
-  if (!form) return false;
-  return props.fields.some(
-    (f) => !isEmptyValue(data?.[f.field]) && isEmptyValue(form[f.field]),
+/** 表单指纹；null 表示该语种还没有表单 */
+function formFingerprint(code) {
+  const form = forms[code];
+  if (!form) return null;
+  return JSON.stringify(
+    props.fields.map((f) => canonicalFieldValue(f, form[f.field])),
   );
 }
 
+/** 记录「这次回填后的表单指纹」并把该语种标回干净 */
+function markApplied(code) {
+  const fingerprint = formFingerprint(code);
+  if (fingerprint === null) delete appliedForms[code];
+  else appliedForms[code] = fingerprint;
+  dirty[code] = false;
+}
+
+/** 表单是否偏离最近一次回填结果（= 用户真的改过） */
+function isFormDirty(code) {
+  if (!forms[code] || appliedForms[code] === undefined) return false;
+  return formFingerprint(code) !== appliedForms[code];
+}
+
+/**
+ * 合并远端 locales。
+ *
+ * 旧策略是「只补空字段」（新数据必须能填上表单里的空位才接受），本意是防止
+ * 列表行快照挡住详情数据。但列表接口与详情接口共用同一个 transform()，形状完全
+ * 一致（都含 body / custom_fields / seo_*），快照里已非空的字段永远不再被接受 ——
+ * 别的终端改了内容、重新打开详情也刷不进来，只有刷新浏览器才恢复。
+ * 现在改为「用户没改过的语种一律接受服务端最新值」，只保护真正有本地改动的语种。
+ */
 function mergeLocales(list) {
   const refreshed = new Set();
   for (const l of list || []) {
     const code = l?.locale || l?.code;
     if (!code) continue;
-    const canOverwrite =
-      contentMap[code] === undefined ||
-      (!dirty[code] && isRicherThanForm(l, forms[code]));
+    const canOverwrite = contentMap[code] === undefined || !dirty[code];
     if (!canOverwrite) continue;
     contentMap[code] = { ...l };
     if (forms[code]) refreshed.add(code);
@@ -198,6 +262,78 @@ function mergeLocales(list) {
 /** 上一次合并时的行 ID：检测行切换（与 props.rowId 的 watcher 无关，顺序无关） */
 let lastRowId = null;
 
+/** 清空全部内部状态（行切换与强制重载共用） */
+function resetAllState() {
+  for (const key of Object.keys(contentMap)) delete contentMap[key];
+  for (const key of Object.keys(forms)) delete forms[key];
+  for (const key of Object.keys(dirty)) delete dirty[key];
+  for (const key of Object.keys(uploadRefs)) delete uploadRefs[key];
+  for (const key of Object.keys(appliedForms)) delete appliedForms[key];
+  lastEmittedPayload = null;
+  activeCode.value = defaultLocale.value;
+}
+
+/**
+ * 把 contentMap 的最新远端内容回填到表单（并刷新脏基线）。
+ * refreshed 里的语种说明 contentMap 刚被覆盖，需要整份重刷；其余只需补齐表单。
+ */
+function applyMergedLocales(refreshed) {
+  for (const code of existingCodes.value) {
+    if (refreshed.has(code)) {
+      fillForm(forms[code], contentMap[code] || {});
+      markApplied(code);
+    } else {
+      ensureForm(code);
+    }
+  }
+}
+
+/**
+ * 强合并远端 locales（绕过 dirty 保护，用于用户明确点的重载）。
+ * 调用前请自行确认脏数据（requestReload 已处理）。
+ */
+function applyRemoteLocales(list) {
+  resetAllState();
+  ensureForm(defaultLocale.value);
+  applyMergedLocales(mergeLocales(list));
+  syncEmittedBaseline();
+}
+
+defineExpose({ applyRemoteLocales });
+
+/** 详情同步通道（AppCrudTable 提供，无则隐藏重载按钮） */
+const detailSync = inject(DETAIL_SYNC_KEY, null);
+const reloading = ref(false);
+
+function requestReload() {
+  if (!detailSync) return;
+  if (dirtyCount.value > 0) {
+    Modal.confirm({
+      title: '重新加载会丢弃未保存的修改',
+      content: `当前有 ${dirtyCount.value} 个语种未保存，继续吗？`,
+      okText: '重新加载',
+      cancelText: '取消',
+      onOk: () => doReload(),
+    });
+    return;
+  }
+  doReload();
+}
+
+async function doReload() {
+  if (!detailSync) return;
+  reloading.value = true;
+  try {
+    const ok = await detailSync.reload();
+    if (!ok) return;
+    await nextTick();
+    applyRemoteLocales(props.locales);
+    message.success('已更新到最新内容');
+  } finally {
+    reloading.value = false;
+  }
+}
+
 watch(
   () => props.locales,
   (list) => {
@@ -206,22 +342,11 @@ watch(
     // 所以不能把重置逻辑放在独立的 rowId watch 里。
     if (props.rowId !== lastRowId) {
       lastRowId = props.rowId;
-      for (const key of Object.keys(contentMap)) delete contentMap[key];
-      for (const key of Object.keys(forms)) delete forms[key];
-      for (const key of Object.keys(dirty)) delete dirty[key];
-      for (const key of Object.keys(uploadRefs)) delete uploadRefs[key];
-      activeCode.value = defaultLocale.value;
+      resetAllState();
       ensureForm(defaultLocale.value);
     }
-    const refreshed = mergeLocales(list);
-    for (const code of existingCodes.value) {
-      if (refreshed.has(code)) {
-        // contentMap 被更完整的数据覆盖过：重刷已存在的表单让详情字段回显
-        fillForm(forms[code], contentMap[code] || {});
-      } else {
-        ensureForm(code);
-      }
-    }
+    applyMergedLocales(mergeLocales(list));
+    syncEmittedBaseline();
   },
   { immediate: true, deep: true },
 );
@@ -301,10 +426,20 @@ function buildLocalesPayload() {
   return out;
 }
 
+/** 回填后同步「已上抛内容」指纹：子组件随即把同一个值回传，不该再上抛一轮 */
+function syncEmittedBaseline() {
+  lastEmittedPayload = JSON.stringify(buildLocalesPayload());
+}
+
 async function handleFieldChange(locale) {
-  dirty[locale] = true;
   await flushPendingUploads(locale);
   const payload = buildLocalesPayload();
+  const fingerprint = JSON.stringify(payload);
+  // 子组件把回填值原样回传（回声）：内容没变，既不上抛也不标脏。
+  // 少了这一步，刚打开详情就会被标成「未保存」，之后所有远端更新都会被挡掉。
+  if (fingerprint === lastEmittedPayload) return;
+  lastEmittedPayload = fingerprint;
+  dirty[locale] = isFormDirty(locale);
   emit('update:locales', payload);
   emit('changed', payload);
 }
@@ -386,6 +521,15 @@ onMounted(async () => {
       <span class="ml-auto text-xs text-gray-400">
         全部语种随页面底部「保存」一次性提交
       </span>
+      <Button
+        v-if="detailSync"
+        size="small"
+        :loading="reloading"
+        title="从服务端重新加载当前记录（覆盖本地未保存的修改前会确认）"
+        @click="requestReload"
+      >
+        重新加载
+      </Button>
     </div>
 
     <Tabs

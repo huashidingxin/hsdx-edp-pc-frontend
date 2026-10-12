@@ -5,6 +5,7 @@ import {
   onBeforeUnmount,
   onMounted,
   provide,
+  reactive,
   ref,
   watch,
 } from 'vue';
@@ -45,7 +46,9 @@ import {
 } from './dom-lookup';
 import EditorToolbar from './editor-toolbar.vue';
 import {
+  ancestorChain,
   buildCrumbChain,
+  computeBoxOverlay,
   deleteElement,
   DISPLAY_OPTIONS,
   duplicateElement,
@@ -1076,8 +1079,143 @@ function refreshElementCrumbs() {
   }
 }
 
-function applyElementSelection(found, el) {
-  selectedElementTarget.value = {
+// ---------------------------------------------------------------------------
+// 盒模型 overlay（devtools 配色：margin 橙 / padding 绿 / content 蓝）
+// 纯展示 fixed 层，pointer-events:none，不拦截任何点击
+// ---------------------------------------------------------------------------
+
+const boxOverlay = reactive({
+  visible: false,
+  margin: null,
+  padding: null,
+  content: null,
+});
+
+/** 是否悬浮在选中元素上（色块仅 hover 显示，平时只留虚线框） */
+const isHoveringSelected = ref(false);
+let hoverRaf = 0;
+
+function resolveHoverElement() {
+  const sel = selectedElementTarget.value;
+  const editor = editorInstance.value;
+  if (!sel || !editor) return null;
+  let el = sel.el && sel.el.isConnected ? sel.el : null;
+  if (!el) {
+    try {
+      const dom = editor.view.nodeDOM(sel.pos);
+      el = dom instanceof HTMLElement ? dom : null;
+    } catch {
+      el = null;
+    }
+  }
+  return el && el.isConnected ? el : null;
+}
+
+function onHoverMove(event) {
+  if (!selectedElementTarget.value || isSourceMode.value) {
+    if (isHoveringSelected.value) isHoveringSelected.value = false;
+    return;
+  }
+  if (hoverRaf) return;
+  const x = event.clientX;
+  const y = event.clientY;
+  hoverRaf = requestAnimationFrame(() => {
+    hoverRaf = 0;
+    if (!selectedElementTarget.value || isSourceMode.value) {
+      isHoveringSelected.value = false;
+      return;
+    }
+    const el = resolveHoverElement();
+    let inside = false;
+    if (el) {
+      try {
+        const rect = el.getBoundingClientRect();
+        inside =
+          rect.width > 0 &&
+          rect.height > 0 &&
+          x >= rect.left &&
+          x <= rect.right &&
+          y >= rect.top &&
+          y <= rect.bottom;
+      } catch {
+        inside = false;
+      }
+    }
+    if (isHoveringSelected.value !== inside) {
+      isHoveringSelected.value = inside;
+    }
+  });
+}
+
+function onHoverLeave() {
+  if (hoverRaf) {
+    cancelAnimationFrame(hoverRaf);
+    hoverRaf = 0;
+  }
+  if (isHoveringSelected.value) isHoveringSelected.value = false;
+}
+
+function boxLayerStyle(rect) {
+  if (!rect) return { display: 'none' };
+  return {
+    left: `${Math.round(rect.left)}px`,
+    top: `${Math.round(rect.top)}px`,
+    width: `${Math.max(0, Math.round(rect.width))}px`,
+    height: `${Math.max(0, Math.round(rect.height))}px`,
+  };
+}
+
+function refreshBoxOverlay() {
+  const sel = selectedElementTarget.value;
+  const editor = editorInstance.value;
+  if (!sel || !editor || isSourceMode.value) {
+    boxOverlay.visible = false;
+    return;
+  }
+  let el = sel.el && sel.el.isConnected ? sel.el : null;
+  if (!el) {
+    try {
+      const dom = editor.view.nodeDOM(sel.pos);
+      el = dom instanceof HTMLElement ? dom : null;
+    } catch {
+      el = null;
+    }
+  }
+  if (!el || !el.isConnected) {
+    boxOverlay.visible = false;
+    return;
+  }
+  let rect = null;
+  try {
+    rect = el.getBoundingClientRect();
+  } catch {
+    rect = null;
+  }
+  if (!rect || !(rect.width > 0) || !(rect.height > 0)) {
+    boxOverlay.visible = false;
+    return;
+  }
+  // 完全滚出视口则隐藏
+  if (rect.bottom < 0 || rect.top > window.innerHeight || rect.right < 0 || rect.left > window.innerWidth) {
+    boxOverlay.visible = false;
+    return;
+  }
+  let node = sel.node;
+  try {
+    node = editor.state.doc.nodeAt(sel.pos) ?? node;
+  } catch {}
+  const layers = computeBoxOverlay(rect, node?.attrs?.style || '');
+  if (!layers) {
+    boxOverlay.visible = false;
+    return;
+  }
+  boxOverlay.margin = layers.margin;
+  boxOverlay.padding = layers.padding;
+  boxOverlay.content = layers.content;
+  boxOverlay.visible = true;
+}
+
+function applyElementSelection(found, el) {  selectedElementTarget.value = {
     el: el || null,
     pos: found.pos,
     node: found.node,
@@ -1086,6 +1224,9 @@ function applyElementSelection(found, el) {
   loadElementForm(found.node);
   refreshElementCrumbs();
   syncElementHighlight(found.pos);
+  nextTick(() => {
+    refreshBoxOverlay();
+  });
 }
 
 /** 点击切换面包屑祖先 */
@@ -1100,6 +1241,8 @@ function selectElementAncestor(pos) {
 function clearElementSelection() {
   selectedElementTarget.value = null;
   elementCrumbs.value = [];
+  boxOverlay.visible = false;
+  isHoveringSelected.value = false;
   if (editorInstance.value) {
     try {
       const cur = appEditorSelectionKey.getState(editorInstance.value.state)?.elementPos;
@@ -1180,6 +1323,9 @@ function commitElementStyle(updates, removeKeys = []) {
     selectedElementTarget.value.node = editor.state.doc.nodeAt(pos);
     loadElementForm(selectedElementTarget.value.node);
     syncElementHighlight(pos);
+    nextTick(() => {
+      refreshBoxOverlay();
+    });
     return true;
   } catch {
     return false;
@@ -2639,7 +2785,11 @@ function onContentClick(event) {
     target.closest('.app-editor-resize-handle') ||
     target.closest('.app-editor-toolbar') ||
     // Dock 在编辑器根容器内部，其按钮点击不得视为“点空白处”清除选中
-    target.closest('.app-editor-dock')
+    target.closest('.app-editor-dock') ||
+    // 状态条 / 弹窗等 chrome 点击保持原样（不触动选中）
+    target.closest('.app-editor-statusbar') ||
+    target.closest('.ant-modal') ||
+    target.closest('.ant-popover')
   ) {
     return;
   }
@@ -2715,12 +2865,9 @@ function onContentClick(event) {
     return;
   }
 
-  // 5. 其他点击：编辑区 chrome（状态条等）保持清除；
-  //    内容区走检查器；DOM 无命中（如 margin 缝隙点到背后）则用 PM 光标兜底
-  if (!target.closest('.vben-tiptap-content')) {
-    clearAllSelection();
-    return;
-  }
+  // 5. 其他点击：先走 DOM 精确解析；无命中（如 margin 缝隙、wrapper 留白
+  //    点到背后元素）则用 PM 光标兜底——mousedown 已把光标放到最近合法处。
+  //    注意：状态条等 chrome 在上面已提前返回，不会走到这里。
   clearSelection();
   clearColumnsSelection();
   clearTableSelection();
@@ -2764,9 +2911,12 @@ function unbindEditorDOM() {
 }
 
 function onScrollOrResize() {
-  // Dock 固定在底部无需跟随定位，仅维护图片拖拽手柄位置
+  // Dock 固定在底部无需跟随定位，仅维护图片拖拽手柄与盒模型 overlay 位置
   if (['image', 'video'].includes(selectedTarget.value?.type)) {
     updateHandlePosition();
+  }
+  if (selectedElementTarget.value) {
+    refreshBoxOverlay();
   }
 }
 
@@ -3017,6 +3167,10 @@ onMounted(() => {
   window.addEventListener('scroll', onScrollOrResize, true);
   window.addEventListener('resize', onScrollOrResize);
   window.addEventListener('keydown', onKeyDown);
+  // hover 监听挂编辑器容器（冒泡即止）：移出容器 mouseleave 熄灭；
+  // 不挂 document，避免与表格库的全局 mousemove 监听纠缠
+  editorContainerRef.value?.addEventListener('mousemove', onHoverMove);
+  editorContainerRef.value?.addEventListener('mouseleave', onHoverLeave);
   nextTick(() => {
     bindEditorDOM();
   });
@@ -3027,6 +3181,12 @@ onBeforeUnmount(() => {
   window.removeEventListener('scroll', onScrollOrResize, true);
   window.removeEventListener('resize', onScrollOrResize);
   window.removeEventListener('keydown', onKeyDown);
+  editorContainerRef.value?.removeEventListener('mousemove', onHoverMove);
+  editorContainerRef.value?.removeEventListener('mouseleave', onHoverLeave);
+  if (hoverRaf) {
+    cancelAnimationFrame(hoverRaf);
+    hoverRaf = 0;
+  }
 });
 </script>
 
@@ -4895,7 +5055,7 @@ onBeforeUnmount(() => {
 
       <!-- 底部状态条与外链标注 -->
       <div
-        class="flex flex-wrap items-center justify-between border-t border-border bg-muted/20 px-4 py-1.5 text-[11px] text-muted-foreground select-none"
+        class="app-editor-statusbar flex flex-wrap items-center justify-between border-t border-border bg-muted/20 px-4 py-1.5 text-[11px] text-muted-foreground select-none"
       >
         <div class="flex items-center gap-3">
           <span>字符数: {{ plainTextCount }}</span>
@@ -4947,6 +5107,26 @@ onBeforeUnmount(() => {
         title="拖拽调整宽度"
         @mousedown.prevent="onHandleMouseDown"
       ></div>
+
+      <!-- 盒模型 overlay：选中元素的 margin / padding / content 三色分区 -->
+      <div
+        v-if="boxOverlay.visible && isHoveringSelected && !isSourceMode"
+        class="app-editor-boxoverlay"
+        contenteditable="false"
+      >
+        <div
+          class="app-editor-boxoverlay__margin"
+          :style="boxLayerStyle(boxOverlay.margin)"
+        ></div>
+        <div
+          class="app-editor-boxoverlay__padding"
+          :style="boxLayerStyle(boxOverlay.padding)"
+        ></div>
+        <div
+          class="app-editor-boxoverlay__content"
+          :style="boxLayerStyle(boxOverlay.content)"
+        ></div>
+      </div>
 
       <!-- 全局预览模态弹窗 -->
       <div
@@ -5267,6 +5447,33 @@ onBeforeUnmount(() => {
   border-radius: 3px;
   box-shadow: 0 1px 4px rgb(0 0 0 / 35%);
   user-select: none;
+}
+
+/* 盒模型 overlay（devtools 配色：margin 橙 / padding 绿 / content 蓝） */
+.app-editor-boxoverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  pointer-events: none;
+  user-select: none;
+}
+
+.app-editor-boxoverlay__margin,
+.app-editor-boxoverlay__padding,
+.app-editor-boxoverlay__content {
+  position: absolute;
+}
+
+.app-editor-boxoverlay__margin {
+  background: rgb(246 178 107 / 45%);
+}
+
+.app-editor-boxoverlay__padding {
+  background: rgb(147 196 125 / 55%);
+}
+
+.app-editor-boxoverlay__content {
+  background: rgb(111 168 220 / 45%);
 }
 
 /* ---------------------------------------------------------------------------
