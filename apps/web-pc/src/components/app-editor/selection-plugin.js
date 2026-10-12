@@ -7,7 +7,7 @@
  * 浮动工具条因 target 失联而隐藏”。官方正确做法是 Decorations：高亮由
  * 视图状态驱动，随每次渲染自动应用，不与 DOMObserver 打架。
  *
- * 状态：{ columnsPos, mediaPos, mediaType, tablePos }
+ * 状态：{ columnsPos, mediaPos, mediaType, tablePos, elementPos }
  * 经 tr.mapping 自动跟随文档变化；节点被删则自动落空（渲染时再按类型校验）。
  */
 import { Plugin, PluginKey } from '@tiptap/pm/state';
@@ -23,6 +23,9 @@ export const MEDIA_SELECTED_CLASS = {
 export const COLUMNS_SELECTED_CLASS = 'app-editor-columns--selected';
 
 export const TABLE_SELECTED_CLASS = 'app-editor-table--selected';
+
+/** 元素检查器选中（虚线描边，与容器实线区分） */
+export const ELEMENT_SELECTED_CLASS = 'app-editor-element--selected';
 
 function mapPos(mapping, pos) {
   if (typeof pos !== 'number') return null;
@@ -40,7 +43,7 @@ export const selectionPlugin = new Plugin({
 
   state: {
     init() {
-      return { columnsPos: null, mediaPos: null, mediaType: null, tablePos: null };
+      return { columnsPos: null, mediaPos: null, mediaType: null, tablePos: null, elementPos: null };
     },
     apply(tr, prev) {
       let next = {
@@ -48,6 +51,7 @@ export const selectionPlugin = new Plugin({
         mediaPos: mapPos(tr.mapping, prev.mediaPos),
         mediaType: prev.mediaType,
         tablePos: mapPos(tr.mapping, prev.tablePos),
+        elementPos: mapPos(tr.mapping, prev.elementPos),
       };
       const meta = tr.getMeta(appEditorSelectionKey);
       if (meta) {
@@ -65,8 +69,12 @@ export const selectionPlugin = new Plugin({
           next.tablePos = meta.pos;
         } else if (meta.type === 'clearTable') {
           next.tablePos = null;
+        } else if (meta.type === 'setElement') {
+          next.elementPos = meta.pos;
+        } else if (meta.type === 'clearElement') {
+          next.elementPos = null;
         } else if (meta.type === 'clearAll') {
-          next = { columnsPos: null, mediaPos: null, mediaType: null, tablePos: null };
+          next = { columnsPos: null, mediaPos: null, mediaType: null, tablePos: null, elementPos: null };
         }
       }
       return next;
@@ -112,6 +120,22 @@ export const selectionPlugin = new Plugin({
             );
           }
         }
+        if (typeof sel.elementPos === 'number') {
+          // 元素检查器：任意已存在的节点都可高亮（类型不限，doc 除外）
+          let node = null;
+          try {
+            node = state.doc.nodeAt(sel.elementPos);
+          } catch {
+            node = null;
+          }
+          if (node && node.type.name !== 'doc') {
+            decos.push(
+              Decoration.node(sel.elementPos, sel.elementPos + node.nodeSize, {
+                class: ELEMENT_SELECTED_CLASS,
+              }),
+            );
+          }
+        }
       } catch {
         /* 忽略，返回已收集的 decorations */
       }
@@ -149,6 +173,12 @@ export function dispatchTableSelected(editor, pos) {
   editor.view.dispatch(editor.state.tr.setMeta(appEditorSelectionKey, { type: 'setTable', pos }));
 }
 
+/** 高亮检查器目标元素（任意节点起始位置） */
+export function dispatchElementSelected(editor, pos) {
+  if (!editor || typeof pos !== 'number') return;
+  editor.view.dispatch(editor.state.tr.setMeta(appEditorSelectionKey, { type: 'setElement', pos }));
+}
+
 /** 清除全部选中高亮 */
 export function dispatchSelectionCleared(editor, scope = 'clearAll') {
   if (!editor) return;
@@ -159,6 +189,8 @@ export function dispatchSelectionCleared(editor, scope = 'clearAll') {
         ? 'clearMedia'
         : scope === 'table'
           ? 'clearTable'
-          : 'clearAll';
+          : scope === 'element'
+            ? 'clearElement'
+            : 'clearAll';
   editor.view.dispatch(editor.state.tr.setMeta(appEditorSelectionKey, { type }));
 }

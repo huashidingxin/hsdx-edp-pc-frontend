@@ -123,6 +123,24 @@ function bodyQuery(sel) {
   return document.body.querySelector(sel);
 }
 
+const INSPECT_HTML = '<h1>大标题</h1><p>普通段落</p>';
+
+async function mountInspector(html = INSPECT_HTML) {
+  const { default: AppEditor } = await import('../app-editor/index.vue');
+  return mount(AppEditor, {
+    attachTo: document.body,
+    props: { modelValue: html },
+    global: {
+      stubs: {
+        EditorToolbar: true,
+        MediaLibraryModal: true,
+        ExternalAssetsModal: true,
+        VbenTiptap: VbenTiptapStub,
+      },
+    },
+  });
+}
+
 describe('app-editor 多栏点击选中', () => {
   it('点击路径回归', async () => {
     const { default: AppEditor } = await import('../app-editor/index.vue');
@@ -307,5 +325,236 @@ describe('app-editor 表格 Dock', () => {
     }
 
     wrapper.unmount();
+  }, 60000);
+});
+
+describe('app-editor 元素检查器', () => {
+  // Dock 已在编辑器树内（不再 teleport），一律用 wrapper 作用域查询；
+  // 每个用例 finally 卸载，避免残留编辑器污染后续用例。
+  async function clickInspect(wrapper, selector) {
+    const target = wrapper.find(selector);
+    expect(target.exists()).toBe(true);
+    await target.trigger('mousedown');
+    await target.trigger('click');
+    await settle();
+    return target;
+  }
+
+  function dockCard(wrapper, cls) {
+    const card = wrapper.find(cls);
+    expect(card.exists()).toBe(true);
+    return card;
+  }
+
+  it('点击段落弹出检查器卡并可设置外边距', async () => {
+    const wrapper = await mountInspector();
+    try {
+      await settle();
+      await waitForEditorReady();
+
+      await clickInspect(wrapper, '.vben-tiptap-content > p');
+      const card = dockCard(wrapper, '.app-editor-inspector-toolbar');
+      expect(card.text()).toContain('段落');
+      expect(wrapper.find('.app-editor-columns-toolbar').exists()).toBe(false);
+
+      // 设置上外边距 24px（v-model 吃 input 事件，提交走 change）
+      const mtInput = card.element.querySelector('label[title="上"] input');
+      expect(mtInput).not.toBeNull();
+      mtInput.value = '24';
+      mtInput.dispatchEvent(new Event('input', { bubbles: true }));
+      mtInput.dispatchEvent(new Event('change', { bubbles: true }));
+      await settle();
+      expect(wrapper.find('.vben-tiptap-content').element.innerHTML).toContain(
+        'margin-top: 24px',
+      );
+    } finally {
+      wrapper.unmount();
+    }
+  }, 60000);
+
+  it('单节点元素可点选：hr', async () => {
+    const wrapper = await mountInspector('<p>上</p><hr><p>下</p>');
+    try {
+      await settle();
+      await waitForEditorReady();
+
+      await clickInspect(wrapper, 'hr');
+      const card = dockCard(wrapper, '.app-editor-inspector-toolbar');
+      expect(card.text()).toContain('分割线');
+    } finally {
+      wrapper.unmount();
+    }
+  }, 60000);
+
+  it('显示类型切换输出内联', async () => {
+    const wrapper = await mountInspector();
+    try {
+      await settle();
+      await waitForEditorReady();
+
+      await clickInspect(wrapper, '.vben-tiptap-content > p');
+      dockCard(wrapper, '.app-editor-inspector-toolbar');
+
+      const inlineBtn = wrapper
+        .findAll('.app-editor-inspector-toolbar button')
+        .find((b) => b.text() === '行内块');
+      expect(inlineBtn).toBeTruthy();
+      await inlineBtn.trigger('click');
+      await settle();
+      expect(wrapper.find('.vben-tiptap-content').element.innerHTML).toContain(
+        'display: inline-block',
+      );
+    } finally {
+      wrapper.unmount();
+    }
+  }, 60000);
+
+  it('面包屑可切换到祖先块', async () => {
+    const wrapper = await mountInspector(
+      '<ul><li><p>列表文字</p></li><li><p>第二项</p></li></ul>',
+    );
+    try {
+      await settle();
+      await waitForEditorReady();
+
+      await clickInspect(wrapper, '.vben-tiptap-content li p');
+      const card = dockCard(wrapper, '.app-editor-inspector-toolbar');
+      const crumb = wrapper
+        .findAll('.app-editor-inspector-toolbar button')
+        .find((b) => b.text().includes('列表项'));
+      expect(crumb).toBeTruthy();
+      await crumb.trigger('click');
+      await settle();
+      expect(
+        wrapper.find('.app-editor-inspector-toolbar').text(),
+      ).toContain('列表项');
+      expect(card.exists()).toBe(true);
+    } finally {
+      wrapper.unmount();
+    }
+  }, 60000);
+
+  it('速写边距回显与祖先样式圆点', async () => {
+    const wrapper = await mountInspector(
+      '<section style="background-color: #fef08a;"><p style="margin: 10px 20px;">速写段落</p></section>',
+    );
+    try {
+      await settle();
+      await waitForEditorReady();
+
+      await clickInspect(wrapper, '.vben-tiptap-content p');
+      // 段落自带 margin 但仍上浮（叶子文本不锚定），落到带背景的 section
+      let card = dockCard(wrapper, '.app-editor-inspector-toolbar');
+      expect(card.text()).toContain('版块');
+      // 经面包屑切回段落后，速写 margin: 10px 20px 展开为 上10右20下10左20
+      const backCrumb = wrapper
+        .findAll('.app-editor-inspector-toolbar button')
+        .find((b) => b.text().includes('段落'));
+      expect(backCrumb).toBeTruthy();
+      await backCrumb.trigger('click');
+      await settle();
+      card = dockCard(wrapper, '.app-editor-inspector-toolbar');
+      const inputs = card.element.querySelectorAll(
+        '.app-editor-inspector__group input',
+      );
+      expect(inputs[0].value).toBe('10');
+      expect(inputs[1].value).toBe('20');
+      // 祖先 section 有背景色，面包屑带圆点
+      expect(
+        card.element.querySelectorAll('.bg-emerald-500').length,
+      ).toBeGreaterThan(0);
+    } finally {
+      wrapper.unmount();
+    }
+  }, 60000);
+
+  it('带特效父容器可选中：点父容器选中版块，点图片选中图片', async () => {
+    const wrapper = await mountInspector(
+      `<section style="box-shadow: 0 4px 16px rgba(0,0,0,.2);"><p><img src="${OUTSIDE_IMG}"></p></section>`,
+    );
+    try {
+      await settle();
+      await waitForEditorReady();
+
+      // 点父容器本体 -> 版块（含阴影，可配）
+      const section = wrapper.find('section');
+      await section.trigger('mousedown');
+      await section.trigger('click');
+      await settle();
+      const card = wrapper.find('.app-editor-inspector-toolbar');
+      expect(card.exists()).toBe(true);
+      expect(card.text()).toContain('版块');
+
+      // 点图片本体 -> 图片卡（不受父容器影响）
+      const img = wrapper.find(`img[src="${OUTSIDE_IMG}"]`);
+      await img.trigger('mousedown');
+      await img.trigger('click');
+      await settle();
+      expect(wrapper.find('.app-editor-image-toolbar').exists()).toBe(true);
+    } finally {
+      wrapper.unmount();
+    }
+  }, 60000);
+
+  it('图片宽高支持px单位', async () => {
+    const wrapper = await mountInspector(
+      `<p>前</p><p><img src="${OUTSIDE_IMG}"></p>`,
+    );
+    try {
+      await settle();
+      await waitForEditorReady();
+
+      const img = wrapper.find(`img[src="${OUTSIDE_IMG}"]`);
+      await img.trigger('mousedown');
+      await img.trigger('click');
+      await settle();
+
+      dockCard(wrapper, '.app-editor-image-toolbar');
+      // 打开尺寸面板
+      const sizePill = wrapper.find(
+        '.app-editor-image-toolbar button[title="尺寸调节"]',
+      );
+      expect(sizePill.exists()).toBe(true);
+      await sizePill.trigger('click');
+      await settle();
+      // 切到 px，设宽 300
+      const pxBtn = wrapper
+        .findAll('.app-editor-image-toolbar button')
+        .find((b) => b.text() === 'px');
+      expect(pxBtn).toBeTruthy();
+      await pxBtn.trigger('click');
+      await settle();
+
+      const widthInput = wrapper.find(
+        '.app-editor-image-toolbar input[placeholder="宽"]',
+      );
+      expect(widthInput.exists()).toBe(true);
+      widthInput.element.value = '300';
+      widthInput.element.dispatchEvent(new Event('input', { bubbles: true }));
+      widthInput.element.dispatchEvent(new Event('change', { bubbles: true }));
+      await settle();
+      expect(
+        wrapper.find('.vben-tiptap-content').element.innerHTML,
+      ).toContain('width: 300px');
+
+      // 高度固定 200px
+      const fixedBtn = wrapper
+        .findAll('.app-editor-image-toolbar button')
+        .find((b) => b.text() === '固定');
+      await fixedBtn.trigger('click');
+      await settle();
+      const heightInput = wrapper.find(
+        '.app-editor-image-toolbar input[placeholder="高 px"]',
+      );
+      heightInput.element.value = '200';
+      heightInput.element.dispatchEvent(new Event('input', { bubbles: true }));
+      heightInput.element.dispatchEvent(new Event('change', { bubbles: true }));
+      await settle();
+      const html = wrapper.find('.vben-tiptap-content').element.innerHTML;
+      expect(html).toContain('width: 300px');
+      expect(html).toContain('height: 200px');
+    } finally {
+      wrapper.unmount();
+    }
   }, 60000);
 });

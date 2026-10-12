@@ -48,6 +48,7 @@ import { TableTools } from './table-tools';
 import { TextIndent } from './text-indent';
 
 // 需要保留 style / class 的节点类型（块级节点 + 行内标记）
+// 元素检查器可对以下类型写内联样式（margin/padding/背景/边框/圆角等）
 const PRESERVE_TYPES = [
   'paragraph',
   'heading',
@@ -55,11 +56,19 @@ const PRESERVE_TYPES = [
   'listItem',
   'bulletList',
   'orderedList',
+  'taskList',
+  'taskItem',
   'codeBlock',
+  'horizontalRule',
   'image',
   'video',
+  'table',
+  'tableRow',
   'tableCell',
   'tableHeader',
+  'details',
+  'detailsSummary',
+  'detailsContent',
   // CMS 多栏布局容器与单列
   'columns',
   'column',

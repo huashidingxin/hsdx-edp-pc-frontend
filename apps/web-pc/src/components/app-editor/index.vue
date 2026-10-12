@@ -44,6 +44,23 @@ import {
   findVideoNodeAndPos,
 } from './dom-lookup';
 import EditorToolbar from './editor-toolbar.vue';
+import {
+  buildCrumbChain,
+  deleteElement,
+  DISPLAY_OPTIONS,
+  duplicateElement,
+  expandBoxSides,
+  floatToStyledAncestor,
+  friendlyNodeName,
+  insertParagraphBeside,
+  isAlignableNode,
+  MANAGED_STYLE_KEYS,
+  mergeStyleDecls,
+  moveElement,
+  parseStyleDecls,
+  resolveElementFromSelection,
+  resolveInspectorTarget,
+} from './element-inspector';
 import { createEditorExtensions } from './extensions';
 import { DEFAULT_THUMBNAIL_PROCESS, defaultFetchMedia, stripThumbnailParam } from './media-api';
 import MediaLibraryModal from './media-library-modal.vue';
@@ -60,6 +77,7 @@ import {
 import {
   appEditorSelectionKey,
   dispatchColumnsSelected,
+  dispatchElementSelected,
   dispatchSelectionCleared,
   dispatchTableSelected,
 } from './selection-plugin';
@@ -767,6 +785,24 @@ function clearAllSelection() {
   clearSelection();
   clearColumnsSelection();
   clearTableSelection();
+  clearElementSelection();
+}
+
+/** 通用元素检查器目标设定（点击基础层） */
+function selectElementForTarget(target) {
+  const editor = editorInstance.value;
+  if (!editor) return;
+  const found = resolveInspectorTarget(editor.view, target, {
+    findImageNodeAndPos,
+    findVideoNodeAndPos,
+    findColumnsNodeAndPos,
+    findTableNodeAndPos,
+  });
+  if (found) {
+    applyElementSelection(found, found.el);
+  } else {
+    clearElementSelection();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -889,6 +925,498 @@ function setCellBackgroundUi(color) {
   if (editor.chain().focus().setCellBackground(color).run()) {
     refreshSelectedTableNode();
   }
+}
+
+// ---------------------------------------------------------------------------
+// 通用元素检查器（devtools 式：任意元素选中 + 面包屑 + 样式面板）
+// ---------------------------------------------------------------------------
+
+const selectedElementTarget = ref(null);
+// 结构: { el: HTMLElement, pos: number, node: Node }
+
+const elementCrumbs = ref([]);
+// [{ pos, label }] 由近及远
+
+const elementBoxForm = ref({ mt: '', mr: '', mb: '', ml: '', pt: '', pr: '', pb: '', pl: '' });
+// 提交时比对用：外来单位（em/%/auto）原样保留，防止静默丢失
+const elementBoxRaw = ref({ mt: '', mr: '', mb: '', ml: '', pt: '', pr: '', pb: '', pl: '' });
+const elementBgImageInput = ref('');
+const elementRadiusInput = ref('');
+const elementRadiusRaw = ref('');
+const elementBorderOn = ref(false);
+const elementBorderWidth = ref('1px');
+const elementDisplay = ref('');
+const elementShadow = ref('');
+const elementOpacityInput = ref('100');
+
+const INSPECTOR_SHADOW_PRESETS = [
+  { label: '无', value: null },
+  { label: '柔和', value: '0 2px 8px rgba(0, 0, 0, 0.15)' },
+  { label: '中等', value: '0 4px 16px rgba(0, 0, 0, 0.2)' },
+  { label: '强烈', value: '0 8px 28px rgba(0, 0, 0, 0.28)' },
+];
+
+// 检查器预设：背景色 / 圆角
+const INSPECTOR_BG_PRESETS = [
+  { label: '无', value: null },
+  { label: '黄', value: '#fef08a' },
+  { label: '绿', value: '#bbf7d0' },
+  { label: '蓝', value: '#bae6fd' },
+  { label: '粉', value: '#fbcfe8' },
+  { label: '灰', value: '#f3f4f6' },
+];
+
+const INSPECTOR_RADIUS_PRESETS = [
+  { label: '直角', value: '0' },
+  { label: '4', value: '4' },
+  { label: '8', value: '8' },
+  { label: '16', value: '16' },
+];
+
+/** 当前背景图尺寸模式（铺满/完整高亮用） */
+const elementBgSize = computed(() => {
+  const style = selectedElementTarget.value?.node?.attrs?.style || '';
+  const m = String(style).match(/background-size\s*:\s*([^;]+)/i);
+  return m ? m[1].trim().toLowerCase() : '';
+});
+
+/** 上传背景图：复用通用上传，URL 回填后应用 */
+function uploadElementBgImage() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.addEventListener('change', async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const url = await uploadImage(file);
+      if (!url) return;
+      elementBgImageInput.value = url;
+      applyElementBgImage();
+    } catch (err) {
+      console.error('[app-editor] 背景图上传失败:', err);
+    }
+  });
+  input.click();
+}
+
+function syncElementHighlight(pos) {
+  const editor = editorInstance.value;
+  if (!editor || typeof pos !== 'number') return;
+  try {
+    const cur = appEditorSelectionKey.getState(editor.state)?.elementPos;
+    if (cur !== pos) dispatchElementSelected(editor, pos);
+  } catch {
+    /* 忽略 */
+  }
+}
+
+/** 从 node.attrs.style 解析当前盒模型/背景/边框，回显到表单 */
+function loadElementForm(node) {
+  const style = node?.attrs?.style || '';
+  const map = new Map(parseStyleDecls(style));
+  // 输入框只吃 px 数字；外来单位原样显示，提交时比对保留（见 commitElementBox）
+  const numOrRaw = (raw) => {
+    if (!raw) return '';
+    const m = String(raw).trim().match(/^(-?\d+(?:\.\d+)?)px$/i);
+    return m ? m[1] : String(raw).trim();
+  };
+  const margin = expandBoxSides(style, 'margin');
+  const padding = expandBoxSides(style, 'padding');
+  elementBoxForm.value = {
+    mt: numOrRaw(margin.top),
+    mr: numOrRaw(margin.right),
+    mb: numOrRaw(margin.bottom),
+    ml: numOrRaw(margin.left),
+    pt: numOrRaw(padding.top),
+    pr: numOrRaw(padding.right),
+    pb: numOrRaw(padding.bottom),
+    pl: numOrRaw(padding.left),
+  };
+  elementBoxRaw.value = { ...elementBoxForm.value };
+  const bg = map.get('background-image') || '';
+  const urlMatch = bg.match(/url\(["']?(.*?)["']?\)/i);
+  elementBgImageInput.value = urlMatch ? urlMatch[1] : '';
+  const radius = map.get('border-radius') || '';
+  const radiusMatch = radius.match(/^(-?\d+(?:\.\d+)?)px$/i);
+  elementRadiusInput.value = radiusMatch ? radiusMatch[1] : String(radius || '').trim();
+  elementRadiusRaw.value = String(radius || '').trim();
+  const borderVal = (map.get('border') || '').trim();
+  elementBorderOn.value = borderVal !== '' && !/^none$/i.test(borderVal);
+  const widthMatch = borderVal.match(/(\d+(?:\.\d+)?px)/i);
+  elementBorderWidth.value = widthMatch ? widthMatch[1] : '1px';
+  const displayRaw = String(map.get('display') || '').trim().toLowerCase();
+  elementDisplay.value = DISPLAY_OPTIONS.some((o) => o.value === displayRaw) ? displayRaw : '';
+  elementShadow.value = String(map.get('box-shadow') || '').trim();
+  const opacityRaw = String(map.get('opacity') || '').trim();
+  if (opacityRaw === '') {
+    elementOpacityInput.value = '100';
+  } else {
+    const opNum = Number(opacityRaw);
+    elementOpacityInput.value = !Number.isNaN(opNum) ? String(Math.round(opNum * 100)) : '100';
+  }
+}
+
+function refreshElementCrumbs() {
+  const sel = selectedElementTarget.value;
+  const editor = editorInstance.value;
+  if (!sel || !editor) {
+    elementCrumbs.value = [];
+    return;
+  }
+  try {
+    elementCrumbs.value = buildCrumbChain(
+      editor.state.doc,
+      sel.pos,
+      sel.node,
+      sel.origin || null,
+    );
+  } catch {
+    elementCrumbs.value = [];
+  }
+}
+
+function applyElementSelection(found, el) {
+  selectedElementTarget.value = {
+    el: el || null,
+    pos: found.pos,
+    node: found.node,
+    origin: found.origin && found.origin.pos !== found.pos ? found.origin : null,
+  };
+  loadElementForm(found.node);
+  refreshElementCrumbs();
+  syncElementHighlight(found.pos);
+}
+
+/** 点击切换面包屑祖先 */
+function selectElementAncestor(pos) {
+  const editor = editorInstance.value;
+  if (!editor || typeof pos !== 'number') return;
+  const node = tryNodeAt(editor, pos);
+  if (!node || node.type.name === 'doc') return;
+  applyElementSelection({ pos, node }, tryNodeDOM(editor, pos));
+}
+
+function clearElementSelection() {
+  selectedElementTarget.value = null;
+  elementCrumbs.value = [];
+  if (editorInstance.value) {
+    try {
+      const cur = appEditorSelectionKey.getState(editorInstance.value.state)?.elementPos;
+      if (cur !== null && cur !== undefined) {
+        dispatchSelectionCleared(editorInstance.value, 'element');
+      }
+    } catch {
+      /* 忽略 */
+    }
+  }
+}
+
+/** 操作前重解析元素实时位置（el 优先，失联则校验存储 pos） */
+function resolveElementPos() {
+  const sel = selectedElementTarget.value;
+  const editor = editorInstance.value;
+  if (!sel || !editor) return null;
+  if (sel.el && sel.el.isConnected) {
+    try {
+      const fresh = resolveInspectorTarget(editor.view, sel.el, {
+        findImageNodeAndPos,
+        findVideoNodeAndPos,
+        findColumnsNodeAndPos,
+        findTableNodeAndPos,
+      });
+      if (fresh && fresh.node) {
+        sel.pos = fresh.pos;
+        sel.node = editor.state.doc.nodeAt(fresh.pos) ?? fresh.node;
+        return fresh.pos;
+      }
+    } catch {
+      /* 掉入存储 pos 校验 */
+    }
+  }
+  try {
+    const node = editor.state.doc.nodeAt(sel.pos);
+    if (node && node.type.name !== 'doc') {
+      sel.node = node;
+      return sel.pos;
+    }
+  } catch {
+    /* 忽略 */
+  }
+  return null;
+}
+
+function refreshSelectedElementNode() {
+  const pos = resolveElementPos();
+  if (pos === null) {
+    clearElementSelection();
+    return;
+  }
+  loadElementForm(selectedElementTarget.value.node);
+  refreshElementCrumbs();
+  syncElementHighlight(pos);
+}
+
+// ---------------------------------------------------------------------------
+// 检查器样式提交（全部走 setNodeMarkup 单事务，可撤销）
+// ---------------------------------------------------------------------------
+
+function commitElementStyle(updates, removeKeys = []) {
+  const editor = editorInstance.value;
+  if (!editor || !selectedElementTarget.value) return false;
+  const pos = resolveElementPos();
+  if (pos === null) {
+    clearElementSelection();
+    return false;
+  }
+  const node = selectedElementTarget.value.node;
+  const next = mergeStyleDecls(node.attrs.style, updates, removeKeys);
+  try {
+    const tr = editor.state.tr.setNodeMarkup(pos, null, {
+      ...node.attrs,
+      style: next,
+    });
+    editor.view.dispatch(tr);
+    selectedElementTarget.value.node = editor.state.doc.nodeAt(pos);
+    loadElementForm(selectedElementTarget.value.node);
+    syncElementHighlight(pos);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 盒模型提交：数字转 px；与加载时一致的外来值原样保留；其他清空 */
+function boxSideValue(input, loadedRaw) {
+  if (input === null || input === undefined || String(input).trim() === '') return null;
+  const n = Number(String(input).trim());
+  if (!Number.isNaN(n)) return `${n}px`;
+  if (String(input).trim() === String(loadedRaw || '').trim() && loadedRaw) return loadedRaw;
+  return null;
+}
+
+function commitElementBox() {
+  const f = elementBoxForm.value;
+  const r = elementBoxRaw.value;
+  commitElementStyle([
+    ['margin-top', boxSideValue(f.mt, r.mt)],
+    ['margin-right', boxSideValue(f.mr, r.mr)],
+    ['margin-bottom', boxSideValue(f.mb, r.mb)],
+    ['margin-left', boxSideValue(f.ml, r.ml)],
+    ['padding-top', boxSideValue(f.pt, r.pt)],
+    ['padding-right', boxSideValue(f.pr, r.pr)],
+    ['padding-bottom', boxSideValue(f.pb, r.pb)],
+    ['padding-left', boxSideValue(f.pl, r.pl)],
+  ]);
+}
+
+function clearElementBox(side) {
+  // side: 'margin' | 'padding'，清空该组四边
+  const f = elementBoxForm.value;
+  if (side === 'margin') {
+    f.mt = f.mr = f.mb = f.ml = '';
+  } else {
+    f.pt = f.pr = f.pb = f.pl = '';
+  }
+  commitElementBox();
+}
+
+function setElementAlign(align) {
+  const editor = editorInstance.value;
+  const sel = selectedElementTarget.value;
+  if (!editor || !sel) return;
+  // 文本块走 TextAlign 命令（与顶栏状态一致），其他块不支持
+  if (!sel.node || !sel.node.isTextblock) return;
+  editor.chain().focus().setTextAlign(align).run();
+  refreshSelectedElementNode();
+}
+
+function setElementBgColor(color) {
+  commitElementStyle([['background-color', color || null]]);
+}
+
+function applyElementBgImage() {
+  const url = elementBgImageInput.value.trim();
+  if (!url) {
+    clearElementBgImage();
+    return;
+  }
+  commitElementStyle([
+    ['background-image', `url("${url}")`],
+    ['background-size', 'cover'],
+    ['background-repeat', 'no-repeat'],
+    ['background-position', 'center'],
+  ]);
+}
+
+function setElementBgSize(size) {
+  if (!elementBgImageInput.value.trim()) return;
+  commitElementStyle([['background-size', size]]);
+}
+
+function clearElementBgImage() {
+  elementBgImageInput.value = '';
+  commitElementStyle(
+    [],
+    ['background-image', 'background-size', 'background-repeat', 'background-position'],
+  );
+}
+
+function applyElementRadius() {
+  const input = String(elementRadiusInput.value || '').trim();
+  if (input === '') {
+    commitElementStyle([['border-radius', null]]);
+    return;
+  }
+  const n = Number(input);
+  if (!Number.isNaN(n)) {
+    commitElementStyle([['border-radius', `${n}px`]]);
+    return;
+  }
+  // 非数字：与加载值一致则保留，否则清空
+  commitElementStyle([
+    ['border-radius', input === elementRadiusRaw.value && elementRadiusRaw.value ? elementRadiusRaw.value : null],
+  ]);
+}
+
+function toggleElementBorder() {
+  if (elementBorderOn.value) {
+    elementBorderOn.value = false;
+    commitElementStyle([], ['border']);
+    return;
+  }
+  elementBorderOn.value = true;
+  commitElementStyle([['border', `${elementBorderWidth.value} solid #d1d5db`]]);
+}
+
+function setElementBorderColor(color) {
+  if (!color) {
+    commitElementStyle([], ['border']);
+    elementBorderOn.value = false;
+    return;
+  }
+  elementBorderOn.value = true;
+  commitElementStyle([['border', `${elementBorderWidth.value} solid ${color}`]]);
+}
+
+function setElementDisplay(value) {
+  elementDisplay.value = value || '';
+  commitElementStyle([['display', value || null]]);
+}
+
+function setElementShadow(value) {
+  elementShadow.value = value || '';
+  commitElementStyle([['box-shadow', value || null]]);
+}
+
+function commitElementOpacity() {
+  const raw = String(elementOpacityInput.value ?? '').trim();
+  if (raw === '') {
+    commitElementStyle([['opacity', null]]);
+    return;
+  }
+  const n = Number(raw);
+  if (Number.isNaN(n)) return;
+  const clamped = Math.max(0, Math.min(100, n));
+  elementOpacityInput.value = String(clamped);
+  commitElementStyle([['opacity', clamped >= 100 ? null : String(clamped / 100)]]);
+}
+
+function resetElementStyles() {
+  const ok = commitElementStyle([], [...MANAGED_STYLE_KEYS]);
+  if (ok) {
+    loadElementForm(selectedElementTarget.value?.node);
+    message.success('已重置该元素的检查器样式');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 检查器块操作（上下移/复制/删除/插行，失败 toast 说明原因）
+// ---------------------------------------------------------------------------
+
+/** 安全读取节点/DOM（失败返回 null，不抛错） */
+function tryNodeAt(editor, pos) {
+  try {
+    return editor.state.doc.nodeAt(pos) || null;
+  } catch {
+    return null;
+  }
+}
+
+function tryNodeDOM(editor, pos) {
+  try {
+    const dom = editor.view.nodeDOM(pos);
+    return dom instanceof HTMLElement ? dom : null;
+  } catch {
+    return null;
+  }
+}
+
+function reselectElementAt(pos) {
+  const editor = editorInstance.value;
+  if (!editor || typeof pos !== 'number') return;
+  const node = tryNodeAt(editor, pos);
+  if (!node) {
+    clearElementSelection();
+    return;
+  }
+  applyElementSelection(
+    { pos, node },
+    tryNodeDOM(editor, pos) || selectedElementTarget.value?.el || null,
+  );
+}
+
+function runElementOp(fn) {
+  const editor = editorInstance.value;
+  const sel = selectedElementTarget.value;
+  if (!editor || !sel) return;
+  const pos = resolveElementPos();
+  if (pos === null) {
+    clearElementSelection();
+    return;
+  }
+  let result;
+  try {
+    result = fn(editor, pos);
+  } catch {
+    result = { ok: false };
+  }
+  if (!result || !result.ok) {
+    if (result?.reason) message.warning(result.reason);
+    return;
+  }
+  if (typeof result.newPos === 'number') {
+    reselectElementAt(result.newPos);
+  } else {
+    refreshSelectedElementNode();
+  }
+}
+
+function moveSelectedElement(direction) {
+  runElementOp((editor, pos) => moveElement(editor, pos, direction));
+}
+
+function duplicateSelectedElement() {
+  runElementOp((editor, pos) => {
+    const r = duplicateElement(editor, pos);
+    if (r.ok) message.success('已复制当前块');
+    return r;
+  });
+}
+
+function deleteSelectedElement() {
+  runElementOp((editor, pos) => {
+    const r = deleteElement(editor, pos);
+    if (r.ok) {
+      clearElementSelection();
+      message.success('已删除选中块');
+    }
+    return { ok: false };
+  });
+}
+
+function insertParagraphBesideSelected(direction) {
+  runElementOp((editor, pos) => insertParagraphBeside(editor, pos, direction));
 }
 
 // ---------------------------------------------------------------------------
@@ -1191,7 +1719,7 @@ function selectImage(imgEl) {
     editorInstance.value.view.dispatch(tr);
   } catch {}
 
-  sliderValue.value = getCurrentImagePercent();
+  loadMediaSize();
   nextTick(() => {
     updateHandlePosition();
   });
@@ -1228,7 +1756,7 @@ function selectVideo(videoEl) {
   videoEl.addEventListener('pause', onVideoPlayStateChange);
   videoEl.addEventListener('ended', onVideoPlayStateChange);
 
-  sliderValue.value = getCurrentImagePercent();
+  loadMediaSize();
   nextTick(() => {
     updateHandlePosition();
   });
@@ -1396,6 +1924,19 @@ const PRESET_SIZES = [
   { label: '100% 全宽', value: 100 },
 ];
 
+const PRESET_SIZES_PX = [
+  { label: '200px', value: 200 },
+  { label: '400px', value: 400 },
+  { label: '600px', value: 600 },
+  { label: '800px', value: 800 },
+];
+
+// 媒体尺寸双单位模型：宽度 %/px + 高度 auto/px（图片视频共用）
+const mediaWidthUnit = ref('%');
+const mediaWidthInput = ref('100');
+const mediaHeightMode = ref('auto');
+const mediaHeightInput = ref('');
+
 function baseWidth() {
   const contentEl = getContentContainerEl();
   return contentEl?.clientWidth || window.innerWidth;
@@ -1474,25 +2015,79 @@ const displayPercent = computed(() => {
   return sliderValue.value;
 });
 
-function commitImagePercent(percent) {
+/** 尺寸胶囊文案：% 显示百分比，px 显示像素值 */
+const sizePillLabel = computed(() => {
+  if (previewPercent.value !== null && mediaWidthUnit.value === '%') {
+    return `${previewPercent.value}%`;
+  }
+  if (mediaWidthUnit.value === 'px') {
+    const v = String(mediaWidthInput.value || '').trim();
+    return v ? `${v}px` : displayPercent.value + '%';
+  }
+  return `${displayPercent.value}%`;
+});
+
+/** 当前单位下的快速预设 */
+const sizePresets = computed(() =>
+  mediaWidthUnit.value === 'px' ? PRESET_SIZES_PX : PRESET_SIZES,
+);
+
+/** 从节点 attrs.style 解析宽高，回显到双单位表单 */
+function loadMediaSize() {
+  const node = selectedTarget.value?.node;
+  const style = node?.attrs?.style || '';
+  const widthMatch = style.match(/width\s*:\s*(-?\d+(?:\.\d+)?)(%|px)/i);
+  if (widthMatch) {
+    mediaWidthUnit.value = widthMatch[2] === 'px' ? 'px' : '%';
+    mediaWidthInput.value = widthMatch[1];
+  } else {
+    mediaWidthUnit.value = '%';
+    mediaWidthInput.value = '100';
+  }
+  const heightMatch = style.match(/height\s*:\s*(-?\d+(?:\.\d+)?)px/i);
+  if (heightMatch) {
+    mediaHeightMode.value = 'px';
+    mediaHeightInput.value = heightMatch[1];
+  } else {
+    mediaHeightMode.value = 'auto';
+    mediaHeightInput.value = '';
+  }
+  sliderValue.value = getCurrentImagePercent();
+}
+
+function commitMediaSize() {
   if (!selectedTarget.value || !['image', 'video'].includes(selectedTarget.value.type)) return;
   const editor = editorInstance.value;
   if (!editor) return;
   const pos = requireFreshMediaPos();
   if (pos === null) return;
 
-  const clamped = Math.max(5, Math.min(100, Math.round(percent)));
-  const widthVal = clamped >= 100 ? '100%' : `${clamped}%`;
+  const updates = [];
+  if (mediaWidthUnit.value === 'px') {
+    if (String(mediaWidthInput.value ?? '').trim() === '') return;
+    const px = Math.max(10, Math.round(Number(mediaWidthInput.value) || 0));
+    mediaWidthInput.value = String(px);
+    updates.push(['width', `${px}px`]);
+  } else {
+    if (String(mediaWidthInput.value ?? '').trim() === '') return;
+    const clamped = Math.max(5, Math.min(100, Math.round(Number(mediaWidthInput.value) || 0)));
+    mediaWidthInput.value = String(clamped);
+    updates.push(['width', `${clamped}%`]);
+    sliderValue.value = clamped;
+  }
+  if (mediaHeightMode.value === 'px') {
+    if (String(mediaHeightInput.value ?? '').trim() === '') return;
+    const hpx = Math.max(10, Math.round(Number(mediaHeightInput.value) || 0));
+    mediaHeightInput.value = String(hpx);
+    updates.push(['height', `${hpx}px`]);
+  } else {
+    updates.push(['height', null]);
+  }
 
   const node = editor.state.doc.nodeAt(pos);
   if (!node || (node.type.name !== 'image' && node.type.name !== 'video')) return;
 
-  const currentStyle = node.attrs.style || '';
-  const newStyle = setStyleDecls(
-    currentStyle,
-    [['width', widthVal]],
-    ['height'],
-  );
+  const newStyle = setStyleDecls(node.attrs.style, updates, []);
 
   const tr = editor.state.tr.setNodeMarkup(pos, null, {
     ...node.attrs,
@@ -1503,7 +2098,6 @@ function commitImagePercent(percent) {
   editor.view.dispatch(tr);
 
   selectedTarget.value.node = editor.state.doc.nodeAt(pos);
-  sliderValue.value = clamped;
   previewWidth.value = null;
   previewPercent.value = null;
 
@@ -1512,7 +2106,21 @@ function commitImagePercent(percent) {
   });
 }
 
+function commitImagePercent(percent) {
+  // 兼容旧调用：百分比提交（滑杆/拖拽手柄），切回 % 单位
+  mediaWidthUnit.value = '%';
+  mediaWidthInput.value = String(Math.max(5, Math.min(100, Math.round(percent))));
+  commitMediaSize();
+}
+
+function applyPresetSize(value) {
+  mediaWidthInput.value = String(value);
+  commitMediaSize();
+  activePanel.value = null;
+}
+
 function applyPreset(percent) {
+  mediaWidthUnit.value = '%';
   sliderValue.value = percent;
   commitImagePercent(percent);
   activePanel.value = null;
@@ -1520,6 +2128,32 @@ function applyPreset(percent) {
 
 function onSliderChange() {
   commitImagePercent(sliderValue.value);
+}
+
+function setMediaWidthUnit(unit) {
+  if (mediaWidthUnit.value === unit) return;
+  if (unit === 'px') {
+    // % 切 px：按当前渲染宽度换算
+    const el = selectedTarget.value?.el;
+    const rendered = el?.getBoundingClientRect?.().width;
+    mediaWidthUnit.value = 'px';
+    mediaWidthInput.value = String(Math.max(10, Math.round(rendered || 400)));
+  } else {
+    mediaWidthUnit.value = '%';
+    mediaWidthInput.value = String(getCurrentImagePercent());
+    sliderValue.value = getCurrentImagePercent();
+  }
+}
+
+function setMediaHeightMode(mode) {
+  mediaHeightMode.value = mode;
+  if (mode === 'px' && !String(mediaHeightInput.value || '').trim()) {
+    // 默认取当前渲染高度
+    const el = selectedTarget.value?.el;
+    const rendered = el?.getBoundingClientRect?.().height;
+    mediaHeightInput.value = String(Math.max(10, Math.round(rendered || 300)));
+  }
+  commitMediaSize();
 }
 
 // 对齐方式
@@ -1686,6 +2320,11 @@ function updateHandlePosition() {
 function onHandleMouseDown(event) {
   if (!selectedTarget.value?.el) return;
   isDraggingHandle.value = true;
+  // 拖拽统一按百分比换算：px 模式下先切回 %（输入框同步更新）
+  if (mediaWidthUnit.value !== '%') {
+    mediaWidthUnit.value = '%';
+    mediaWidthInput.value = String(getCurrentImagePercent());
+  }
   const img = selectedTarget.value.el;
   const startX = event.clientX;
   const startWidth = img.getBoundingClientRect().width;
@@ -1942,7 +2581,10 @@ function stashPendingClick(target) {
   const tableEl = target.closest('table');
   if (tableEl) {
     pendingClickSelect.value = { kind: 'table', el: tableEl };
+    return;
   }
+  // 普通元素点击也暂存，待就绪后由检查器解析
+  pendingClickSelect.value = { kind: 'element', el: target };
 }
 
 function flushPendingClickSelect() {
@@ -1977,6 +2619,11 @@ function flushPendingClickSelect() {
       clearSelection();
       clearColumnsSelection();
       selectTable(p.el);
+    } else if (p.kind === 'element') {
+      clearSelection();
+      clearColumnsSelection();
+      clearTableSelection();
+      selectElementForTarget(p.el);
     }
   } catch (err) {
     console.warn('[app-editor] pending click 回放失败:', err);
@@ -2020,6 +2667,7 @@ function onContentClick(event) {
     } else {
       clearTableSelection();
     }
+    selectElementForTarget(target);
     return;
   }
 
@@ -2040,6 +2688,7 @@ function onContentClick(event) {
     } else {
       clearTableSelection();
     }
+    selectElementForTarget(target);
     return;
   }
 
@@ -2053,6 +2702,7 @@ function onContentClick(event) {
     } else {
       clearTableSelection();
     }
+    selectElementForTarget(target);
     return;
   }
 
@@ -2061,11 +2711,46 @@ function onContentClick(event) {
     clearSelection();
     clearColumnsSelection();
     selectTable(tableEl);
+    selectElementForTarget(target);
     return;
   }
 
-  // 5. 其他常规段落：清除全部选中
-  clearAllSelection();
+  // 5. 其他点击：编辑区 chrome（状态条等）保持清除；
+  //    内容区走检查器；DOM 无命中（如 margin 缝隙点到背后）则用 PM 光标兜底
+  if (!target.closest('.vben-tiptap-content')) {
+    clearAllSelection();
+    return;
+  }
+  clearSelection();
+  clearColumnsSelection();
+  clearTableSelection();
+  selectElementForTarget(target);
+  if (!selectedElementTarget.value) {
+    selectElementFromSelectionState();
+  }
+}
+
+/**
+ * 用编辑器当前选区设定检查器目标（margin 缝隙等点不到元素时的兜底，
+ * PM mousedown 已把光标放到最近合法处；同样走装饰上浮）。
+ */
+function selectElementFromSelectionState() {
+  const editor = editorInstance.value;
+  if (!editor) return;
+  const found = resolveElementFromSelection(editor.state);
+  if (!found) {
+    clearElementSelection();
+    return;
+  }
+  const floated = floatToStyledAncestor(editor.state.doc, found.pos, found.node);
+  let el = null;
+  try {
+    const dom = editor.view.nodeDOM(floated.pos);
+    el = dom instanceof HTMLElement ? dom : null;
+  } catch {
+    el = null;
+  }
+  applyElementSelection({ pos: floated.pos, node: floated.node }, el);
 }
 
 function bindEditorDOM() {
@@ -2160,6 +2845,9 @@ function onEditorSelectionUpdate() {
 
   // 表格跟随：光标在表格内则同步表格选中（与多栏逻辑对称）
   syncTableFromSelection();
+
+  // 注意：检查器不跟随光标（只响应明确点击），否则全局模式（页面设置）
+  // 将因“永远有选中”而饿死；点不到的空段落/hr 靠编辑态点击区 CSS 解决。
 }
 
 /**
@@ -2568,6 +3256,380 @@ onBeforeUnmount(() => {
       v-if="!isSourceMode"
       class="app-editor-dock"
     >
+      <!-- 元素检查器：任意选中元素的基础设置卡（面包屑可切换祖先） -->
+      <div
+        v-if="selectedElementTarget"
+        class="app-editor-floating__toolbar app-editor-inspector-toolbar"
+      >
+        <div class="app-editor-floating__header">
+          <div class="flex items-center gap-1.5 min-w-0">
+            <span class="app-editor-tag">
+              <svg
+                class="size-3.5"
+                fill="none"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                viewBox="0 0 24 24"
+              >
+                <path d="m12 2 9 5-9 5-9-5 9-5z" />
+                <path d="m3 12 9 5 9-5" />
+                <path d="m3 17 9 5 9-5" />
+              </svg>
+              检查器
+            </span>
+            <span class="app-editor-tag-badge">{{ friendlyNodeName(selectedElementTarget.node) }}</span>
+          </div>
+          <button
+            class="text-[11px] text-muted-foreground hover:text-foreground px-1 shrink-0"
+            title="取消元素选中"
+            type="button"
+            @click="clearElementSelection"
+          >
+            ✕
+          </button>
+        </div>
+
+        <!-- 面包屑：点击切换到祖先块，有样式的带圆点提示 -->
+        <div v-if="elementCrumbs.length > 1" class="flex flex-wrap items-center gap-1 px-1 pb-1 text-[11px]">
+          <button
+            v-for="crumb in elementCrumbs"
+            :key="`${crumb.pos}`"
+            type="button"
+            class="rounded px-1.5 py-0.5 transition-colors inline-flex items-center gap-1"
+            :class="crumb.pos === selectedElementTarget.pos ? 'bg-primary text-primary-foreground font-medium' : 'text-muted-foreground hover:bg-muted hover:text-foreground'"
+            :title="`选中${crumb.label}${crumb.hasManaged ? '（有自定义样式）' : ''}`"
+            @click="selectElementAncestor(crumb.pos)"
+          >
+            <span
+              v-if="crumb.hasManaged"
+              class="inline-block size-1.5 rounded-full bg-emerald-500 shrink-0"
+              title="该层有自定义样式"
+            ></span>
+            {{ crumb.label }}
+          </button>
+        </div>
+
+        <div class="app-editor-floating__actions app-editor-inspector__actions">
+          <!-- 外边距 -->
+          <div class="app-editor-inspector__group">
+            <span class="app-editor-panel-title">外边距</span>
+            <div class="app-editor-inspector__quad">
+              <label title="上">上<input v-model="elementBoxForm.mt" class="app-editor-inspector__num" inputmode="numeric" placeholder="0" type="text" @change="commitElementBox" /></label>
+              <label title="右">右<input v-model="elementBoxForm.mr" class="app-editor-inspector__num" inputmode="numeric" placeholder="0" type="text" @change="commitElementBox" /></label>
+              <label title="下">下<input v-model="elementBoxForm.mb" class="app-editor-inspector__num" inputmode="numeric" placeholder="0" type="text" @change="commitElementBox" /></label>
+              <label title="左">左<input v-model="elementBoxForm.ml" class="app-editor-inspector__num" inputmode="numeric" placeholder="0" type="text" @change="commitElementBox" /></label>
+            </div>
+            <button
+              class="app-editor-btn app-editor-btn--pill"
+              title="清空外边距"
+              type="button"
+              @click="clearElementBox('margin')"
+            >
+              <span class="app-editor-btn-label">清零</span>
+            </button>
+          </div>
+
+          <span class="app-editor-divider"></span>
+
+          <!-- 内边距 -->
+          <div class="app-editor-inspector__group">
+            <span class="app-editor-panel-title">内边距</span>
+            <div class="app-editor-inspector__quad">
+              <label title="上">上<input v-model="elementBoxForm.pt" class="app-editor-inspector__num" inputmode="numeric" placeholder="0" type="text" @change="commitElementBox" /></label>
+              <label title="右">右<input v-model="elementBoxForm.pr" class="app-editor-inspector__num" inputmode="numeric" placeholder="0" type="text" @change="commitElementBox" /></label>
+              <label title="下">下<input v-model="elementBoxForm.pb" class="app-editor-inspector__num" inputmode="numeric" placeholder="0" type="text" @change="commitElementBox" /></label>
+              <label title="左">左<input v-model="elementBoxForm.pl" class="app-editor-inspector__num" inputmode="numeric" placeholder="0" type="text" @change="commitElementBox" /></label>
+            </div>
+            <button
+              class="app-editor-btn app-editor-btn--pill"
+              title="清空内边距"
+              type="button"
+              @click="clearElementBox('padding')"
+            >
+              <span class="app-editor-btn-label">清零</span>
+            </button>
+          </div>
+
+          <span class="app-editor-divider"></span>
+
+          <!-- 对齐（仅文本块） -->
+          <div class="app-editor-inspector__group">
+            <span class="app-editor-panel-title">对齐</span>
+            <div v-if="isAlignableNode(selectedElementTarget.node)" class="app-editor-presets">
+              <button
+                class="app-editor-preset-btn"
+                type="button"
+                @click="setElementAlign('left')"
+              >
+                左
+              </button>
+              <button
+                class="app-editor-preset-btn"
+                type="button"
+                @click="setElementAlign('center')"
+              >
+                中
+              </button>
+              <button
+                class="app-editor-preset-btn"
+                type="button"
+                @click="setElementAlign('right')"
+              >
+                右
+              </button>
+              <button
+                class="app-editor-preset-btn"
+                type="button"
+                @click="setElementAlign('justify')"
+              >
+                两端
+              </button>
+            </div>
+            <span v-else class="text-[10px] text-muted-foreground">该元素不支持</span>
+          </div>
+
+          <span class="app-editor-divider"></span>
+
+          <!-- 显示类型：块级 / 行内块 / 行内 / 隐藏 -->
+          <div class="app-editor-inspector__group">
+            <span class="app-editor-panel-title" title="切换元素显示类型（block / inline-block 等），输出为内联 style">显示</span>
+            <div class="app-editor-presets">
+              <button
+                v-for="opt in DISPLAY_OPTIONS"
+                :key="String(opt.value)"
+                class="app-editor-preset-btn"
+                :class="{ 'is-active': (elementDisplay || null) === opt.value }"
+                :title="opt.value ? `显示为 ${opt.label}（display: ${opt.value}）` : '恢复默认显示'"
+                type="button"
+                @click="setElementDisplay(opt.value)"
+              >
+                {{ opt.label }}
+              </button>
+            </div>
+          </div>
+
+          <span class="app-editor-divider"></span>
+
+          <!-- 背景色 -->
+          <div class="app-editor-inspector__group">
+            <span class="app-editor-panel-title">背景色</span>
+            <div class="app-editor-presets">
+              <button
+                v-for="c in INSPECTOR_BG_PRESETS"
+                :key="c.value || 'none'"
+                class="app-editor-preset-btn"
+                :style="c.value ? { backgroundColor: c.value } : {}"
+                :title="c.label"
+                type="button"
+                @click="setElementBgColor(c.value)"
+              >
+                {{ c.label }}
+              </button>
+              <input
+                class="app-editor-inspector__color"
+                title="自定义背景色"
+                type="color"
+                @change="(e) => setElementBgColor(e.target.value)"
+              />
+            </div>
+          </div>
+
+          <span class="app-editor-divider"></span>
+
+          <!-- 背景图 -->
+          <div class="app-editor-inspector__group">
+            <span class="app-editor-panel-title">背景图</span>
+            <div class="flex items-center gap-1">
+              <input
+                v-model="elementBgImageInput"
+                class="app-editor-inspector__url"
+                placeholder="https://... 或上传"
+                type="text"
+                @keydown.enter.prevent="applyElementBgImage"
+              />
+              <button
+                class="app-editor-btn app-editor-btn--pill"
+                title="上传背景图"
+                type="button"
+                @click="uploadElementBgImage"
+              >
+                <span class="app-editor-btn-label">上传</span>
+              </button>
+              <button
+                class="app-editor-btn app-editor-btn--pill"
+                :class="{ 'is-active': elementBgSize === 'cover' }"
+                title="背景图铺满（cover）"
+                type="button"
+                @click="setElementBgSize('cover')"
+              >
+                <span class="app-editor-btn-label">铺满</span>
+              </button>
+              <button
+                class="app-editor-btn app-editor-btn--pill"
+                :class="{ 'is-active': elementBgSize === 'contain' }"
+                title="背景图完整显示（contain）"
+                type="button"
+                @click="setElementBgSize('contain')"
+              >
+                <span class="app-editor-btn-label">完整</span>
+              </button>
+              <button
+                class="app-editor-btn app-editor-btn--danger"
+                title="清除背景图"
+                type="button"
+                @click="clearElementBgImage"
+              >
+                <span class="app-editor-btn-label">清除</span>
+              </button>
+            </div>
+          </div>
+
+          <span class="app-editor-divider"></span>
+
+          <!-- 圆角与边框 -->
+          <div class="app-editor-inspector__group">
+            <span class="app-editor-panel-title">圆角边框</span>
+            <div class="flex items-center gap-1">
+              <div class="app-editor-presets">
+                <button
+                  v-for="r in INSPECTOR_RADIUS_PRESETS"
+                  :key="r.value"
+                  class="app-editor-preset-btn"
+                  type="button"
+                  @click="elementRadiusInput = r.value; applyElementRadius()"
+                >
+                  {{ r.label }}
+                </button>
+              </div>
+              <input
+                v-model="elementRadiusInput"
+                class="app-editor-inspector__num app-editor-inspector__num--wide"
+                inputmode="numeric"
+                placeholder="px"
+                title="自定义圆角（px）"
+                type="text"
+                @change="applyElementRadius"
+              />
+              <button
+                class="app-editor-btn app-editor-btn--pill"
+                :class="{ 'is-active': elementBorderOn }"
+                title="1px 实线边框开关"
+                type="button"
+                @click="toggleElementBorder"
+              >
+                <span class="app-editor-btn-label">边框</span>
+              </button>
+              <input
+                class="app-editor-inspector__color"
+                title="边框颜色（自动开启边框）"
+                type="color"
+                @change="(e) => setElementBorderColor(e.target.value)"
+              />
+            </div>
+          </div>
+
+          <span class="app-editor-divider"></span>
+
+          <!-- 特效：阴影与不透明度 -->
+          <div class="app-editor-inspector__group">
+            <span class="app-editor-panel-title">特效</span>
+            <div class="flex items-center gap-1">
+              <div class="app-editor-presets">
+                <button
+                  v-for="s in INSPECTOR_SHADOW_PRESETS"
+                  :key="s.label"
+                  class="app-editor-preset-btn"
+                  :class="{ 'is-active': (elementShadow || '') === (s.value || '') }"
+                  :title="s.value ? `阴影：${s.value}` : '清除阴影'"
+                  type="button"
+                  @click="setElementShadow(s.value)"
+                >
+                  {{ s.label }}
+                </button>
+              </div>
+              <input
+                v-model="elementOpacityInput"
+                class="app-editor-inspector__num app-editor-inspector__num--wide"
+                inputmode="decimal"
+                placeholder="不透明%"
+                title="不透明度 0~100（100 为默认不透明）"
+                type="text"
+                @change="commitElementOpacity"
+                @keydown.enter.prevent="commitElementOpacity"
+              />
+              <span class="text-[10px] text-muted-foreground">%</span>
+            </div>
+          </div>
+
+          <span class="app-editor-divider"></span>
+
+          <!-- 块操作 -->
+          <div class="app-editor-inspector__group">
+            <span class="app-editor-panel-title">块操作</span>
+            <div class="flex items-center gap-1">
+              <button
+                class="app-editor-btn"
+                title="上移"
+                type="button"
+                @click="moveSelectedElement(-1)"
+              >
+                <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15" /></svg>
+              </button>
+              <button
+                class="app-editor-btn"
+                title="下移"
+                type="button"
+                @click="moveSelectedElement(1)"
+              >
+                <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9" /></svg>
+              </button>
+              <button
+                class="app-editor-btn app-editor-btn--pill"
+                title="复制当前块"
+                type="button"
+                @click="duplicateSelectedElement"
+              >
+                <span class="app-editor-btn-label">复制</span>
+              </button>
+              <button
+                class="app-editor-btn app-editor-btn--pill"
+                title="在上方插入空行"
+                type="button"
+                @click="insertParagraphBesideSelected(-1)"
+              >
+                <span class="app-editor-btn-label">前插行</span>
+              </button>
+              <button
+                class="app-editor-btn app-editor-btn--pill"
+                title="在下方插入空行"
+                type="button"
+                @click="insertParagraphBesideSelected(1)"
+              >
+                <span class="app-editor-btn-label">后插行</span>
+              </button>
+              <button
+                class="app-editor-btn app-editor-btn--danger"
+                title="删除当前块"
+                type="button"
+                @click="deleteSelectedElement"
+              >
+                <svg class="size-3.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
+              </button>
+              <button
+                class="app-editor-btn app-editor-btn--pill"
+                title="重置本面板设置的样式（边距/背景/边框/圆角/对齐）"
+                type="button"
+                @click="resetElementStyles"
+              >
+                <span class="app-editor-btn-label">重置</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 上层卡片：多栏布局专用设置工具栏（只要处于多栏中即显示） -->
       <div
         v-if="selectedColumnsTarget"
@@ -3121,7 +4183,7 @@ onBeforeUnmount(() => {
         @click="togglePanel('size')"
       >
         <Expand class="size-3.5" />
-        <span class="app-editor-btn-label">{{ displayPercent }}%</span>
+        <span class="app-editor-btn-label">{{ sizePillLabel }}</span>
         <ChevronDown
           class="size-3 opacity-60 transition-transform duration-200"
           :class="{ 'rotate-180': activePanel === 'size' }"
@@ -3251,21 +4313,54 @@ onBeforeUnmount(() => {
           class="app-editor-panel"
           @mousedown.stop
         >
-          <div class="app-editor-panel-title">快速预设</div>
+          <div class="app-editor-panel-title">宽度（百分比 / 固定像素）</div>
+          <div class="app-editor-slider-row">
+            <input
+              v-model="mediaWidthInput"
+              class="app-editor-inspector__num app-editor-inspector__num--wide"
+              inputmode="decimal"
+              placeholder="宽"
+              title="宽度数值"
+              type="text"
+              @change="commitMediaSize"
+              @keydown.enter.prevent="commitMediaSize"
+            />
+            <div class="inline-flex rounded-md border border-border bg-background p-0.5">
+              <button
+                type="button"
+                class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
+                :class="mediaWidthUnit === '%' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+                title="按容器百分比"
+                @click="setMediaWidthUnit('%')"
+              >
+                %
+              </button>
+              <button
+                type="button"
+                class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
+                :class="mediaWidthUnit === 'px' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+                title="固定像素"
+                @click="setMediaWidthUnit('px')"
+              >
+                px
+              </button>
+            </div>
+          </div>
+          <div class="app-editor-panel-title mt-2">快速预设</div>
           <div class="app-editor-presets">
             <button
-              v-for="preset in PRESET_SIZES"
+              v-for="preset in sizePresets"
               :key="preset.value"
               type="button"
               class="app-editor-preset-btn"
-              :class="{ 'is-active': displayPercent === preset.value }"
-              @click="applyPreset(preset.value)"
+              :class="{ 'is-active': String(mediaWidthInput) === String(preset.value) }"
+              @click="applyPresetSize(preset.value)"
             >
               {{ preset.label }}
             </button>
           </div>
-          <div class="app-editor-panel-title mt-2">自定义微调</div>
-          <div class="app-editor-slider-row">
+          <div v-if="mediaWidthUnit === '%'" class="app-editor-panel-title mt-2">拖动微调</div>
+          <div v-if="mediaWidthUnit === '%'" class="app-editor-slider-row">
             <input
               v-model="sliderValue"
               class="app-editor-slider"
@@ -3278,6 +4373,40 @@ onBeforeUnmount(() => {
               @change="onSliderChange"
             />
             <span class="app-editor-pct">{{ displayPercent }}%</span>
+          </div>
+          <div class="app-editor-panel-title mt-2">高度</div>
+          <div class="app-editor-slider-row">
+            <div class="inline-flex rounded-md border border-border bg-background p-0.5">
+              <button
+                type="button"
+                class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
+                :class="mediaHeightMode === 'auto' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+                title="高度自动（保持比例）"
+                @click="setMediaHeightMode('auto')"
+              >
+                自动
+              </button>
+              <button
+                type="button"
+                class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
+                :class="mediaHeightMode === 'px' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+                title="固定像素高度"
+                @click="setMediaHeightMode('px')"
+              >
+                固定
+              </button>
+            </div>
+            <input
+              v-model="mediaHeightInput"
+              class="app-editor-inspector__num app-editor-inspector__num--wide"
+              :disabled="mediaHeightMode !== 'px'"
+              inputmode="decimal"
+              placeholder="高 px"
+              title="高度像素值"
+              type="text"
+              @change="commitMediaSize"
+              @keydown.enter.prevent="commitMediaSize"
+            />
           </div>
         </div>
 
@@ -3366,7 +4495,7 @@ onBeforeUnmount(() => {
         @click="togglePanel('video-size')"
       >
         <Expand class="size-3.5" />
-        <span class="app-editor-btn-label">{{ displayPercent }}%</span>
+        <span class="app-editor-btn-label">{{ sizePillLabel }}</span>
         <ChevronDown
           class="size-3 opacity-60 transition-transform duration-200"
           :class="{ 'rotate-180': activePanel === 'video-size' }"
@@ -3512,21 +4641,54 @@ onBeforeUnmount(() => {
           class="app-editor-panel"
           @mousedown.stop
         >
-          <div class="app-editor-panel-title">快速预设</div>
+          <div class="app-editor-panel-title">宽度（百分比 / 固定像素）</div>
+          <div class="app-editor-slider-row">
+            <input
+              v-model="mediaWidthInput"
+              class="app-editor-inspector__num app-editor-inspector__num--wide"
+              inputmode="decimal"
+              placeholder="宽"
+              title="宽度数值"
+              type="text"
+              @change="commitMediaSize"
+              @keydown.enter.prevent="commitMediaSize"
+            />
+            <div class="inline-flex rounded-md border border-border bg-background p-0.5">
+              <button
+                type="button"
+                class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
+                :class="mediaWidthUnit === '%' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+                title="按容器百分比"
+                @click="setMediaWidthUnit('%')"
+              >
+                %
+              </button>
+              <button
+                type="button"
+                class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
+                :class="mediaWidthUnit === 'px' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+                title="固定像素"
+                @click="setMediaWidthUnit('px')"
+              >
+                px
+              </button>
+            </div>
+          </div>
+          <div class="app-editor-panel-title mt-2">快速预设</div>
           <div class="app-editor-presets">
             <button
-              v-for="preset in PRESET_SIZES"
+              v-for="preset in sizePresets"
               :key="preset.value"
               type="button"
               class="app-editor-preset-btn"
-              :class="{ 'is-active': displayPercent === preset.value }"
-              @click="applyPreset(preset.value)"
+              :class="{ 'is-active': String(mediaWidthInput) === String(preset.value) }"
+              @click="applyPresetSize(preset.value)"
             >
               {{ preset.label }}
             </button>
           </div>
-          <div class="app-editor-panel-title mt-2">自定义微调</div>
-          <div class="app-editor-slider-row">
+          <div v-if="mediaWidthUnit === '%'" class="app-editor-panel-title mt-2">拖动微调</div>
+          <div v-if="mediaWidthUnit === '%'" class="app-editor-slider-row">
             <input
               v-model="sliderValue"
               class="app-editor-slider"
@@ -3539,6 +4701,40 @@ onBeforeUnmount(() => {
               @change="onSliderChange"
             />
             <span class="app-editor-pct">{{ displayPercent }}%</span>
+          </div>
+          <div class="app-editor-panel-title mt-2">高度</div>
+          <div class="app-editor-slider-row">
+            <div class="inline-flex rounded-md border border-border bg-background p-0.5">
+              <button
+                type="button"
+                class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
+                :class="mediaHeightMode === 'auto' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+                title="高度自动（保持比例）"
+                @click="setMediaHeightMode('auto')"
+              >
+                自动
+              </button>
+              <button
+                type="button"
+                class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
+                :class="mediaHeightMode === 'px' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+                title="固定像素高度"
+                @click="setMediaHeightMode('px')"
+              >
+                固定
+              </button>
+            </div>
+            <input
+              v-model="mediaHeightInput"
+              class="app-editor-inspector__num app-editor-inspector__num--wide"
+              :disabled="mediaHeightMode !== 'px'"
+              inputmode="decimal"
+              placeholder="高 px"
+              title="高度像素值"
+              type="text"
+              @change="commitMediaSize"
+              @keydown.enter.prevent="commitMediaSize"
+            />
           </div>
         </div>
 
@@ -4250,6 +5446,95 @@ onBeforeUnmount(() => {
   outline-offset: -2px;
   background-color: hsl(var(--primary) / 5%);
   border-radius: 10px;
+}
+
+/* 元素检查器选中：虚线描边，与容器实线区分，内收防裁剪 */
+.app-editor-wrapper .app-editor-element--selected {
+  outline: 2px dashed hsl(var(--primary) / 80%);
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+
+/* 难点击元素的编辑态点击区（仅编辑器内，不进输出）：
+ * 空段落给最小高度，hr 上下加垫（背景裁剪保持线条位置） */
+.app-editor-wrapper .vben-tiptap-content p:empty {
+  min-height: 1.5em;
+}
+
+.app-editor-wrapper .vben-tiptap-content hr {
+  padding: 8px 0;
+  background-clip: content-box;
+  cursor: pointer;
+}
+
+/* 检查器表单控件 */
+.app-editor-inspector__actions {
+  align-items: flex-start;
+}
+
+.app-editor-inspector__group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.app-editor-inspector__quad {
+  display: flex;
+  gap: 4px;
+}
+
+.app-editor-inspector__quad label {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 10px;
+  color: hsl(var(--muted-foreground));
+}
+
+.app-editor-inspector__num {
+  width: 40px;
+  padding: 3px 4px;
+  font-size: 11px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 4px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  outline: none;
+}
+
+.app-editor-inspector__num:focus {
+  border-color: hsl(var(--primary));
+}
+
+.app-editor-inspector__num--wide {
+  width: 52px;
+}
+
+.app-editor-inspector__url {
+  width: 150px;
+  padding: 3px 6px;
+  font-size: 11px;
+  font-family: monospace;
+  border: 1px solid hsl(var(--border));
+  border-radius: 4px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  outline: none;
+}
+
+.app-editor-inspector__url:focus {
+  border-color: hsl(var(--primary));
+}
+
+.app-editor-inspector__color {
+  width: 26px;
+  height: 24px;
+  padding: 1px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 4px;
+  background: hsl(var(--background));
+  cursor: pointer;
 }
 
 /* 移动端 768px 自适应响应式（支持默认堆叠与保持并排两档模式） */

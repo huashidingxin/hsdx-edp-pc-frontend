@@ -222,7 +222,11 @@ onMounted(async () => {
   await cf.load();
   try {
     const { data } = await new Resource('categories').list({ per_page: 100, type: 5 });
-    categories.value = data || [];
+    // locales[0] 已由后端按默认语言排序，取主语种名称作为展示名
+    categories.value = (data || []).map((c) => ({
+      ...c,
+      name: c.locales?.[0]?.name || `#${c.id}`,
+    }));
   } catch (error) {
     console.error(error);
   }
