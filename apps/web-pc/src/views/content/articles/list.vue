@@ -134,6 +134,12 @@ const baseFormFields = [
     type: 'datetime',
     label: '发布时间',
     span: 12,
+  },
+  {
+    field: 'created_at',
+    type: 'datetime',
+    label: '创建时间',
+    span: 12,
     displayOnly: true,
   },
   {
@@ -157,15 +163,6 @@ const localeFields = computed(() => [
   { field: 'slug', label: 'Slug', type: 'text' },
   { field: 'summary', label: '摘要', type: 'textarea' },
   { field: 'body', label: '正文', type: 'editor' },
-  {
-    field: 'attributes',
-    label: '产品参数',
-    type: 'pairs',
-    attrs: {
-      labelPlaceholder: '名称（如：成品厚度）',
-      valuePlaceholder: '内容（如：0.2mm-1.5mm）',
-    },
-  },
   { field: 'seo_title', label: 'SEO 标题', type: 'text' },
   { field: 'seo_description', label: 'SEO 描述', type: 'textarea' },
   { field: 'seo_keywords', label: 'SEO 关键词', type: 'text' },
