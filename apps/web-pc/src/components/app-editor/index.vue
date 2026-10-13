@@ -55,6 +55,7 @@ import {
   expandBoxSides,
   floatToStyledAncestor,
   friendlyNodeName,
+  hasSpanMarkStyles,
   insertParagraphBeside,
   isAlignableNode,
   MANAGED_STYLE_KEYS,
@@ -63,6 +64,7 @@ import {
   parseStyleDecls,
   resolveElementFromSelection,
   resolveInspectorTarget,
+  resolveSpanTarget,
 } from './element-inspector';
 import { createEditorExtensions } from './extensions';
 import { DEFAULT_THUMBNAIL_PROCESS, defaultFetchMedia, stripThumbnailParam } from './media-api';
@@ -82,6 +84,7 @@ import {
   dispatchColumnsSelected,
   dispatchElementSelected,
   dispatchSelectionCleared,
+  dispatchSpanSelected,
   dispatchTableSelected,
 } from './selection-plugin';
 import { getTableDimensions } from './table-tools';
@@ -795,6 +798,12 @@ function clearAllSelection() {
 function selectElementForTarget(target) {
   const editor = editorInstance.value;
   if (!editor) return;
+  // 行内 span（textStyle mark）优先：点谁选谁；无样式文本回落块级解析
+  const spanFound = resolveSpanTarget(editor.view, target);
+  if (spanFound) {
+    applySpanSelection(spanFound);
+    return;
+  }
   const found = resolveInspectorTarget(editor.view, target, {
     findImageNodeAndPos,
     findVideoNodeAndPos,
@@ -805,6 +814,115 @@ function selectElementForTarget(target) {
     applyElementSelection(found, found.el);
   } else {
     clearElementSelection();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 行内 span（textStyle mark）选中支持
+// ---------------------------------------------------------------------------
+
+/** 由文档区间取 span 对应 DOM 元素（区间公共祖先，文本节点取父元素） */
+function spanSelectionEl(editor, from, to) {
+  try {
+    const a = editor.view.domAtPos(from);
+    const b = editor.view.domAtPos(to);
+    const range = document.createRange();
+    range.setStart(a.node, a.offset);
+    range.setEnd(b.node, b.offset);
+    const container = range.commonAncestorContainer;
+    const el = container.nodeType === 1 ? container : container.parentElement;
+    return el instanceof HTMLElement ? el : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 应用 span 选中：虚线描边 + 面包屑 + 面板回显 inlineStyle */
+function applySpanSelection(found) {
+  const editor = editorInstance.value;
+  if (!editor) return;
+  selectedElementTarget.value = {
+    kind: 'span',
+    from: found.from,
+    to: found.to,
+    mark: found.mark,
+    el: spanSelectionEl(editor, found.from, found.to),
+  };
+  loadElementForm({ attrs: { style: found.mark.attrs.inlineStyle || '' } });
+  refreshElementCrumbs();
+  syncSpanHighlight(found.from, found.to);
+  nextTick(() => {
+    refreshBoxOverlay();
+  });
+}
+
+function syncSpanHighlight(from, to) {
+  const editor = editorInstance.value;
+  if (!editor) return;
+  try {
+    const cur = appEditorSelectionKey.getState(editor.state);
+    if (cur?.spanFrom !== from || cur?.spanTo !== to) {
+      dispatchSpanSelected(editor, from, to);
+    }
+  } catch {
+    /* 忽略 */
+  }
+}
+
+/** 在文档区间内找一个带样式的 textStyle mark（范围失效时兜底） */
+function findSpanMarkInRange(doc, from, to, markType) {
+  let found = null;
+  try {
+    doc.nodesBetween(from, to, (node) => {
+      if (found) return false;
+      const mark = node.marks.find(
+        (m) => m.type === markType && hasSpanMarkStyles(m.attrs),
+      );
+      if (mark) found = mark;
+      return !found;
+    });
+  } catch {
+    /* 忽略 */
+  }
+  return found;
+}
+
+/** span 样式提交：合并 inlineStyle 后 addMark 覆盖同型 mark（单事务可撤销） */
+function commitSpanStyle(updates, removeKeys = []) {
+  const editor = editorInstance.value;
+  const sel = selectedElementTarget.value;
+  if (!editor || !sel || sel.kind !== 'span') return false;
+  const markType = editor.state.schema.marks?.textStyle;
+  if (!markType) return false;
+  const { from, to, mark } = sel;
+  let liveMark = mark;
+  try {
+    if (!editor.state.doc.rangeHasMark(from, to, mark)) {
+      const found = findSpanMarkInRange(editor.state.doc, from, to, markType);
+      if (!found) {
+        clearElementSelection();
+        return false;
+      }
+      liveMark = found;
+    }
+  } catch {
+    clearElementSelection();
+    return false;
+  }
+  const next = mergeStyleDecls(liveMark.attrs.inlineStyle || '', updates, removeKeys);
+  const nextMark = liveMark.type.create({ ...liveMark.attrs, inlineStyle: next });
+  try {
+    // AddMarkStep 会替换同型 mark，无需先 removeMark
+    editor.view.dispatch(editor.state.tr.addMark(from, to, nextMark));
+    sel.mark = nextMark;
+    loadElementForm({ attrs: { style: next || '' } });
+    syncSpanHighlight(from, to);
+    nextTick(() => {
+      refreshBoxOverlay();
+    });
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -978,7 +1096,12 @@ const INSPECTOR_RADIUS_PRESETS = [
 
 /** 当前背景图尺寸模式（铺满/完整高亮用） */
 const elementBgSize = computed(() => {
-  const style = selectedElementTarget.value?.node?.attrs?.style || '';
+  const sel = selectedElementTarget.value;
+  if (!sel) return '';
+  const style =
+    sel.kind === 'span'
+      ? sel.mark?.attrs?.inlineStyle || ''
+      : sel.node?.attrs?.style || '';
   const m = String(style).match(/background-size\s*:\s*([^;]+)/i);
   return m ? m[1].trim().toLowerCase() : '';
 });
@@ -1067,6 +1190,18 @@ function refreshElementCrumbs() {
     elementCrumbs.value = [];
     return;
   }
+  if (sel.kind === 'span') {
+    // span 目标：链首为自身，其后为所在文本块的块级祖先链
+    try {
+      elementCrumbs.value = [
+        { pos: sel.from, label: 'span 样式', span: true, hasManaged: true },
+        ...ancestorChain(editor.state.doc, sel.from),
+      ];
+    } catch {
+      elementCrumbs.value = [];
+    }
+    return;
+  }
   try {
     elementCrumbs.value = buildCrumbChain(
       editor.state.doc,
@@ -1077,6 +1212,26 @@ function refreshElementCrumbs() {
   } catch {
     elementCrumbs.value = [];
   }
+}
+
+/** 面包屑点击：span 链首回选自身，其余切换到祖先块 */
+function onCrumbClick(crumb) {
+  if (crumb.span) {
+    const sel = selectedElementTarget.value;
+    if (sel?.kind === 'span' && sel.mark) {
+      applySpanSelection({ from: sel.from, to: sel.to, mark: sel.mark });
+    }
+    return;
+  }
+  selectElementAncestor(crumb.pos);
+}
+
+/** 面包屑激活态：span 链首或节点位置匹配 */
+function isCrumbActive(crumb) {
+  const sel = selectedElementTarget.value;
+  if (!sel) return false;
+  if (crumb.span) return sel.kind === 'span';
+  return sel.kind !== 'span' && crumb.pos === sel.pos;
 }
 
 // ---------------------------------------------------------------------------
@@ -1103,6 +1258,14 @@ function resolveHoverElement() {
   const sel = selectedElementTarget.value;
   const editor = editorInstance.value;
   if (!sel || !editor) return null;
+  if (sel.kind === 'span') {
+    let spanEl = sel.el && sel.el.isConnected ? sel.el : null;
+    if (!spanEl) {
+      spanEl = spanSelectionEl(editor, sel.from, sel.to);
+      if (spanEl) sel.el = spanEl;
+    }
+    return spanEl;
+  }
   let el = sel.el && sel.el.isConnected ? sel.el : null;
   if (!el) {
     try {
@@ -1210,6 +1373,10 @@ function refreshBoxOverlay() {
     return;
   }
   let el = sel.el && sel.el.isConnected ? sel.el : null;
+  if (!el && sel.kind === 'span') {
+    el = spanSelectionEl(editor, sel.from, sel.to);
+    if (el) sel.el = el;
+  }
   if (!el) {
     try {
       const dom = editor.view.nodeDOM(sel.pos);
@@ -1238,10 +1405,17 @@ function refreshBoxOverlay() {
     return;
   }
   let node = sel.node;
-  try {
-    node = editor.state.doc.nodeAt(sel.pos) ?? node;
-  } catch {}
-  const layers = computeBoxOverlay(rect, node?.attrs?.style || '');
+  let styleSource = '';
+  if (sel.kind === 'span') {
+    // span 目标：样式来自 mark 的 inlineStyle 属性
+    styleSource = sel.mark?.attrs?.inlineStyle || '';
+  } else {
+    try {
+      node = editor.state.doc.nodeAt(sel.pos) ?? node;
+    } catch {}
+    styleSource = node?.attrs?.style || '';
+  }
+  const layers = computeBoxOverlay(rect, styleSource);
   if (!layers) {
     boxOverlay.visible = false;
     return;
@@ -1276,6 +1450,7 @@ function refreshBoxOverlay() {
 }
 
 function applyElementSelection(found, el) {  selectedElementTarget.value = {
+    kind: 'node',
     el: el || null,
     pos: found.pos,
     node: found.node,
@@ -1308,9 +1483,12 @@ function clearElementSelection() {
   isHoveringSelected.value = false;
   if (editorInstance.value) {
     try {
-      const cur = appEditorSelectionKey.getState(editorInstance.value.state)?.elementPos;
-      if (cur !== null && cur !== undefined) {
+      const cur = appEditorSelectionKey.getState(editorInstance.value.state);
+      if (cur?.elementPos !== null && cur?.elementPos !== undefined) {
         dispatchSelectionCleared(editorInstance.value, 'element');
+      }
+      if (cur?.spanFrom !== null && cur?.spanFrom !== undefined) {
+        dispatchSelectionCleared(editorInstance.value, 'span');
       }
     } catch {
       /* 忽略 */
@@ -1323,6 +1501,8 @@ function resolveElementPos() {
   const sel = selectedElementTarget.value;
   const editor = editorInstance.value;
   if (!sel || !editor) return null;
+  // span 目标没有节点位置，块级操作路径不适用
+  if (sel.kind === 'span') return null;
   if (sel.el && sel.el.isConnected) {
     try {
       const fresh = resolveInspectorTarget(editor.view, sel.el, {
@@ -1353,6 +1533,14 @@ function resolveElementPos() {
 }
 
 function refreshSelectedElementNode() {
+  const sel = selectedElementTarget.value;
+  if (!sel) return;
+  if (sel.kind === 'span') {
+    loadElementForm({ attrs: { style: sel.mark?.attrs?.inlineStyle || '' } });
+    refreshElementCrumbs();
+    syncSpanHighlight(sel.from, sel.to);
+    return;
+  }
   const pos = resolveElementPos();
   if (pos === null) {
     clearElementSelection();
@@ -1370,6 +1558,10 @@ function refreshSelectedElementNode() {
 function commitElementStyle(updates, removeKeys = []) {
   const editor = editorInstance.value;
   if (!editor || !selectedElementTarget.value) return false;
+  // span（textStyle mark）目标：走 addMark 路径更新 inlineStyle
+  if (selectedElementTarget.value.kind === 'span') {
+    return commitSpanStyle(updates, removeKeys);
+  }
   const pos = resolveElementPos();
   if (pos === null) {
     clearElementSelection();
@@ -1534,7 +1726,10 @@ function commitElementOpacity() {
 function resetElementStyles() {
   const ok = commitElementStyle([], [...MANAGED_STYLE_KEYS]);
   if (ok) {
-    loadElementForm(selectedElementTarget.value?.node);
+    // span 目标的表单已由 commitSpanStyle 按 inlineStyle 重载，勿再清空
+    if (selectedElementTarget.value?.kind !== 'span') {
+      loadElementForm(selectedElementTarget.value?.node);
+    }
     message.success('已重置该元素的检查器样式');
   }
 }
@@ -1579,6 +1774,10 @@ function runElementOp(fn) {
   const editor = editorInstance.value;
   const sel = selectedElementTarget.value;
   if (!editor || !sel) return;
+  if (sel.kind === 'span') {
+    message.info('行内样式文本不支持块操作');
+    return;
+  }
   const pos = resolveElementPos();
   if (pos === null) {
     clearElementSelection();
@@ -3502,7 +3701,7 @@ onBeforeUnmount(() => {
               </svg>
               检查器
             </span>
-            <span class="app-editor-tag-badge">{{ friendlyNodeName(selectedElementTarget.node) }}</span>
+            <span class="app-editor-tag-badge">{{ selectedElementTarget.kind === 'span' ? 'span 样式文本' : friendlyNodeName(selectedElementTarget.node) }}</span>
           </div>
           <button
             class="text-[11px] text-muted-foreground hover:text-foreground px-1 shrink-0"
@@ -3518,12 +3717,12 @@ onBeforeUnmount(() => {
         <div v-if="elementCrumbs.length > 1" class="flex flex-wrap items-center gap-1 px-1 pb-1 text-[11px]">
           <button
             v-for="crumb in elementCrumbs"
-            :key="`${crumb.pos}`"
+            :key="`${crumb.span ? 'span' : 'node'}-${crumb.pos}`"
             type="button"
             class="rounded px-1.5 py-0.5 transition-colors inline-flex items-center gap-1"
-            :class="crumb.pos === selectedElementTarget.pos ? 'bg-primary text-primary-foreground font-medium' : 'text-muted-foreground hover:bg-muted hover:text-foreground'"
+            :class="isCrumbActive(crumb) ? 'bg-primary text-primary-foreground font-medium' : 'text-muted-foreground hover:bg-muted hover:text-foreground'"
             :title="`选中${crumb.label}${crumb.hasManaged ? '（有自定义样式）' : ''}`"
-            @click="selectElementAncestor(crumb.pos)"
+            @click="onCrumbClick(crumb)"
           >
             <span
               v-if="crumb.hasManaged"
@@ -3792,54 +3991,56 @@ onBeforeUnmount(() => {
           <div class="app-editor-inspector__group">
             <span class="app-editor-panel-title">块操作</span>
             <div class="flex items-center gap-1">
-              <button
-                class="app-editor-btn"
-                title="上移"
-                type="button"
-                @click="moveSelectedElement(-1)"
-              >
-                <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15" /></svg>
-              </button>
-              <button
-                class="app-editor-btn"
-                title="下移"
-                type="button"
-                @click="moveSelectedElement(1)"
-              >
-                <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9" /></svg>
-              </button>
-              <button
-                class="app-editor-btn app-editor-btn--pill"
-                title="复制当前块"
-                type="button"
-                @click="duplicateSelectedElement"
-              >
-                <span class="app-editor-btn-label">复制</span>
-              </button>
-              <button
-                class="app-editor-btn app-editor-btn--pill"
-                title="在上方插入空行"
-                type="button"
-                @click="insertParagraphBesideSelected(-1)"
-              >
-                <span class="app-editor-btn-label">前插行</span>
-              </button>
-              <button
-                class="app-editor-btn app-editor-btn--pill"
-                title="在下方插入空行"
-                type="button"
-                @click="insertParagraphBesideSelected(1)"
-              >
-                <span class="app-editor-btn-label">后插行</span>
-              </button>
-              <button
-                class="app-editor-btn app-editor-btn--danger"
-                title="删除当前块"
-                type="button"
-                @click="deleteSelectedElement"
-              >
-                <svg class="size-3.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
-              </button>
+              <template v-if="selectedElementTarget.kind !== 'span'">
+                <button
+                  class="app-editor-btn"
+                  title="上移"
+                  type="button"
+                  @click="moveSelectedElement(-1)"
+                >
+                  <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15" /></svg>
+                </button>
+                <button
+                  class="app-editor-btn"
+                  title="下移"
+                  type="button"
+                  @click="moveSelectedElement(1)"
+                >
+                  <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9" /></svg>
+                </button>
+                <button
+                  class="app-editor-btn app-editor-btn--pill"
+                  title="复制当前块"
+                  type="button"
+                  @click="duplicateSelectedElement"
+                >
+                  <span class="app-editor-btn-label">复制</span>
+                </button>
+                <button
+                  class="app-editor-btn app-editor-btn--pill"
+                  title="在上方插入空行"
+                  type="button"
+                  @click="insertParagraphBesideSelected(-1)"
+                >
+                  <span class="app-editor-btn-label">前插行</span>
+                </button>
+                <button
+                  class="app-editor-btn app-editor-btn--pill"
+                  title="在下方插入空行"
+                  type="button"
+                  @click="insertParagraphBesideSelected(1)"
+                >
+                  <span class="app-editor-btn-label">后插行</span>
+                </button>
+                <button
+                  class="app-editor-btn app-editor-btn--danger"
+                  title="删除当前块"
+                  type="button"
+                  @click="deleteSelectedElement"
+                >
+                  <svg class="size-3.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
+                </button>
+              </template>
               <button
                 class="app-editor-btn app-editor-btn--pill"
                 title="重置本面板设置的样式（边距/背景/边框/圆角/对齐）"

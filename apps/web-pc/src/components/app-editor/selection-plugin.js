@@ -43,7 +43,15 @@ export const selectionPlugin = new Plugin({
 
   state: {
     init() {
-      return { columnsPos: null, mediaPos: null, mediaType: null, tablePos: null, elementPos: null };
+      return {
+        columnsPos: null,
+        mediaPos: null,
+        mediaType: null,
+        tablePos: null,
+        elementPos: null,
+        spanFrom: null,
+        spanTo: null,
+      };
     },
     apply(tr, prev) {
       let next = {
@@ -52,6 +60,8 @@ export const selectionPlugin = new Plugin({
         mediaType: prev.mediaType,
         tablePos: mapPos(tr.mapping, prev.tablePos),
         elementPos: mapPos(tr.mapping, prev.elementPos),
+        spanFrom: mapPos(tr.mapping, prev.spanFrom),
+        spanTo: mapPos(tr.mapping, prev.spanTo),
       };
       const meta = tr.getMeta(appEditorSelectionKey);
       if (meta) {
@@ -73,8 +83,22 @@ export const selectionPlugin = new Plugin({
           next.elementPos = meta.pos;
         } else if (meta.type === 'clearElement') {
           next.elementPos = null;
+        } else if (meta.type === 'setSpan') {
+          next.spanFrom = meta.from;
+          next.spanTo = meta.to;
+        } else if (meta.type === 'clearSpan') {
+          next.spanFrom = null;
+          next.spanTo = null;
         } else if (meta.type === 'clearAll') {
-          next = { columnsPos: null, mediaPos: null, mediaType: null, tablePos: null, elementPos: null };
+          next = {
+            columnsPos: null,
+            mediaPos: null,
+            mediaType: null,
+            tablePos: null,
+            elementPos: null,
+            spanFrom: null,
+            spanTo: null,
+          };
         }
       }
       return next;
@@ -136,6 +160,14 @@ export const selectionPlugin = new Plugin({
             );
           }
         }
+        if (typeof sel.spanFrom === 'number' && typeof sel.spanTo === 'number') {
+          // 行内 span（textStyle mark）：行内 decoration 包住文本区间
+          decos.push(
+            Decoration.inline(sel.spanFrom, sel.spanTo, {
+              class: ELEMENT_SELECTED_CLASS,
+            }),
+          );
+        }
       } catch {
         /* 忽略，返回已收集的 decorations */
       }
@@ -179,6 +211,14 @@ export function dispatchElementSelected(editor, pos) {
   editor.view.dispatch(editor.state.tr.setMeta(appEditorSelectionKey, { type: 'setElement', pos }));
 }
 
+/** 高亮行内 span（textStyle mark 区间 [from, to]） */
+export function dispatchSpanSelected(editor, from, to) {
+  if (!editor || typeof from !== 'number' || typeof to !== 'number') return;
+  editor.view.dispatch(
+    editor.state.tr.setMeta(appEditorSelectionKey, { type: 'setSpan', from, to }),
+  );
+}
+
 /** 清除全部选中高亮 */
 export function dispatchSelectionCleared(editor, scope = 'clearAll') {
   if (!editor) return;
@@ -191,6 +231,8 @@ export function dispatchSelectionCleared(editor, scope = 'clearAll') {
           ? 'clearTable'
           : scope === 'element'
             ? 'clearElement'
-            : 'clearAll';
+            : scope === 'span'
+              ? 'clearSpan'
+              : 'clearAll';
   editor.view.dispatch(editor.state.tr.setMeta(appEditorSelectionKey, { type }));
 }

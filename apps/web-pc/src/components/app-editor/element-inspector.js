@@ -484,6 +484,108 @@ export function resolveInspectorTarget(view, target, finders = {}) {
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// 行内 span（textStyle mark）目标解析
+// ---------------------------------------------------------------------------
+
+/** span 视为"有样式"的 mark 属性（任一非空即视为可选中目标） */
+const SPAN_STYLE_ATTRS = [
+  'inlineStyle',
+  'class',
+  'color',
+  'backgroundColor',
+  'fontFamily',
+  'fontSize',
+  'lineHeight',
+];
+
+export function hasSpanMarkStyles(attrs) {
+  if (!attrs) return false;
+  return SPAN_STYLE_ATTRS.some((key) => {
+    const value = attrs[key];
+    return value !== null && value !== undefined && String(value).trim() !== '';
+  });
+}
+
+/**
+ * 在文本块内，从点击位置向两侧扩展携带同一 textStyle mark 的连续行内区间。
+ * ProseMirror 把相邻同 marks 的行内内容渲染进同一个 DOM span，
+ * 因此该连续区间就是"被点击的那个 span"。
+ */
+function spanMarkRangeAround($pos, markType, mark) {
+  const children = [];
+  $pos.parent.forEach((child, offset) => {
+    children.push({ node: child, offset });
+  });
+  if (children.length === 0) return null;
+  let idx = children.findIndex(
+    (entry) =>
+      $pos.parentOffset >= entry.offset &&
+      $pos.parentOffset < entry.offset + entry.node.nodeSize,
+  );
+  if (idx === -1) {
+    idx = children.findIndex((entry) => entry.offset >= $pos.parentOffset);
+  }
+  if (idx === -1) return null;
+  const hasMark = (entry) =>
+    entry.node.marks.some((m) => m.type === markType && m.eq(mark));
+  if (!hasMark(children[idx])) return null;
+  let lo = idx;
+  let hi = idx;
+  while (lo - 1 >= 0 && hasMark(children[lo - 1])) lo -= 1;
+  while (hi + 1 < children.length && hasMark(children[hi + 1])) hi += 1;
+  const base = $pos.start();
+  const from = base + children[lo].offset;
+  const to = base + children[hi].offset + children[hi].node.nodeSize;
+  return to > from ? { from, to } : null;
+}
+
+/**
+ * 解析行内 span 目标：点击目标须落在某个 span 内，对应位置存在带实际
+ * 样式的 textStyle mark 时返回 { from, to, mark }；否则返回 null
+ * （调用方回落到块级节点解析，普通文本行为不变）。
+ * 注意：img/video 不由 span 接管（媒体有专属卡片）。
+ */
+export function resolveSpanTarget(view, target) {
+  if (!view || !target || typeof target.closest !== 'function') return null;
+  try {
+    if (!view.dom || !view.dom.contains(target)) return null;
+    if (target.tagName === 'IMG' || target.tagName === 'VIDEO') return null;
+    if (target.closest('img, video')) return null;
+    const spanEl = target.closest('span');
+    if (!spanEl || !view.dom.contains(spanEl)) return null;
+    const markType = view.state.schema.marks?.textStyle;
+    if (!markType) return null;
+    const pos = view.posAtDOM(spanEl, 0);
+    const $pos = view.state.doc.resolve(pos);
+    if (!$pos.parent.isTextblock) return null;
+    // posAtDOM(span,0) 落在 span 内容起点（边界），marks() 可能取到
+    // 相邻普通文本的交集而丢掉 span mark，故依次回退 nodeAfter/nodeBefore
+    const findMark = ($p) => {
+      const own = $p.marks().find((m) => m.type === markType && hasSpanMarkStyles(m.attrs));
+      if (own) return own;
+      const after = $p.nodeAfter;
+      if (after) {
+        const m2 = after.marks.find((m) => m.type === markType && hasSpanMarkStyles(m.attrs));
+        if (m2) return m2;
+      }
+      const before = $p.nodeBefore;
+      if (before) {
+        const m3 = before.marks.find((m) => m.type === markType && hasSpanMarkStyles(m.attrs));
+        if (m3) return m3;
+      }
+      return null;
+    };
+    const mark = findMark($pos);
+    if (!mark) return null;
+    const range = spanMarkRangeAround($pos, markType, mark);
+    if (!range) return null;
+    return { from: range.from, to: range.to, mark };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * 面包屑（原始链）：目标位置的块级祖先链（由近及远，最多 6 级）。
  * 注意 resolve() 在嵌套起始边界会取浅层（如 cell 内容起点与段落起点重合时
