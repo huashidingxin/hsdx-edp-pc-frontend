@@ -55,7 +55,9 @@ export const contentStylesCss = `
   box-sizing: border-box;
 }
 
-/* 图片：内联已有 max-width，此处双保险（窄屏不溢出） */
+/* 图片：内联已有 max-width，此处双保险（窄屏不溢出）
+ * 双类兼容：edp-editor__image 为现行类；vben-tiptap__image 为存量内容旧类 */
+img.edp-editor__image,
 img.vben-tiptap__image {
   max-width: 100%;
   height: auto;

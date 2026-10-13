@@ -604,7 +604,9 @@ export function createEditorExtensions(options = {}) {
     RichImage.configure({
       allowBase64: true,
       HTMLAttributes: {
-        class: 'vben-tiptap__image',
+        // 编辑器插入的图片统一挂 edp 命名类（旧类 vben-tiptap__image
+        // 仅存量内容保留，CSS 双类兼容，见 content-styles.js / index.vue）
+        class: 'edp-editor__image',
         referrerpolicy: 'no-referrer',
       },
     }),

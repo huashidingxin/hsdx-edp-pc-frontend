@@ -5797,8 +5797,10 @@ defineExpose({
   margin: 0.25rem 0;
 }
 
-/* 解除 tiptap 默认 max-width: min(100%, 640px) 限制，允许全宽图片与视频占满编辑器容器 */
+/* 解除 tiptap 默认 max-width: min(100%, 640px) 限制，允许全宽图片与视频占满编辑器容器
+ * 双类兼容：edp-editor__image 为现行类；vben-tiptap__image 为存量内容旧类 */
 .vben-tiptap-content img,
+.vben-tiptap-content .edp-editor__image,
 .vben-tiptap-content .vben-tiptap__image {
   max-width: 100%;
 }

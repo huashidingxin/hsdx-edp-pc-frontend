@@ -314,6 +314,30 @@ describe('app-editor 扩展与保真解析验证', () => {
     already.destroy();
   });
 
+  it('图片渲染类名：新插入使用 edp-editor__image，存量旧类保留（双类兼容）', () => {
+    const extensions = createEditorExtensions();
+
+    // 新插入（无 class attr）：仅输出新类
+    const fresh = new Editor({
+      extensions,
+      content: '<p><img src="https://example.com/a.png"></p>',
+    });
+    const freshHtml = fresh.getHTML();
+    expect(freshHtml).toContain('edp-editor__image');
+    expect(freshHtml).not.toContain('vben-tiptap__image');
+    fresh.destroy();
+
+    // 存量内容带旧类：PreserveAttributes 保留旧类 + 渲染注入新类，两者并存
+    const legacy = new Editor({
+      extensions,
+      content: '<p><img class="vben-tiptap__image" src="https://example.com/b.png"></p>',
+    });
+    const legacyHtml = legacy.getHTML();
+    expect(legacyHtml).toContain('edp-editor__image');
+    expect(legacyHtml).toContain('vben-tiptap__image');
+    legacy.destroy();
+  });
+
   it('输出样式定义可复制：包含多栏/响应式/图片兜底，不含编辑器内部类', () => {
     expect(typeof contentStylesCss).toBe('string');
     expect(contentStylesCss).toContain('.cms-columns');
@@ -321,6 +345,8 @@ describe('app-editor 扩展与保真解析验证', () => {
     expect(contentStylesCss).toContain('.cms-columns--stack');
     expect(contentStylesCss).toContain('.cms-columns--keep');
     expect(contentStylesCss).toContain('@media (max-width: 768px)');
+    expect(contentStylesCss).toContain('img.edp-editor__image');
+    // 存量内容旧类保留兼容
     expect(contentStylesCss).toContain('img.vben-tiptap__image');
     expect(contentStylesCss).toContain('a.edp-mention');
     // 编辑器内部类（选中高亮/拖拽手柄/提示）不得混入对外样式
