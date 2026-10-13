@@ -227,7 +227,13 @@ onMounted(async () => {
   await cf.load();
   try {
     const { data } = await new Resource('categories').list({ per_page: 100, type: 3 });
-    categories.value = data || [];
+    // 分类接口只返回 locales:[{locale,name}]，没有扁平 name；
+    // 这里解析出扁平 name，供筛选下拉 / 编辑表单 select 的 fieldNames.label='name' 与
+    // 表格分类列的 categories.find(...).name 使用，否则会回退显示 id。
+    categories.value = (data || []).map((c) => ({
+      ...c,
+      name: c.locales?.[0]?.name || `#${c.id}`,
+    }));
   } catch (error) {
     console.error(error);
   }
