@@ -27,6 +27,7 @@ const props = defineProps({
   mode: { type: String, default: 'modal' }, // 'modal' | 'drawer' | 'page'
   title: { type: String, default: '' },
   description: { type: String, default: '' },
+  idKey: { type: String, default: 'id' },
   modelValue: { type: Object, default: () => ({}) },
   fields: { type: Array, default: () => [] },
   editing: { type: Boolean, default: false },
@@ -65,12 +66,16 @@ function handleClose() {
 }
 
 const detailTitle = computed(() => {
+  // 记录有 ID 时在标题区展示（编辑/查看态）
+  const recordId = props.modelValue?.[props.idKey];
+  const suffix =
+    recordId !== undefined && recordId !== null && recordId !== ''
+      ? ` #${recordId}`
+      : '';
   if (props.editing) {
-    return props.modelValue?.id
-      ? `编辑 - ${props.title}`
-      : `新增 - ${props.title}`;
+    return `${recordId ? '编辑' : '新增'} - ${props.title}${suffix}`;
   }
-  return `查看 - ${props.title}`;
+  return `查看 - ${props.title}${suffix}`;
 });
 </script>
 

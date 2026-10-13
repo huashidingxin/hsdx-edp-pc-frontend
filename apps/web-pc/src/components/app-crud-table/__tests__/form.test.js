@@ -48,6 +48,86 @@ describe('useCrudTableForm', () => {
     ]);
   });
 
+  it('removes display-only meta fields from the form body', () => {
+    // ID 在标题区展示、created_at/updated_at 在底部操作容器展示，
+    // 声明为 displayOnly 的这些字段不再在表单体重复渲染
+    const form = createForm(
+      {
+        uuid: 'staff-1',
+        created_at: '2026-09-23 23:51:01',
+        updated_at: '2026-10-13 10:00:00',
+      },
+      {
+        fields: [
+          { field: 'uuid', type: 'text', label: 'ID', displayOnly: true },
+          { field: 'name' },
+          {
+            field: 'created_at',
+            type: 'datetime',
+            label: '创建时间',
+            displayOnly: true,
+          },
+          {
+            field: 'updated_at',
+            type: 'datetime',
+            label: '更新时间',
+            displayOnly: true,
+          },
+        ],
+      },
+    );
+
+    expect(form.formatedFields.value.map((field) => field.field)).toEqual([
+      'name',
+    ]);
+  });
+
+  it('hides the display-only meta fields for new records too', () => {
+    const form = createForm(
+      {},
+      {
+        idKey: 'id',
+        fields: [
+          { field: 'id', type: 'text', label: 'ID', displayOnly: true },
+          {
+            field: 'created_at',
+            type: 'datetime',
+            label: '创建时间',
+            displayOnly: true,
+          },
+          { field: 'name' },
+        ],
+      },
+    );
+
+    expect(form.formatedFields.value.map((field) => field.field)).toEqual([
+      'name',
+    ]);
+  });
+
+  it('keeps editable same-name fields in the form body', () => {
+    const form = createForm(
+      { uuid: 'staff-1', created_at: '2026-09-23 23:51:01' },
+      {
+        fields: [
+          { field: 'uuid' },
+          {
+            field: 'created_at',
+            type: 'datetime',
+            label: '创建时间',
+          },
+          { field: 'name' },
+        ],
+      },
+    );
+
+    expect(form.formatedFields.value.map((field) => field.field)).toEqual([
+      'uuid',
+      'created_at',
+      'name',
+    ]);
+  });
+
   it('uploads only pending file fields with a mounted uploader', async () => {
     const upload = vi.fn();
     const form = createForm(

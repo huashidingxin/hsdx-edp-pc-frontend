@@ -3,6 +3,12 @@ import { computed, ref } from 'vue';
 import { expandDotKeys, flattenDotFieldValues } from '../utils/dot-keys.js';
 
 /**
+ * 元信息时间戳字段（在底部操作容器展示）。
+ * 与 CrudRecordMeta 的底部展示字段保持一致。
+ */
+const META_TIMESTAMP_FIELDS = ['created_at', 'updated_at'];
+
+/**
  * 表单字段格式化与 dot-key 管理 composable
  *
  * @param {object} props - 壳组件 props
@@ -36,9 +42,25 @@ export function useCrudTableForm(props, ctx, modelValueRef) {
   });
 
   /**
-   * 格式化后的字段列表
+   * 元信息布局编排
+   *
+   * ID（编辑/查看时）在详情标题区展示，created_at / updated_at 在底部操作
+   * 按钮容器左侧展示；主体表单不再重复渲染声明为 displayOnly 的这些字段。
+   * 声明为可编辑的同名字段（如自填时间）不受影响，仍留在表单体。
+   *
+   * @param {Array} list - 经过 exclude/fieldFormat/renderKey 处理后的字段列表
+   */
+  function withMetaLayout(list) {
+    const idKey = props.idKey || 'id';
+    const metaNames = new Set([idKey, ...META_TIMESTAMP_FIELDS]);
+    return list.filter((f) => !(metaNames.has(f.field) && f.displayOnly));
+  }
+
+  /**
+   * 格式化后的字段列表（含元信息布局编排）
    * - 通过 excludeFields 过滤
    * - 通过 fieldFormat 再加工（返回 false 跳过）
+   * - displayOnly 的 ID / created_at / updated_at 移出表单体（见 withMetaLayout）
    * - 为循环渲染生成稳定 renderKey
    */
   const formatedFields = computed(() => {
@@ -46,7 +68,7 @@ export function useCrudTableForm(props, ctx, modelValueRef) {
     const editing =
       modelValueRef.value?.[props.idKey || 'id'] !== undefined;
 
-    return (props.fields || [])
+    const list = (props.fields || [])
       .filter((f) => !excludeSet.has(f.field))
       .map((f) => {
         if (typeof props.fieldFormat === 'function') {
@@ -64,6 +86,8 @@ export function useCrudTableForm(props, ctx, modelValueRef) {
         ...f,
         renderKey: getFieldRenderKey(f, index),
       }));
+
+    return withMetaLayout(list);
   });
 
   /**

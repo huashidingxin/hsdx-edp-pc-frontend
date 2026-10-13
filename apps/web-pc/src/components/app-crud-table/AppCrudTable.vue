@@ -27,6 +27,7 @@ import CrudDetailView from './parts/CrudDetailView.vue';
 import CrudFilterBar from './parts/CrudFilterBar.vue';
 import CrudFormActions from './parts/CrudFormActions.vue';
 import CrudGrid from './parts/CrudGrid.vue';
+import CrudRecordMeta from './parts/CrudRecordMeta.vue';
 import CrudToolbar from './parts/CrudToolbar.vue';
 
 defineOptions({ name: 'AppCrudTable' });
@@ -260,14 +261,21 @@ const formDisabled = computed(() => {
   return !permissionApi.checkPermission(action);
 });
 
+// 记录 ID（编辑/查看时有值），在详情标题区展示
+const recordId = computed(() => {
+  const value = currentModelValue.value?.[props.idKey];
+  return value !== undefined && value !== null && value !== ''
+    ? value
+    : null;
+});
+
 const detailTitle = computed(() => {
   const base = pageTitle.value;
+  const suffix = recordId.value !== null ? ` #${recordId.value}` : '';
   if (editing.value) {
-    return currentModelValue.value?.[props.idKey]
-      ? `编辑 - ${base}`
-      : `新增 - ${base}`;
+    return `${recordId.value !== null ? '编辑' : '新增'} - ${base}${suffix}`;
   }
-  return `查看 - ${base}`;
+  return `查看 - ${base}${suffix}`;
 });
 
 // 收集动态 column slot 名（响应式）
@@ -583,6 +591,7 @@ defineExpose({
       <CrudDetailView
         :mode="openType"
         :title="pageTitle"
+        :id-key="idKey"
         :model-value="currentModelValue"
         :fields="formatedFields"
         :editing="editing"
@@ -623,21 +632,25 @@ defineExpose({
       </CrudDetailView>
 
       <template #footer>
-        <CrudFormActions
-          :editing="editing"
-          :disabled="formDisabled"
-          :saving="saving"
-          @submit="handleDetailSubmit"
-          @reset="handleDetailReset"
-          @close="handleDetailClose"
-        >
-          <template v-if="slots['form-actions']" #form-actions="scope">
-            <slot name="form-actions" v-bind="scope"></slot>
-          </template>
-          <template v-if="slots['form-action']" #form-action="scope">
-            <slot name="form-action" v-bind="scope"></slot>
-          </template>
-        </CrudFormActions>
+        <div class="flex w-full items-center justify-between gap-4">
+          <CrudRecordMeta :model-value="currentModelValue" :fields="fields" />
+          <CrudFormActions
+            class="shrink-0"
+            :editing="editing"
+            :disabled="formDisabled"
+            :saving="saving"
+            @submit="handleDetailSubmit"
+            @reset="handleDetailReset"
+            @close="handleDetailClose"
+          >
+            <template v-if="slots['form-actions']" #form-actions="scope">
+              <slot name="form-actions" v-bind="scope"></slot>
+            </template>
+            <template v-if="slots['form-action']" #form-action="scope">
+              <slot name="form-action" v-bind="scope"></slot>
+            </template>
+          </CrudFormActions>
+        </div>
       </template>
     </component>
 
@@ -653,6 +666,7 @@ defineExpose({
         <CrudDetailView
           mode="page"
           :title="pageTitle"
+          :id-key="idKey"
           :model-value="currentModelValue"
           :fields="formatedFields"
           :editing="editing"
@@ -692,22 +706,25 @@ defineExpose({
           </template>
         </CrudDetailView>
 
-        <CrudFormActions
-          class="mt-4"
-          :editing="editing"
-          :disabled="formDisabled"
-          :saving="saving"
-          @submit="handleDetailSubmit"
-          @reset="handleDetailReset"
-          @close="handleDetailClose"
-        >
-          <template v-if="slots['form-actions']" #form-actions="scope">
-            <slot name="form-actions" v-bind="scope"></slot>
-          </template>
-          <template v-if="slots['form-action']" #form-action="scope">
-            <slot name="form-action" v-bind="scope"></slot>
-          </template>
-        </CrudFormActions>
+        <div class="mt-4 flex items-center justify-between gap-4">
+          <CrudRecordMeta :model-value="currentModelValue" :fields="fields" />
+          <CrudFormActions
+            class="shrink-0"
+            :editing="editing"
+            :disabled="formDisabled"
+            :saving="saving"
+            @submit="handleDetailSubmit"
+            @reset="handleDetailReset"
+            @close="handleDetailClose"
+          >
+            <template v-if="slots['form-actions']" #form-actions="scope">
+              <slot name="form-actions" v-bind="scope"></slot>
+            </template>
+            <template v-if="slots['form-action']" #form-action="scope">
+              <slot name="form-action" v-bind="scope"></slot>
+            </template>
+          </CrudFormActions>
+        </div>
       </slot>
     </template>
 
