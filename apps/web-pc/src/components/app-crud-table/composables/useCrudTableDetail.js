@@ -12,9 +12,11 @@ import { buildApiUrl } from '../utils/api-url.js';
 
 /**
  * 详情同步通道（provide/inject）：让详情表单内部（如 LocaleTabsEditor）
- * 也能触发“后台重新加载当前记录”，而不需要知道 API 细节。
+ * 也能触发“后台重新加载当前记录”与“提交当前详情表单”，而不需要知道 API 细节。
  * 用法：const detailSync = inject(DETAIL_SYNC_KEY, null);
  *   detailSync?.reload() -> Promise<boolean>（成功返回 true）。
+ *   detailSync?.save()   -> Promise<void>（等同点「保存」：校验 → 上传 → 落库 → 关闭）。
+ * 两个方法都可能缺席（宿主没提供时），调用前一律判函数存在性。
  */
 export const DETAIL_SYNC_KEY = 'appCrudDetailSync';
 
@@ -287,8 +289,10 @@ export function useCrudTableDetail(props, ctx, callbacks) {
     return await loadDetail(detailId.value);
   }
 
-  // 详情同步通道：详情表单内部按需重载（provide 必须在 setup 同步阶段调用）
-  provide(DETAIL_SYNC_KEY, { reloadDetail });
+  // 详情同步通道：详情表单内部按需重载 / 提交（provide 必须在 setup 同步阶段调用）。
+  // 键名 `reload` 是 LocaleTabsEditor 等调用方一直使用的契约（回归用例也按 reload 注入），
+  // 这里同时给出 `reloadDetail` 别名，避免两处命名再次漂移。
+  provide(DETAIL_SYNC_KEY, { reload: reloadDetail, reloadDetail, save: submit });
 
   /**
    * 提交表单

@@ -68,10 +68,24 @@ vi.mock('antdv-next', async () => {
   });
   InputShell.TextArea = Input.TextArea;
 
+  // Modal 既要能当组件用（一键翻译弹窗），又要保留 Modal.confirm（重新加载确认）
+  const modalStub = defineComponent({
+    name: 'Modal',
+    props: ['open', 'title', 'width', 'confirmLoading'],
+    emits: ['update:open', 'ok', 'cancel'],
+    setup(props, { slots }) {
+      return () =>
+        props.open ? h('div', { class: 'stub-modal' }, slots.default?.()) : null;
+    },
+  });
+  modalStub.confirm = (cfg) => cfg?.onOk?.();
+
   return {
     Button: buttonStub,
     Empty: stub('Empty', ['description', 'image']),
     Input: InputShell,
+    Modal: modalStub,
+    Select: stub('Select', ['value', 'options', 'mode']),
     Spin: stub('Spin', ['spinning']),
     Tabs: stub('Tabs', ['activeKey', 'type', 'size', 'items']),
     message: { error: vi.fn(), success: vi.fn(), warning: vi.fn() },

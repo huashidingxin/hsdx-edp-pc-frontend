@@ -57,17 +57,27 @@ vi.mock('antdv-next', async () => {
     },
   });
   InputShell.TextArea = valueInput('textarea');
+  // Modal 既是组件（一键翻译弹窗，默认关闭即不渲染）也保留 Modal.confirm
+  const modalStub = defineComponent({
+    name: 'Modal',
+    props: ['open', 'title', 'width', 'confirmLoading', 'okText', 'cancelText', 'okButtonProps'],
+    emits: ['update:open', 'ok', 'cancel'],
+    setup(props, { slots }) {
+      return () =>
+        props.open ? h('div', { class: 'stub-modal' }, slots.default?.()) : null;
+    },
+  });
+  modalStub.confirm = (cfg) => {
+    cfg?.onOk?.();
+  };
   return {
     Button: buttonStub,
     Empty: stub('Empty', ['description', 'image']),
     Input: InputShell,
     Spin: stub('Spin', ['spinning']),
     Tabs: stub('Tabs', ['activeKey', 'type', 'size', 'items']),
-    Modal: {
-      confirm: (cfg) => {
-        cfg?.onOk?.();
-      },
-    },
+    Modal: modalStub,
+    Select: stub('Select', ['value', 'options', 'mode']),
     message: {
       error: vi.fn(),
       success: vi.fn(),

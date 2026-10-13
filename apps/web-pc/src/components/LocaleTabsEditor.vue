@@ -43,6 +43,22 @@ const forms = reactive({});
 const dirty = reactive({});
 const uploadRefs = reactive({});
 
+/* ---------------- 一键翻译（弹窗） ----------------
+ * 可翻译字段仅限「可输入」的三类：text / textarea / editor（见 TRANSLATABLE_TYPES）。
+ * 译文只放在弹窗内预览，点「采纳」才回填到表单，之后完全交给主表单保存。
+ */
+/** 可翻译字段类型：text / textarea / editor 三类「可输入」字段 */
+const TRANSLATABLE_TYPES = new Set(['editor', 'text', 'textarea']);
+const translateOpen = ref(false);
+const translating = ref(false);
+const adopting = ref(false);
+const translateTargets = ref([]);
+const translateActive = ref('');
+/** locale -> { field: 译文 }，仅存弹窗会话内的预览结果 */
+const translateResult = reactive({});
+/** 后端回报的译文来源：'ai' 真实模型 / 'mock' 演示占位 */
+const translateProvider = ref('');
+
 /**
  * 每个语种「最近一次回填后的表单指纹」+ 最近一次上抛的 payload 指纹。
  *
@@ -271,6 +287,13 @@ function resetAllState() {
   for (const key of Object.keys(appliedForms)) delete appliedForms[key];
   lastEmittedPayload = null;
   activeCode.value = defaultLocale.value;
+  // 翻译弹窗属于「当前这条记录」的临时会话，行切换/强制重载时一并丢弃，
+  // 否则会把上一条记录的译文采纳到新记录上。
+  resetTranslateResult();
+  translateOpen.value = false;
+  translating.value = false;
+  adopting.value = false;
+  translateTargets.value = [];
 }
 
 /**
@@ -306,7 +329,8 @@ const detailSync = inject(DETAIL_SYNC_KEY, null);
 const reloading = ref(false);
 
 function requestReload() {
-  if (!detailSync) return;
+  // 宿主可能只挂了 save（如菜单项编辑弹窗），没有 reload 就当作不支持重载
+  if (typeof detailSync?.reload !== 'function') return;
   if (dirtyCount.value > 0) {
     Modal.confirm({
       title: '重新加载会丢弃未保存的修改',
@@ -321,7 +345,7 @@ function requestReload() {
 }
 
 async function doReload() {
-  if (!detailSync) return;
+  if (typeof detailSync?.reload !== 'function') return;
   reloading.value = true;
   try {
     const ok = await detailSync.reload();
@@ -476,6 +500,181 @@ async function switchLocale(code) {
   ensureForm(code);
 }
 
+/* ---------------- 一键翻译 ---------------- */
+
+/** 参与翻译的字段：只有可输入的三类，上传/json/参数对不参与 */
+const translateFields = computed(() =>
+  props.fields.filter((f) => TRANSLATABLE_TYPES.has(f.type)),
+);
+
+const translateLocaleOptions = computed(() =>
+  otherCodes.value.map((code) => ({
+    // 已有内容的语种会被采纳覆盖，标签里先讲清楚，避免误操作
+    label: hasAnyContent(code)
+      ? `${nativeLabel(code)}（已有内容，采纳将覆盖）`
+      : nativeLabel(code),
+    value: code,
+  })),
+);
+
+/** 已拿到译文的语种（= 弹窗里的预览 Tab） */
+const translateLocales = computed(() => Object.keys(translateResult));
+
+const translateTabItems = computed(() =>
+  translateLocales.value.map((code) => ({
+    key: code,
+    label: nativeLabel(code),
+  })),
+);
+
+/** 主语种是否有可翻译内容（决定「一键翻译」按钮是否可用） */
+const hasTranslatableSource = computed(() =>
+  translateFields.value.some((f) => {
+    const v = forms[defaultLocale.value]?.[f.field];
+    return typeof v === 'string' && v.trim() !== '';
+  }),
+);
+
+const canAdoptTranslate = computed(
+  () => !adopting.value && translateLocales.value.length > 0,
+);
+
+function resetTranslateResult() {
+  for (const key of Object.keys(translateResult)) delete translateResult[key];
+  translateActive.value = '';
+  translateProvider.value = '';
+}
+
+function openTranslate() {
+  translateTargets.value = [...otherCodes.value];
+  resetTranslateResult();
+  translateOpen.value = true;
+}
+
+/**
+ * 主语种待翻译字段（空字段不发：既没必要翻，也不该拿空值覆盖目标语种已有内容）。
+ * 形状与后端 AiTranslateService::normalizeFields 对应：{ key, type, value }。
+ */
+function buildTranslateFields() {
+  const form = forms[defaultLocale.value];
+  if (!form) return [];
+  const out = [];
+  for (const f of translateFields.value) {
+    const value = form[f.field];
+    if (typeof value !== 'string' || value.trim() === '') continue;
+    out.push({ key: f.field, type: f.type, value });
+  }
+  return out;
+}
+
+async function runTranslate() {
+  if (translating.value) return;
+  if (translateTargets.value.length === 0) {
+    message.warning('请先选择要翻译成的语种');
+    return;
+  }
+  const fields = buildTranslateFields();
+  if (fields.length === 0) {
+    message.warning('主语种没有可翻译的内容');
+    return;
+  }
+
+  translating.value = true;
+  try {
+    const data = await requestClient.post('ai/translate', {
+      source_locale: defaultLocale.value,
+      target_locales: translateTargets.value,
+      fields,
+    });
+    resetTranslateResult();
+    const translations = data?.translations || {};
+    for (const [locale, values] of Object.entries(translations)) {
+      translateResult[locale] = { ...values };
+    }
+    translateProvider.value = data?.provider || '';
+    translateActive.value = translateLocales.value[0] || '';
+    if (translateActive.value === '') {
+      message.warning('翻译服务没有返回译文，请重试');
+    }
+  } catch {
+    // 失败提示由 request 拦截器统一弹出，这里只保证不抛出未处理的 rejection
+  } finally {
+    translating.value = false;
+  }
+}
+
+/** editor 字段的只读预览：sandbox 空值 = 禁脚本/禁同源，模型返回的 HTML 不会执行 */
+function previewHtml(html) {
+  return [
+    '<!doctype html><html><head><meta charset="utf-8"><style>',
+    'html,body{margin:0;padding:12px;background:#fff;color:#1f2937;',
+    'font:14px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;}',
+    'img,video,table,iframe{max-width:100%;}p{margin:0 0 10px;}',
+    '</style></head><body>',
+    typeof html === 'string' ? html : '',
+    '</body></html>',
+  ].join('');
+}
+
+/**
+ * 采纳：把译文回填进各语种表单 → 关闭弹窗 → 尝试调用主表单保存。
+ *
+ * 回填只覆盖「参与翻译且有译文」的字段，其余字段原样保留（不会把用户已有的
+ * 手工翻译抹掉）。回填后先标脏，避免父级 locales 回流把刚写入的译文覆盖回去。
+ * 保存成功后关闭弹窗/刷新列表等收尾，全部由主表单自己的 submit 决定。
+ */
+async function adoptTranslate() {
+  if (!canAdoptTranslate.value) return;
+  const locales = [...translateLocales.value];
+
+  adopting.value = true;
+  try {
+    let filled = 0;
+    for (const code of locales) {
+      ensureForm(code);
+      const form = forms[code];
+      const values = translateResult[code] || {};
+      if (!form) continue;
+      let touched = false;
+      for (const f of translateFields.value) {
+        const value = values[f.field];
+        if (typeof value !== 'string' || value === '') continue;
+        form[f.field] = value;
+        touched = true;
+      }
+      if (touched) {
+        dirty[code] = true;
+        filled += 1;
+      }
+    }
+
+    if (filled === 0) {
+      message.warning('没有可回填的译文');
+      return;
+    }
+
+    translateOpen.value = false;
+    resetTranslateResult();
+
+    // 逐个语种上抛（内部会刷新脏标记，并把整份 locales 交给父级表单）
+    for (const code of locales) {
+      if (forms[code]) await handleFieldChange(code);
+    }
+
+    // 「之后的逻辑完全交给主表单」：能拿到保存通道就自动提交，否则只提示手动保存
+    const save = detailSync?.save;
+    if (typeof save === 'function') {
+      message.success(`已回填 ${filled} 个语种，正在保存…`);
+      await nextTick();
+      await save();
+    } else {
+      message.success(`已回填 ${filled} 个语种，请点击「保存」提交`);
+    }
+  } finally {
+    adopting.value = false;
+  }
+}
+
 /** Tabs items：仅 key + label（表单体在 Tabs 外单独渲染，避免切换时挂载/卸载字段组件） */
 const tabItems = computed(() =>
   orderedCodes.value.map((code) => ({
@@ -522,7 +721,17 @@ onMounted(async () => {
         全部语种随页面底部「保存」一次性提交
       </span>
       <Button
-        v-if="detailSync"
+        v-if="otherCodes.length > 0"
+        size="small"
+        type="primary"
+        :disabled="!hasTranslatableSource"
+        title="按主语种内容批量翻译到其他语种，预览确认后一键回填并保存"
+        @click="openTranslate"
+      >
+        一键翻译
+      </Button>
+      <Button
+        v-if="typeof detailSync?.reload === 'function'"
         size="small"
         :loading="reloading"
         title="从服务端重新加载当前记录（覆盖本地未保存的修改前会确认）"
@@ -689,6 +898,94 @@ onMounted(async () => {
         />
       </div>
     </div>
+
+    <!-- 一键翻译：取主语种内容 → 批量翻成多个目标语种 → 只读预览 → 采纳回填。
+         采纳后关闭本弹窗并把保存交给主表单（detailSync.save），后续收尾由主表单决定。 -->
+    <Modal
+      v-model:open="translateOpen"
+      title="一键翻译"
+      width="880px"
+      :mask-closable="false"
+      :confirm-loading="adopting"
+      ok-text="采纳并保存"
+      cancel-text="取消"
+      :ok-button-props="{ disabled: !canAdoptTranslate }"
+      @ok="adoptTranslate"
+    >
+      <div class="flex flex-wrap items-end gap-3">
+        <div class="min-w-[240px] flex-1">
+          <div
+            class="mb-1 text-xs font-medium text-gray-600 dark:text-gray-300"
+          >
+            目标语种（可多选）
+          </div>
+          <Select
+            v-model:value="translateTargets"
+            mode="multiple"
+            :options="translateLocaleOptions"
+            :disabled="translating"
+            :max-tag-count="6"
+            placeholder="选择要翻译成的语种"
+            style="width: 100%"
+          />
+        </div>
+        <div class="pb-1 text-xs text-gray-500">
+          源语言：{{ nativeLabel(defaultLocale) }}（取当前主语种内容）
+        </div>
+        <Button type="primary" :loading="translating" @click="runTranslate">
+          {{ translateLocales.length > 0 ? '重新翻译' : '开始翻译' }}
+        </Button>
+      </div>
+
+      <div v-if="translateProvider === 'mock'" class="mt-2 text-xs text-amber-600">
+        当前 AI 服务为演示模式（未配置密钥），以下译文是占位文本，仅供走查流程。
+      </div>
+
+      <Spin :spinning="translating">
+        <div
+          v-if="translateLocales.length === 0"
+          class="py-8 text-center text-sm text-gray-400"
+        >
+          选择目标语种后点「开始翻译」，译文会在这里按语种分页预览。
+        </div>
+        <template v-else>
+          <Tabs
+            :active-key="translateActive"
+            type="line"
+            size="small"
+            :items="translateTabItems"
+            @change="(key) => (translateActive = key)"
+          />
+          <div
+            v-if="translateActive && translateResult[translateActive]"
+            class="flex max-h-[52vh] flex-col gap-3 overflow-auto pr-1"
+          >
+            <div v-for="f in translateFields" :key="f.field">
+              <div
+                class="mb-1 text-xs font-medium text-gray-600 dark:text-gray-300"
+              >
+                {{ f.label }}
+              </div>
+              <!-- 富文本用 sandbox 空值的 iframe 预览：禁脚本/禁同源，
+                   模型返回的 HTML 不会在后台页面里执行（也不改写相对素材路径） -->
+              <iframe
+                v-if="f.type === 'editor'"
+                class="w-full rounded border border-gray-200 bg-white"
+                style="height: 220px"
+                sandbox=""
+                :srcdoc="previewHtml(translateResult[translateActive][f.field])"
+              ></iframe>
+              <div
+                v-else
+                class="rounded border border-gray-200 bg-gray-50 p-2 text-sm whitespace-pre-wrap text-gray-800 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-100"
+              >
+                {{ translateResult[translateActive][f.field] || '（空）' }}
+              </div>
+            </div>
+          </div>
+        </template>
+      </Spin>
+    </Modal>
   </div>
 </template>
 

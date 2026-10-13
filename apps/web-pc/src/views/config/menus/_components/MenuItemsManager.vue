@@ -14,7 +14,7 @@
  * 后端 MenuController::storeItem/updateItem 已校验接收全部字段；deleteItem 已把
  * 子项 parent_id 置空（升为顶级）。本组件纯前端，不改后端。
  */
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, provide, reactive, ref, watch } from 'vue';
 
 import {
   Button,
@@ -36,8 +36,16 @@ import {
 
 import Resource from '#/api/resource';
 import { requestClient } from '#/api/request';
+import { DETAIL_SYNC_KEY } from '#/components/app-crud-table/composables/useCrudTableDetail.js';
 import AppUpload from '#/components/AppUpload.vue';
 import LocaleTabsEditor from '#/components/LocaleTabsEditor.vue';
+
+/**
+ * 详情同步通道：本弹窗没有「重新加载」语义（只有 save），所以只挂 save。
+ * LocaleTabsEditor 的「一键翻译」采纳后会尝试调用它，把多语言标题落库。
+ * （saveItem 是函数声明，提升后可在此处安全引用。）
+ */
+provide(DETAIL_SYNC_KEY, { save: saveItem });
 
 const props = defineProps({
   open: { type: Boolean, default: false },
