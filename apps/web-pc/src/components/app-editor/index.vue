@@ -7,6 +7,7 @@ import {
   provide,
   reactive,
   ref,
+  shallowRef,
   watch,
 } from 'vue';
 
@@ -87,6 +88,7 @@ import {
   dispatchSpanSelected,
   dispatchTableSelected,
 } from './selection-plugin';
+import { createSourceCodeEditor } from './source-editor';
 import { getTableDimensions } from './table-tools';
 
 const props = defineProps({
@@ -509,6 +511,10 @@ function hideShortcutMenus() {
 }
 
 function exitSourceMode() {
+  // 退出前从 CodeMirror 实例回读全文，确保未触发过 onChange 的改动也不丢失
+  if (sourceView.value) {
+    sourceCode.value = sourceView.value.state.doc.toString();
+  }
   const nextHtml = sourceCode.value;
   content.value = nextHtml;
   if (editorInstance.value) {
@@ -521,13 +527,134 @@ function exitSourceMode() {
 }
 
 function onSourceInput(event) {
-  const nextHtml = event.target.value;
+  applySourceCode(event.target.value);
+}
+
+/** 源码变更统一应用（textarea 与 CodeMirror 共用）：同步 content 并向父组件 emit */
+function applySourceCode(nextHtml) {
   sourceCode.value = nextHtml;
   content.value = nextHtml;
   emit('update:value', nextHtml);
   emit('update:modelValue', nextHtml);
   emit('change', nextHtml);
 }
+
+// ---------------------------------------------------------------------------
+// 源代码模式 CodeMirror 6（动态加载，独立分包）
+// 数据流：CM updateListener → onSourceDocChange → applySourceCode（与旧
+// textarea 逐键 emit 语义一致）；外部写入（props 变化/内部 setContent 等）
+// 经 watch(sourceCode) → setSourceEditorDoc 回灌 CM，用 applyingExternal
+// 标志防止「外部写入触发的 updateListener 再回环 emit」。
+// AI 辅助预留：sourceAiApi 经 defineExpose(sourceAi) 暴露给父组件，
+// 接口约定见 source-editor.js 文件头（AI 写、用户看着改，非全套 vibe coding）。
+// ---------------------------------------------------------------------------
+const sourceHostRef = ref(null);
+const sourceView = shallowRef(null);
+const sourceAiApi = shallowRef(null);
+/** CodeMirror 加载失败时回退纯文本 textarea */
+const sourceTextareaFallback = ref(false);
+/** 外部写入 CM 中（updateListener 回调需吞掉，防回环 emit） */
+let applyingExternalSource = false;
+/** 挂载序号：快速开关源码模式时使迟到的异步挂载作废 */
+let sourceMountSeq = 0;
+
+function onSourceDocChange(value) {
+  if (applyingExternalSource) return;
+  applySourceCode(value);
+}
+
+async function mountSourceEditor(initialDoc) {
+  sourceMountSeq += 1;
+  const seq = sourceMountSeq;
+  unmountSourceEditor();
+  const host = sourceHostRef.value;
+  if (!host) return;
+  try {
+    const { view, api } = await createSourceCodeEditor({
+      host,
+      doc: initialDoc,
+      placeholderText: '在此编辑 HTML 源码...',
+      onChange: onSourceDocChange,
+      // Ctrl/Cmd+S、Ctrl/Cmd+Enter = 完成并应用
+      onApply: () => exitSourceMode(),
+    });
+    if (seq !== sourceMountSeq) {
+      // 等待加载期间源码模式已再次切换，丢弃本次实例
+      view.destroy();
+      return;
+    }
+    sourceView.value = view;
+    sourceAiApi.value = api;
+  } catch (err) {
+    console.error('[app-editor] 源码编辑器加载失败，回退纯文本模式:', err);
+    if (seq === sourceMountSeq) {
+      sourceTextareaFallback.value = true;
+    }
+  }
+}
+
+function unmountSourceEditor() {
+  try {
+    sourceView.value?.destroy?.();
+  } catch {
+    /* 忽略 */
+  }
+  sourceView.value = null;
+  sourceAiApi.value = null;
+}
+
+/** 外部源码写入 CM（相同时不 dispatch，避免无谓事务） */
+function setSourceEditorDoc(next) {
+  const view = sourceView.value;
+  if (!view) return;
+  const text = String(next ?? '');
+  const current = view.state.doc.toString();
+  if (current === text) return;
+  applyingExternalSource = true;
+  try {
+    view.dispatch({
+      changes: { from: 0, to: current.length, insert: text },
+    });
+  } finally {
+    applyingExternalSource = false;
+  }
+}
+
+watch(isSourceMode, (active) => {
+  if (active) {
+    sourceTextareaFallback.value = false;
+    nextTick(() => {
+      mountSourceEditor(sourceCode.value);
+    });
+  } else {
+    sourceMountSeq += 1;
+    unmountSourceEditor();
+  }
+});
+
+/** 一键格式化源码（复用 formatHtml，单事务可撤销；降级 textarea 时直接改写） */
+function formatSourceCode() {
+  if (sourceTextareaFallback.value || !sourceView.value) {
+    applySourceCode(formatHtml(sourceCode.value));
+    return;
+  }
+  const view = sourceView.value;
+  const current = view.state.doc.toString();
+  const formatted = formatHtml(current);
+  if (formatted === current) {
+    message.info('源码已是格式化状态');
+    return;
+  }
+  view.dispatch({
+    changes: { from: 0, to: current.length, insert: formatted },
+  });
+  message.success('已格式化（Ctrl/Cmd+Z 可撤销）');
+}
+
+watch(sourceCode, (next) => {
+  if (!isSourceMode.value) return;
+  setSourceEditorDoc(next);
+});
 
 // ---------------------------------------------------------------------------
 // 样式处理工具函数
@@ -3449,6 +3576,15 @@ onBeforeUnmount(() => {
     cancelAnimationFrame(hoverRaf);
     hoverRaf = 0;
   }
+  sourceMountSeq += 1;
+  unmountSourceEditor();
+});
+
+// AI 辅助预留接口：父组件经模板 ref 拿到 sourceAi（未进入源码模式时为 null），
+// 方法约定见 source-editor.js 文件头；典型链路=「AI 面板读 getSelection/getCode
+// → 生成片段 → insertCode/replaceSelection（默认选中结果）→ 用户看着改」
+defineExpose({
+  sourceAi: sourceAiApi,
 });
 </script>
 
@@ -3555,19 +3691,43 @@ onBeforeUnmount(() => {
         <div
           class="flex items-center justify-between border-b border-border bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground"
         >
-          <div class="flex items-center gap-1.5">
-            <span class="inline-block size-2 rounded-full bg-emerald-500"></span>
-            <span>HTML 源代码编辑模式（可直接编辑标签与属性样式，编辑完成后点击右侧按钮应用）</span>
+          <div class="flex items-center gap-1.5 min-w-0">
+            <span class="inline-block size-2 rounded-full bg-emerald-500 shrink-0"></span>
+            <span class="truncate">HTML 源代码编辑模式（Ctrl/Cmd+S 应用 · Ctrl/Cmd+F 查找替换 · 光标置于标签/内容区两端同亮，Alt+M 或 Ctrl/Cmd+点击标签跳配对）</span>
           </div>
-          <button
-            class="rounded bg-primary px-2.5 py-0.5 text-xs font-medium text-primary-foreground hover:opacity-90"
-            type="button"
-            @click="exitSourceMode"
-          >
-            完成并应用
-          </button>
+          <div class="flex items-center gap-1.5 shrink-0">
+            <button
+              class="rounded border border-border bg-background px-2.5 py-0.5 text-xs font-medium text-foreground hover:bg-muted"
+              title="按现有规则格式化源码（Ctrl/Cmd+Z 可撤销）"
+              type="button"
+              @click="formatSourceCode"
+            >
+              格式化
+            </button>
+            <button
+              class="rounded bg-primary px-2.5 py-0.5 text-xs font-medium text-primary-foreground hover:opacity-90"
+              type="button"
+              @click="exitSourceMode"
+            >
+              完成并应用
+            </button>
+          </div>
         </div>
+        <!-- CodeMirror 6 宿主（动态挂载，见 mountSourceEditor）；加载失败回退纯文本 textarea -->
+        <div
+          v-if="!sourceTextareaFallback"
+          ref="sourceHostRef"
+          class="app-editor-source-host flex-1 min-h-0"
+          :style="{
+            minHeight: isFullscreen
+              ? 'calc(100vh - 150px)'
+              : typeof minHeight === 'number'
+                ? `${minHeight}px`
+                : minHeight,
+          }"
+        ></div>
         <textarea
+          v-else
           :value="sourceCode"
           class="app-editor-source-textarea flex-1 resize-none border-0 bg-transparent p-4 font-mono text-xs leading-relaxed text-foreground outline-none"
           :style="{
@@ -6315,5 +6475,50 @@ onBeforeUnmount(() => {
 .app-editor-global-toolbar {
   flex: 1 1 auto;
   min-width: 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * 源代码模式 CodeMirror 6
+ * 高亮色经 --cm-* 变量注入（HighlightStyle 里写 var(--cm-*, 兜底色)），
+ * 明暗模式各配一套，自动跟随应用主题
+ * --------------------------------------------------------------------------- */
+.app-editor-wrapper {
+  --cm-bracket: #cf222e;
+  --cm-tag: #116329;
+  --cm-attr: #0550ae;
+  --cm-string: #0a3069;
+  --cm-comment: #6e7781;
+}
+
+.dark .app-editor-wrapper {
+  --cm-bracket: #ff7b72;
+  --cm-tag: #7ee787;
+  --cm-attr: #79c0ff;
+  --cm-string: #a5d6ff;
+  --cm-comment: #8b949e;
+}
+
+.app-editor-source-host {
+  overflow: hidden;
+}
+
+.app-editor-source-host .cm-editor {
+  height: 100%;
+}
+
+.app-editor-source-host .cm-editor.cm-focused {
+  outline: none;
+}
+
+/* 配对标签名高亮：光标落在开/闭标签名上时两端同时标记 */
+.app-editor-source-host .cm-tag-pair {
+  background-color: hsl(var(--primary) / 16%);
+  box-shadow: 0 1px 0 hsl(var(--primary) / 70%);
+  border-radius: 2px;
+}
+
+/* 头部条之下撑满剩余空间（与全屏 minHeight 内联样式叠加） */
+.app-editor-source .app-editor-source-host:not(:first-child) {
+  flex: 1 1 auto;
 }
 </style>

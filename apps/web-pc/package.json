@@ -27,6 +27,12 @@
     "#/*": "./src/*"
   },
   "dependencies": {
+    "@codemirror/lang-html": "^6.4.9",
+    "@codemirror/language": "^6.11.0",
+    "@codemirror/search": "^6.5.10",
+    "@codemirror/state": "^6.5.0",
+    "@codemirror/view": "^6.38.0",
+    "@lezer/highlight": "^1.2.1",
     "@photo-sphere-viewer/core": "^5.15.1",
     "@photo-sphere-viewer/equirectangular-tiles-adapter": "^5.15.1",
     "@photo-sphere-viewer/markers-plugin": "^5.15.1",
@@ -65,6 +71,7 @@
     "@vben/utils": "workspace:*",
     "@vueuse/core": "catalog:",
     "antdv-next": "catalog:",
+    "codemirror": "^6.0.2",
     "compressorjs": "^1.2.1",
     "crypto-js": "^4.2.0",
     "dayjs": "catalog:",
