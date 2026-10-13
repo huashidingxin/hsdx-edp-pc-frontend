@@ -1089,6 +1089,10 @@ const boxOverlay = reactive({
   margin: null,
   padding: null,
   content: null,
+  // margin/padding 环带宽度（环带外渲染色块，中心内容区保持透明）
+  marginRing: null,
+  paddingRing: null,
+  clip: 'none',
 });
 
 /** 是否悬浮在选中元素上（色块仅 hover 显示，平时只留虚线框） */
@@ -1155,14 +1159,47 @@ function onHoverLeave() {
   if (isHoveringSelected.value) isHoveringSelected.value = false;
 }
 
-function boxLayerStyle(rect) {
+/**
+ * 盒模型分层样式。
+ * @param rect 层矩形（视口坐标）
+ * @param ring 环带宽度 {top,right,bottom,left}；null 表示无环带可画
+ * @param mode 'border'=margin 层用 border 画环带；'clip'=padding 层用
+ *             background-clip:content-box 画环带；'fill'=content 层整面填充
+ * 无 margin/padding 的节点（如图片）三层矩形完全重合，环带为 0 →
+ * margin/padding 层直接隐藏，内容区上只剩 content 层淡色，不再三层叠加成色罩
+ */
+function boxLayerStyle(rect, ring = null, mode = 'fill') {
   if (!rect) return { display: 'none' };
-  return {
+  if (mode !== 'fill' && !ring) return { display: 'none' };
+  const style = {
     left: `${Math.round(rect.left)}px`,
     top: `${Math.round(rect.top)}px`,
     width: `${Math.max(0, Math.round(rect.width))}px`,
     height: `${Math.max(0, Math.round(rect.height))}px`,
+    boxSizing: 'border-box',
   };
+  if (mode === 'border' && ring) {
+    style.borderStyle = 'solid';
+    style.borderWidth = `${ring.top}px ${ring.right}px ${ring.bottom}px ${ring.left}px`;
+  } else if (mode === 'clip' && ring) {
+    style.padding = `${ring.top}px ${ring.right}px ${ring.bottom}px ${ring.left}px`;
+    style.backgroundClip = 'content-box';
+  }
+  return style;
+}
+
+/** 内外两矩形相减得环带宽度；无环带（重合/负值）返回 null */
+function boxRingOf(outer, inner) {
+  if (!outer || !inner) return null;
+  const ring = {
+    top: Math.max(0, Math.round(inner.top - outer.top)),
+    right: Math.max(0, Math.round(outer.left + outer.width - (inner.left + inner.width))),
+    bottom: Math.max(0, Math.round(outer.top + outer.height - (inner.top + inner.height))),
+    left: Math.max(0, Math.round(inner.left - outer.left)),
+  };
+  const empty =
+    ring.top === 0 && ring.right === 0 && ring.bottom === 0 && ring.left === 0;
+  return empty ? null : ring;
 }
 
 function refreshBoxOverlay() {
@@ -1212,6 +1249,29 @@ function refreshBoxOverlay() {
   boxOverlay.margin = layers.margin;
   boxOverlay.padding = layers.padding;
   boxOverlay.content = layers.content;
+  boxOverlay.marginRing = boxRingOf(layers.margin, layers.padding);
+  boxOverlay.paddingRing = boxRingOf(layers.padding, layers.content);
+  // 裁剪到编辑器内容视口（.vben-tiptap，工具栏以下的滚动区），
+  // 元素滚出可视区或贴近边缘时色块不会盖到工具栏 / 页面其他区域
+  const viewport = editorContainerRef.value?.querySelector(
+    '.app-editor-wrapper .vben-tiptap',
+  );
+  const clipEl = viewport instanceof HTMLElement ? viewport : editorContainerRef.value;
+  boxOverlay.clip = 'none';
+  if (clipEl) {
+    try {
+      const vr = clipEl.getBoundingClientRect();
+      if (vr.width > 0 && vr.height > 0) {
+        const top = Math.max(0, vr.top);
+        const right = Math.max(0, window.innerWidth - vr.right);
+        const bottom = Math.max(0, window.innerHeight - vr.bottom);
+        const left = Math.max(0, vr.left);
+        boxOverlay.clip = `inset(${top}px ${right}px ${bottom}px ${left}px)`;
+      }
+    } catch {
+      boxOverlay.clip = 'none';
+    }
+  }
   boxOverlay.visible = true;
 }
 
@@ -1242,6 +1302,9 @@ function clearElementSelection() {
   selectedElementTarget.value = null;
   elementCrumbs.value = [];
   boxOverlay.visible = false;
+  boxOverlay.clip = 'none';
+  boxOverlay.marginRing = null;
+  boxOverlay.paddingRing = null;
   isHoveringSelected.value = false;
   if (editorInstance.value) {
     try {
@@ -5112,15 +5175,16 @@ onBeforeUnmount(() => {
       <div
         v-if="boxOverlay.visible && isHoveringSelected && !isSourceMode"
         class="app-editor-boxoverlay"
+        :style="{ clipPath: boxOverlay.clip }"
         contenteditable="false"
       >
         <div
           class="app-editor-boxoverlay__margin"
-          :style="boxLayerStyle(boxOverlay.margin)"
+          :style="boxLayerStyle(boxOverlay.margin, boxOverlay.marginRing, 'border')"
         ></div>
         <div
           class="app-editor-boxoverlay__padding"
-          :style="boxLayerStyle(boxOverlay.padding)"
+          :style="boxLayerStyle(boxOverlay.padding, boxOverlay.paddingRing, 'clip')"
         ></div>
         <div
           class="app-editor-boxoverlay__content"
@@ -5465,7 +5529,8 @@ onBeforeUnmount(() => {
 }
 
 .app-editor-boxoverlay__margin {
-  background: rgb(246 178 107 / 45%);
+  /* 环带用 border 绘制（宽度由 boxLayerStyle 内联注入），不整面填充 */
+  border: 0 solid rgb(246 178 107 / 45%);
 }
 
 .app-editor-boxoverlay__padding {
@@ -5473,7 +5538,7 @@ onBeforeUnmount(() => {
 }
 
 .app-editor-boxoverlay__content {
-  background: rgb(111 168 220 / 45%);
+  background: rgb(111 168 220 / 15%);
 }
 
 /* ---------------------------------------------------------------------------
