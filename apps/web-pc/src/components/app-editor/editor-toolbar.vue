@@ -29,6 +29,10 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  isSplitView: {
+    type: Boolean,
+    default: false,
+  },
   uploadImage: {
     type: Function,
     default: null,
@@ -66,6 +70,7 @@ const props = defineProps({
 
 const emit = defineEmits([
   'toggle-fullscreen',
+  'toggle-split-view',
   'open-preview',
   'toggle-source-mode',
   'open-external-assets',
@@ -2727,6 +2732,28 @@ const lineHeightLabel = computed(() => {
         >
           <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
           <circle cx="12" cy="12" r="3" />
+        </svg>
+      </button>
+
+      <button
+        class="toolbar-btn"
+        :class="{ 'is-active': isSplitView }"
+        :title="isSplitView ? '退出双栏，返回单栏编辑' : '双栏模式（全屏左编辑右代码，选中自动定位）'"
+        type="button"
+        @mousedown.prevent
+        @click="emit('toggle-split-view')"
+      >
+        <svg
+          class="size-3.5"
+          fill="none"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+        >
+          <rect height="18" rx="2" width="18" x="3" y="3" />
+          <line x1="12" x2="12" y1="3" y2="21" />
         </svg>
       </button>
 

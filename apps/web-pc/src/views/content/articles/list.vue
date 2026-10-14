@@ -204,14 +204,14 @@ const gridColumns = ref([
     width: 90,
     slots: { default: 'default_status' },
   },
-  { field: 'published_at', title: '发布时间', minWidth: 160, formatter: emptyText },
+  { field: 'published_at', title: '发布时间',sortable:true, minWidth: 160, formatter: emptyText },
   {
     field: 'published_applications',
     title: '发布范围',
     minWidth: 180,
     slots: { default: 'default_published' },
   },
-  { field: 'created_at', title: '创建时间', minWidth: 160 },
+  { field: 'created_at', title: '创建时间',sortable:true, minWidth: 160 },
 ]);
 
 const formData = ref(null);

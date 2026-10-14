@@ -16,6 +16,8 @@
  * - replaceSelection(text)      替换选中片段
  * - setCode(text)               整体替换（AI 重写后应用）
  * - clear()/focus()/destroy()
+ * - locateRange(from, to)/clearLocate()  双栏同步定位高亮（只写 Decoration +
+ *                               滚动，不动选区不抢焦点；区间随文档编辑自动 map）
  * 所有写入均为单事务（可整体撤销）+ scrollIntoView，保证「AI 改了哪一眼可见」。
  * 流式说明：appendCode 每次 dispatch 一个 chunk 即可，无需额外流式协议。
  */
@@ -41,6 +43,8 @@ function loadModules() {
       syntaxTree: language.syntaxTree,
       search: searchMod.search,
       EditorState: state.EditorState,
+      StateEffect: state.StateEffect,
+      StateField: state.StateField,
       // 注意：tags 导出自 @lezer/highlight（@codemirror/language 并不转出它）
       tags: lezer.tags,
       EditorView: view.EditorView,
@@ -86,6 +90,12 @@ function buildTheme(EditorView) {
     '.cm-cursor': { borderLeftColor: 'hsl(var(--primary))' },
     '.cm-searchMatch': { backgroundColor: 'hsl(var(--primary) / 25%)' },
     '.cm-searchMatch-selected': { backgroundColor: 'hsl(var(--primary) / 55%)' },
+    // 双栏模式选中同步高亮（左侧元素选中 → 右侧代码区间定位，不进选区）
+    '.cm-sync-match': {
+      backgroundColor: 'hsl(var(--primary) / 18%)',
+      outline: '1px solid hsl(var(--primary) / 60%)',
+      borderRadius: '3px',
+    },
     '.cm-panels': {
       backgroundColor: 'hsl(var(--card))',
       color: 'hsl(var(--foreground))',
@@ -404,6 +414,8 @@ export async function createSourceCodeEditor({
     syntaxTree,
     search,
     EditorState,
+    StateEffect,
+    StateField,
     tags,
     EditorView,
     Decoration,
@@ -411,6 +423,30 @@ export async function createSourceCodeEditor({
     keymap,
     placeholder,
   } = await loadModules();
+
+  // ---------------------------------------------------------------------------
+  // 双栏同步定位高亮：StateEffect + StateField 承载区间 Decoration，
+  // 随文档 changes 自动 map（编辑他处时跟随文本漂移），与用户选区互不干扰。
+  // ---------------------------------------------------------------------------
+  const setSyncEffect = StateEffect.define();
+  const syncField = StateField.define({
+    create: () => Decoration.none,
+    update(deco, tr) {
+      let next = deco;
+      try {
+        next = next.map(tr.changes);
+      } catch {
+        next = Decoration.none;
+      }
+      for (const e of tr.effects) {
+        if (e.is(setSyncEffect)) {
+          next = e.value ? e.value : Decoration.none;
+        }
+      }
+      return next;
+    },
+    provide: (f) => EditorView.decorations.from(f),
+  });
 
   const tagPair = createTagPairSupport({
     syntaxTree,
@@ -435,6 +471,7 @@ export async function createSourceCodeEditor({
       search({ top: true }),
       html({ autoCloseTags: true }),
       EditorView.lineWrapping,
+      syncField,
       ...tagPair.extensions,
       placeholderText ? placeholder(placeholderText) : [],
       buildTheme(EditorView),
@@ -544,6 +581,40 @@ export async function createSourceCodeEditor({
     /** 文档规模（供 AI 面板展示上下文大小） */
     getStats() {
       return { length: view.state.doc.length, lines: view.state.doc.lines };
+    },
+
+    /**
+     * 双栏同步定位：高亮 [from, to] 区间并滚动到可视区。
+     * 只写 Decoration + 滚动，不动用户选区、不抢焦点。
+     * @returns {{ from: number, to: number } | null}
+     */
+    locateRange(from, to) {
+      try {
+        const len = view.state.doc.length;
+        const a = Math.max(0, Math.min(Number(from) || 0, len));
+        const b = Math.max(0, Math.min(Number(to) || 0, len));
+        if (!(b > a)) {
+          view.dispatch({ effects: setSyncEffect.of(null) });
+          return null;
+        }
+        const mark = Decoration.mark({ class: 'cm-sync-match' });
+        view.dispatch({
+          effects: setSyncEffect.of(Decoration.set([mark.range(a, b)], true)),
+          scrollIntoView: true,
+        });
+        return { from: a, to: b };
+      } catch {
+        return null;
+      }
+    },
+
+    /** 清除同步定位高亮 */
+    clearLocate() {
+      try {
+        view.dispatch({ effects: setSyncEffect.of(null) });
+      } catch {
+        /* 忽略 */
+      }
     },
 
     destroy() {

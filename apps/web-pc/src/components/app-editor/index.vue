@@ -228,7 +228,7 @@ function onReplaceExternalUrls(urlMapping) {
   const currentHtml = editorInstance.value?.getHTML() || content.value || '';
   const updated = replaceAssetUrlsInHtml(currentHtml, urlMapping);
   content.value = updated;
-  if (isSourceMode.value) {
+  if (showSource.value) {
     sourceCode.value = formatHtml(updated);
   }
   if (editorInstance.value) {
@@ -300,7 +300,7 @@ async function handlePasteHtml(html) {
 function onLoadSourceContent(newContent) {
   if (!newContent) return;
   content.value = newContent;
-  if (isSourceMode.value) {
+  if (showSource.value) {
     sourceCode.value = formatHtml(newContent);
   }
   if (editorInstance.value) {
@@ -327,6 +327,16 @@ const isVideoPlaying = ref(false);
 const replaceVideoModalOpen = ref(false);
 const isSourceMode = ref(false);
 const sourceCode = ref('');
+/**
+ * 双栏模式：全屏下左可视化、右源码并排。进入时自动进全屏；
+ * 右侧为“只看+定位”视角：左侧编辑实时刷新右侧，右侧改动需手动应用
+ * （避免逐键 setContent 丢光标/丢撤销栈），选中元素时右侧高亮定位。
+ */
+const isSplitView = ref(false);
+/** 双栏或纯源码任一成立即挂载源码面板 */
+const showSource = computed(() => isSourceMode.value || isSplitView.value);
+/** 纯源码时隐藏左侧可视化，双栏时两侧同时可见 */
+const showEditor = computed(() => !isSourceMode.value || isSplitView.value);
 
 const isEditable = computed(() => !props.disabled);
 
@@ -350,8 +360,36 @@ provide('appEditor:upload', uploadImage);
 
 function toggleFullscreen() {
   isFullscreen.value = !isFullscreen.value;
+  // 退出全屏时双栏无处安放，一并收起
+  if (!isFullscreen.value && isSplitView.value) {
+    isSplitView.value = false;
+  }
   nextTick(() => {
     onScrollOrResize();
+  });
+}
+
+/** 双栏开关：进入=进全屏+挂载右侧源码（以左侧最新 HTML 为准）；退出保留全屏 */
+function toggleSplitView() {
+  if (isSplitView.value) {
+    isSplitView.value = false;
+    sourceAiApi.value?.clearLocate?.();
+    nextTick(() => {
+      onScrollOrResize();
+    });
+    return;
+  }
+  // 纯源码模式下进入双栏：先把右侧改动落到编辑器，再并排
+  if (isSourceMode.value) {
+    exitSourceMode();
+  }
+  isFullscreen.value = true;
+  const currentHtml = editorInstance.value?.getHTML() ?? content.value ?? '';
+  sourceCode.value = formatHtml(currentHtml);
+  isSplitView.value = true;
+  nextTick(() => {
+    onScrollOrResize();
+    scheduleSplitLocate();
   });
 }
 
@@ -482,6 +520,11 @@ function toggleSourceMode() {
   if (isSourceMode.value) {
     exitSourceMode();
   } else {
+    // 纯源码与双栏互斥：进纯源码前先收起双栏，避免两侧状态打架
+    if (isSplitView.value) {
+      isSplitView.value = false;
+      sourceAiApi.value?.clearLocate?.();
+    }
     enterSourceMode();
   }
 }
@@ -560,7 +603,29 @@ let sourceMountSeq = 0;
 
 function onSourceDocChange(value) {
   if (applyingExternalSource) return;
+  // 双栏（非纯源码）下右侧为定位视角：只收文本，不向编辑器回写，
+  // 避免逐键 setContent 导致左侧光标/撤销栈丢失；由“应用右侧改动”显式落盘
+  if (isSplitView.value && !isSourceMode.value) {
+    sourceCode.value = value;
+    return;
+  }
   applySourceCode(value);
+}
+
+/** 双栏：把右侧源码显式应用到左侧编辑器（与退出源码同语义，但保留双栏） */
+function applySplitSourceToEditor() {
+  if (sourceView.value) {
+    sourceCode.value = sourceView.value.state.doc.toString();
+  }
+  const nextHtml = sourceCode.value;
+  content.value = nextHtml;
+  if (editorInstance.value) {
+    editorInstance.value.commands.setContent(nextHtml, true);
+  }
+  emit('update:value', nextHtml);
+  emit('update:modelValue', nextHtml);
+  emit('change', nextHtml);
+  message.success('已将右侧源码应用到左侧');
 }
 
 async function mountSourceEditor(initialDoc) {
@@ -585,6 +650,11 @@ async function mountSourceEditor(initialDoc) {
     }
     sourceView.value = view;
     sourceAiApi.value = api;
+    // 双栏下 CM 为异步挂载：就绪后补一次定位（进入双栏时的选中可能先于挂载到达）
+    if (isSplitView.value) {
+      scheduleSplitSourceRefresh();
+      scheduleSplitLocate();
+    }
   } catch (err) {
     console.error('[app-editor] 源码编辑器加载失败，回退纯文本模式:', err);
     if (seq === sourceMountSeq) {
@@ -620,7 +690,7 @@ function setSourceEditorDoc(next) {
   }
 }
 
-watch(isSourceMode, (active) => {
+watch(showSource, (active) => {
   if (active) {
     sourceTextareaFallback.value = false;
     nextTick(() => {
@@ -652,7 +722,7 @@ function formatSourceCode() {
 }
 
 watch(sourceCode, (next) => {
-  if (!isSourceMode.value) return;
+  if (!showSource.value) return;
   setSourceEditorDoc(next);
 });
 
@@ -3310,6 +3380,12 @@ function onScrollOrResize() {
 }
 
 function onKeyDown(event) {
+  if (event.key === 'Escape' && isSplitView.value) {
+    // 双栏优先退出双栏（保留全屏），再按一次才退全屏
+    isSplitView.value = false;
+    sourceAiApi.value?.clearLocate?.();
+    return;
+  }
   if (event.key === 'Escape' && isFullscreen.value) {
     isFullscreen.value = false;
   }
@@ -3432,6 +3508,232 @@ function syncTableFromSelection() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 双栏同步：左编右看 + 选中定位（首版单向，见 isSplitView 注释）
+// ---------------------------------------------------------------------------
+
+let splitRefreshTimer = 0;
+
+/** 左侧改动后节流刷新右侧源码（右侧正被编辑时跳过，不抢改） */
+function scheduleSplitSourceRefresh() {
+  if (!isSplitView.value || isSourceMode.value) return;
+  if (splitRefreshTimer) clearTimeout(splitRefreshTimer);
+  splitRefreshTimer = setTimeout(() => {
+    splitRefreshTimer = 0;
+    if (!isSplitView.value || isSourceMode.value) return;
+    try {
+      if (sourceView.value?.hasFocus) return;
+    } catch {
+      /* 忽略 */
+    }
+    const html = editorInstance.value?.getHTML() ?? content.value ?? '';
+    const formatted = formatHtml(html);
+    if (formatted !== sourceCode.value) {
+      sourceCode.value = formatted;
+    }
+  }, 400);
+}
+
+let splitLocateTimer = 0;
+
+/** 选中变化后消抖触发右侧定位 */
+function scheduleSplitLocate() {
+  if (splitLocateTimer) clearTimeout(splitLocateTimer);
+  splitLocateTimer = setTimeout(() => {
+    splitLocateTimer = 0;
+    locateSelectedInSource();
+  }, 150);
+}
+
+const SPLIT_TAG_SNIPPET = {
+  paragraph: '<p',
+  heading: '<h',
+  blockquote: '<blockquote',
+  bulletList: '<ul',
+  orderedList: '<ol',
+  listItem: '<li',
+  taskList: '<ul',
+  taskItem: '<li',
+  codeBlock: '<pre',
+  horizontalRule: '<hr',
+  image: '<img',
+  video: '<video',
+  table: '<table',
+  section: '<section',
+  details: '<details',
+  mention: '<a',
+};
+
+/** 取附件名（定位图片/视频用，不含查询串） */
+function splitFileOf(src) {
+  const file = String(src || '').split('/').pop().split('?')[0].trim();
+  return file.length >= 4 ? file.slice(-32) : '';
+}
+
+/**
+ * 由当前四路选中构造源码搜索签名 { snippet, ratio }。
+ * ratio 为 ProseMirror 文档进度，用于重复片段时就近命中。
+ */
+function currentSplitSignature() {
+  const editor = editorInstance.value;
+  if (!editor || editor.isDestroyed) return null;
+  const size = editor.state.doc.content.size || 1;
+  const ratioOf = (pos) =>
+    Math.max(0, Math.min(1, (typeof pos === 'number' ? pos : 0) / size));
+
+  const elSel = selectedElementTarget.value;
+  // 行内 span：取区间文本
+  if (elSel?.kind === 'span') {
+    try {
+      const text = editor.state.doc
+        .textBetween(elSel.from, elSel.to, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (text.length >= 2) {
+        return { snippet: text.slice(0, 40), ratio: ratioOf(elSel.from) };
+      }
+    } catch {
+      /* 忽略 */
+    }
+  }
+  // 媒体（图片/视频）：用文件名定位最准
+  const media = selectedTarget.value;
+  if (media && (media.type === 'image' || media.type === 'video')) {
+    const file = splitFileOf(media.node?.attrs?.src);
+    if (file) return { snippet: file, ratio: ratioOf(media.pos) };
+    return {
+      snippet: media.type === 'image' ? '<img' : '<video',
+      ratio: ratioOf(media.pos),
+    };
+  }
+  // 通用元素检查器
+  if (elSel?.kind === 'node' && elSel.node) {
+    const t = elSel.node.type.name;
+    if (t === 'image' || t === 'video') {
+      const file = splitFileOf(elSel.node.attrs?.src);
+      if (file) return { snippet: file, ratio: ratioOf(elSel.pos) };
+    }
+    if (t === 'table') return { snippet: '<table', ratio: ratioOf(elSel.pos) };
+    if (t === 'columns') {
+      return { snippet: 'cms-columns', ratio: ratioOf(elSel.pos) };
+    }
+    if (t === 'column') {
+      return { snippet: 'cms-column', ratio: ratioOf(elSel.pos) };
+    }
+    try {
+      const text = String(elSel.node.textContent || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (text.length >= 2) {
+        return { snippet: text.slice(0, 40), ratio: ratioOf(elSel.pos) };
+      }
+    } catch {
+      /* 忽略 */
+    }
+    if (SPLIT_TAG_SNIPPET[t]) {
+      return { snippet: SPLIT_TAG_SNIPPET[t], ratio: ratioOf(elSel.pos) };
+    }
+  }
+  if (selectedTableTarget.value) {
+    return { snippet: '<table', ratio: ratioOf(selectedTableTarget.value.pos) };
+  }
+  if (selectedColumnsTarget.value) {
+    return {
+      snippet: 'cms-columns',
+      ratio: ratioOf(selectedColumnsTarget.value.pos),
+    };
+  }
+  return null;
+}
+
+function splitAllIndices(haystack, needle) {
+  const out = [];
+  if (!needle) return out;
+  let from = 0;
+  while (from <= haystack.length - needle.length) {
+    const i = haystack.indexOf(needle, from);
+    if (i === -1) break;
+    out.push(i);
+    from = i + 1;
+    if (out.length >= 50) break;
+  }
+  return out;
+}
+
+/**
+ * 片段在源码中就近命中：候选链=全文→前 20 字→最长有效单词，
+ * 大小写敏感优先，命中多个时取离 hint 最近者。
+ */
+function findNearestSnippet(docText, snippet, hint) {
+  const text = String(snippet || '');
+  if (!text || text.length < 2) return null;
+  const candidates = [text];
+  if (text.length > 20) candidates.push(text.slice(0, 20));
+  const words = text.split(/[\s<>"'=/]+/).filter((w) => w.length >= 4);
+  let longest = '';
+  for (const w of words) {
+    if (w.length > longest.length) longest = w;
+  }
+  if (longest && longest !== text && !candidates.includes(longest)) {
+    candidates.push(longest);
+  }
+  for (const cand of candidates) {
+    let idxs = splitAllIndices(docText, cand);
+    if (idxs.length === 0) {
+      idxs = splitAllIndices(docText.toLowerCase(), cand.toLowerCase());
+    }
+    if (idxs.length === 0) continue;
+    let best = idxs[0];
+    let bestDist = Math.abs(best - hint);
+    for (const i of idxs) {
+      const d = Math.abs(i - hint);
+      if (d < bestDist) {
+        best = i;
+        bestDist = d;
+      }
+    }
+    return { from: best, to: best + cand.length };
+  }
+  return null;
+}
+
+/** 把当前选中定位到右侧源码（无选中时清除高亮） */
+function locateSelectedInSource() {
+  const api = sourceAiApi.value;
+  if (
+    !isSplitView.value ||
+    sourceTextareaFallback.value ||
+    !sourceView.value ||
+    !api?.locateRange
+  ) {
+    return;
+  }
+  const sig = currentSplitSignature();
+  if (!sig) {
+    api.clearLocate?.();
+    return;
+  }
+  let docText = '';
+  try {
+    docText = sourceView.value.state.doc.toString();
+  } catch {
+    return;
+  }
+  if (!docText) return;
+  const range = findNearestSnippet(docText, sig.snippet, sig.ratio * docText.length);
+  if (range) api.locateRange(range.from, range.to);
+  else api.clearLocate?.();
+}
+
+// 四路选中任一变化即触发右侧定位（flush:post，等本轮选中落定）
+watch(
+  [selectedElementTarget, selectedTableTarget, selectedColumnsTarget, selectedTarget],
+  () => {
+    if (isSplitView.value) scheduleSplitLocate();
+  },
+  { flush: 'post' },
+);
+
 function onEditorReady(editor) {
   editorInstance.value = editor;
   editor.on('selectionUpdate', onEditorSelectionUpdate);
@@ -3519,7 +3821,7 @@ watch(
   (newValue) => {
     if (newValue !== undefined && newValue !== content.value) {
       content.value = newValue;
-      if (isSourceMode.value) {
+      if (showSource.value) {
         sourceCode.value = formatHtml(newValue);
       }
     }
@@ -3531,7 +3833,7 @@ watch(
   (newValue) => {
     if (newValue !== undefined && newValue !== content.value) {
       content.value = newValue;
-      if (isSourceMode.value) {
+      if (showSource.value) {
         sourceCode.value = formatHtml(newValue);
       }
     }
@@ -3545,6 +3847,8 @@ watch(content, (newValue) => {
 
 function onChange(payload) {
   emit('change', payload);
+  // 双栏下左侧每次改动节流刷新右侧源码
+  scheduleSplitSourceRefresh();
   if (selectedTarget.value?.type === 'image') {
     nextTick(() => {
       updateHandlePosition();
@@ -3576,6 +3880,14 @@ onBeforeUnmount(() => {
     cancelAnimationFrame(hoverRaf);
     hoverRaf = 0;
   }
+  if (splitRefreshTimer) {
+    clearTimeout(splitRefreshTimer);
+    splitRefreshTimer = 0;
+  }
+  if (splitLocateTimer) {
+    clearTimeout(splitLocateTimer);
+    splitLocateTimer = 0;
+  }
   sourceMountSeq += 1;
   unmountSourceEditor();
 });
@@ -3592,7 +3904,7 @@ defineExpose({
   <div
     ref="editorContainerRef"
     class="app-editor-tiptap"
-    :class="{ 'app-editor--fullscreen': isFullscreen }"
+    :class="{ 'app-editor--fullscreen': isFullscreen, 'app-editor--split': isSplitView }"
     :data-editor-ready="editorInstance ? 'true' : 'false'"
     @click.capture="onContentClick"
   >
@@ -3616,6 +3928,7 @@ defineExpose({
         :previewable="previewable"
         :is-fullscreen="isFullscreen"
         :is-source-mode="isSourceMode"
+        :is-split-view="isSplitView"
         :upload-image="uploadImage"
         :upload-file="uploadGeneralFile"
         :fetch-media="props.fetchMedia !== undefined ? props.fetchMedia : defaultFetchMedia"
@@ -3625,6 +3938,7 @@ defineExpose({
         :proofreading="proofreading"
         :proofread-configured="proofreadConfigured"
         @toggle-fullscreen="toggleFullscreen"
+        @toggle-split-view="toggleSplitView"
         @open-external-assets="openExternalModal"
         @open-preview="openPreviewModal"
         @toggle-source-mode="toggleSourceMode"
@@ -3668,9 +3982,17 @@ defineExpose({
         </div>
       </div>
 
-      <!-- 可视化富文本排版区（下半部独立圆角防溢出） -->
+      <!-- 双栏容器：单栏时纵向堆叠（仅其一可见），双栏时左右并排 -->
+      <div
+        class="app-editor-split-body"
+        :class="{ 'is-split': isSplitView }"
+      >
+      <!-- 可视化富文本排版区（下半部独立圆角防溢出；双栏时为左半栏） -->
+      <div
+        v-show="showEditor"
+        class="app-editor-split__left"
+      >
       <VbenTiptap
-        v-show="!isSourceMode"
         v-model="content"
         :editable="!disabled"
         :placeholder="placeholder"
@@ -3682,18 +4004,20 @@ defineExpose({
         class="rounded-b-xl overflow-hidden"
         @change="onChange"
       />
+      </div>
 
-      <!-- HTML 源代码编辑区（下半部独立圆角防溢出） -->
+      <!-- HTML 源代码编辑区（下半部独立圆角防溢出；双栏时为右半栏） -->
       <div
-        v-if="isSourceMode"
-        class="app-editor-source flex flex-1 flex-col rounded-b-xl overflow-hidden bg-muted/20"
+        v-if="showSource"
+        class="app-editor-source app-editor-split__right flex flex-1 flex-col rounded-b-xl overflow-hidden bg-muted/20"
       >
         <div
           class="flex items-center justify-between border-b border-border bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground"
         >
           <div class="flex items-center gap-1.5 min-w-0">
             <span class="inline-block size-2 rounded-full bg-emerald-500 shrink-0"></span>
-            <span class="truncate">HTML 源代码编辑模式（Ctrl/Cmd+S 应用 · Ctrl/Cmd+F 查找替换 · 光标置于标签/内容区两端同亮，Alt+M 或 Ctrl/Cmd+点击标签跳配对）</span>
+            <span v-if="!isSplitView" class="truncate">HTML 源代码编辑模式（Ctrl/Cmd+S 应用 · Ctrl/Cmd+F 查找替换 · 光标置于标签/内容区两端同亮，Alt+M 或 Ctrl/Cmd+点击标签跳配对）</span>
+            <span v-else class="truncate">右侧代码（左侧选中元素自动定位高亮 · 右侧改动需点“应用”才会回写左侧）</span>
           </div>
           <div class="flex items-center gap-1.5 shrink-0">
             <button
@@ -3705,6 +4029,25 @@ defineExpose({
               格式化
             </button>
             <button
+              v-if="isSplitView"
+              class="rounded bg-emerald-600 px-2.5 py-0.5 text-xs font-medium text-white hover:opacity-90"
+              title="把右侧源码应用到左侧编辑器"
+              type="button"
+              @click="applySplitSourceToEditor"
+            >
+              应用右侧改动
+            </button>
+            <button
+              v-if="isSplitView"
+              class="rounded border border-border bg-background px-2.5 py-0.5 text-xs font-medium text-foreground hover:bg-muted"
+              title="退出双栏，返回单栏编辑（保留全屏）"
+              type="button"
+              @click="toggleSplitView"
+            >
+              收起双栏
+            </button>
+            <button
+              v-else
               class="rounded bg-primary px-2.5 py-0.5 text-xs font-medium text-primary-foreground hover:opacity-90"
               type="button"
               @click="exitSourceMode"
@@ -3741,6 +4084,7 @@ defineExpose({
           spellcheck="false"
           @input="onSourceInput"
         ></textarea>
+      </div>
       </div>
     <!-- 选区 Bubble 菜单：行内格式快捷操作（AI 写作入口预留位）
       常驻挂载（仅跟随 editor 实例），显隐由 shouldShow + hide meta 控制；
@@ -5738,6 +6082,57 @@ defineExpose({
 .app-editor-tiptap.app-editor--fullscreen .vben-tiptap {
   flex: 1 !important;
   overflow-y: auto !important;
+}
+
+/* 双栏模式：全屏下左编辑右代码并排（单栏时 split-body 为普通纵向容器） */
+.app-editor-split-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.app-editor-tiptap.app-editor--split .app-editor-split-body.is-split {
+  flex-direction: row;
+  flex: 1 !important;
+  min-height: 0 !important;
+  overflow: hidden;
+}
+
+.app-editor-tiptap.app-editor--split .app-editor-split__left,
+.app-editor-tiptap.app-editor--split .app-editor-split__right {
+  flex: 1 1 0 !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden auto !important;
+}
+
+.app-editor-tiptap.app-editor--split .app-editor-split__left {
+  border-right: 1px solid hsl(var(--border)) !important;
+}
+
+.app-editor-tiptap.app-editor--split .app-editor-split__right {
+  background-color: hsl(var(--muted) / 20%) !important;
+}
+
+/* 双栏下 CodeMirror 宿主占满右栏（min-height 改由右栏滚动承载） */
+.app-editor-tiptap.app-editor--split .app-editor-split__right .app-editor-source-host,
+.app-editor-tiptap.app-editor--split .app-editor-split__right .app-editor-source-textarea {
+  min-height: 240px !important;
+}
+
+/* 窄屏回落：双栏改上下堆叠，避免左右挤压不可用 */
+@media (max-width: 767px) {
+  .app-editor-tiptap.app-editor--split .app-editor-split-body.is-split {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .app-editor-tiptap.app-editor--split .app-editor-split__left {
+    border-right: none !important;
+    border-bottom: 1px solid hsl(var(--border)) !important;
+  }
 }
 
 /* 顶栏与编辑器区域一体化接缝消除 */
