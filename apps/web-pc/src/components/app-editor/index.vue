@@ -444,28 +444,26 @@ function onViewportDocClick(event) {
 }
 const isVideoPlaying = ref(false);
 const replaceVideoModalOpen = ref(false);
-const isSourceMode = ref(false);
 const sourceCode = ref('');
 /**
- * 双栏模式：全屏下左可视化、右源码并排。进入时自动进全屏；
- * 右侧为“只看+定位”视角：左侧编辑实时刷新右侧，右侧改动需手动应用
- * （避免逐键 setContent 丢光标/丢撤销栈），选中元素时右侧高亮定位。
+ * 双栏模式：左可视化、右源码并排（支持普通视图与全屏）。
+ * 右侧为“只看+定位+辅助改动”视角：左侧编辑实时刷新右侧，右侧改动需点“应用”生效；
+ * 点击左侧元素时右侧源码自动定位并高亮标签；右侧点击不逆向影响左侧。
  */
 const isSplitView = ref(false);
-/** 双栏或纯源码任一成立即挂载源码面板 */
-const showSource = computed(() => isSourceMode.value || isSplitView.value);
-/** 纯源码时隐藏左侧可视化，双栏时两侧同时可见 */
-const showEditor = computed(() => !isSourceMode.value || isSplitView.value);
+/** 双栏成立即挂载源码面板 */
+const showSource = computed(() => isSplitView.value);
+/** 左侧富文本始终可见 */
+const showEditor = computed(() => true);
 
 // ---------------------------------------------------------------------------
-// 双栏宽度：默认左宽右窄 + 中间拖拽条（左侧有兜底最小宽度）
+// 双栏宽度：默认 50/50 对等 + 中间拖拽条
 // ---------------------------------------------------------------------------
-/** 左栏默认占比（右侧默认 ~36%，窄于左侧） */
-const SPLIT_DEFAULT_PCT = 64;
+const SPLIT_DEFAULT_PCT = 50;
 /** 左侧兜底最小宽度（拖拽/窗口缩放都不得小于此值） */
-const SPLIT_LEFT_MIN = 340;
+const SPLIT_LEFT_MIN = 280;
 /** 右侧最小宽度 */
-const SPLIT_RIGHT_MIN = 300;
+const SPLIT_RIGHT_MIN = 240;
 /** 拖拽条宽度 */
 const SPLIT_DIV_PX = 6;
 
@@ -566,16 +564,12 @@ provide('appEditor:upload', uploadImage);
 
 function toggleFullscreen() {
   isFullscreen.value = !isFullscreen.value;
-  // 退出全屏时双栏无处安放，一并收起
-  if (!isFullscreen.value && isSplitView.value) {
-    isSplitView.value = false;
-  }
   nextTick(() => {
     onScrollOrResize();
   });
 }
 
-/** 双栏开关：进入=进全屏+挂载右侧源码（以左侧最新 HTML 为准）；退出保留全屏 */
+/** 双栏开关：左可视化、右源码并排（支持普通视图与全屏） */
 function toggleSplitView() {
   if (isSplitView.value) {
     isSplitView.value = false;
@@ -585,11 +579,6 @@ function toggleSplitView() {
     });
     return;
   }
-  // 纯源码模式下进入双栏：先把右侧改动落到编辑器，再并排
-  if (isSourceMode.value) {
-    exitSourceMode();
-  }
-  isFullscreen.value = true;
   const currentHtml = editorInstance.value?.getHTML() ?? content.value ?? '';
   sourceCode.value = formatHtml(currentHtml);
   isSplitView.value = true;
@@ -722,27 +711,6 @@ function formatHtml(html) {
   return formatted.trim();
 }
 
-function toggleSourceMode() {
-  if (isSourceMode.value) {
-    exitSourceMode();
-  } else {
-    // 纯源码与双栏互斥：进纯源码前先收起双栏，避免两侧状态打架
-    if (isSplitView.value) {
-      isSplitView.value = false;
-      sourceAiApi.value?.clearLocate?.();
-    }
-    enterSourceMode();
-  }
-}
-
-function enterSourceMode() {
-  clearSelection();
-  hideShortcutMenus();
-  const currentHtml = editorInstance.value?.getHTML() ?? content.value ?? '';
-  sourceCode.value = formatHtml(currentHtml);
-  isSourceMode.value = true;
-}
-
 /**
  * 显式隐藏 Bubble / Floating 快捷菜单（发 hide meta，不拆 DOM，见模板注释）
  */
@@ -759,43 +727,16 @@ function hideShortcutMenus() {
   }
 }
 
-function exitSourceMode() {
-  // 退出前从 CodeMirror 实例回读全文，确保未触发过 onChange 的改动也不丢失
-  if (sourceView.value) {
-    sourceCode.value = sourceView.value.state.doc.toString();
-  }
-  const nextHtml = sourceCode.value;
-  content.value = nextHtml;
-  if (editorInstance.value) {
-    editorInstance.value.commands.setContent(nextHtml, true);
-  }
-  isSourceMode.value = false;
-  emit('update:value', nextHtml);
-  emit('update:modelValue', nextHtml);
-  emit('change', nextHtml);
-}
-
 function onSourceInput(event) {
-  applySourceCode(event.target.value);
-}
-
-/** 源码变更统一应用（textarea 与 CodeMirror 共用）：同步 content 并向父组件 emit */
-function applySourceCode(nextHtml) {
-  sourceCode.value = nextHtml;
-  content.value = nextHtml;
-  emit('update:value', nextHtml);
-  emit('update:modelValue', nextHtml);
-  emit('change', nextHtml);
+  sourceCode.value = event.target.value;
 }
 
 // ---------------------------------------------------------------------------
 // 源代码模式 CodeMirror 6（动态加载，独立分包）
-// 数据流：CM updateListener → onSourceDocChange → applySourceCode（与旧
-// textarea 逐键 emit 语义一致）；外部写入（props 变化/内部 setContent 等）
-// 经 watch(sourceCode) → setSourceEditorDoc 回灌 CM，用 applyingExternal
-// 标志防止「外部写入触发的 updateListener 再回环 emit」。
-// AI 辅助预留：sourceAiApi 经 defineExpose(sourceAi) 暴露给父组件，
-// 接口约定见 source-editor.js 文件头（AI 写、用户看着改，非全套 vibe coding）。
+// 双栏模式下右侧为定位与辅助编辑视角：用户在右侧编辑时，输入更新 sourceCode，
+// 但不逐键触发 setContent（避免冲掉左侧富文本撤销栈与光标）。
+// 点击“应用右侧改动”或快捷键 Ctrl/Cmd+S 时，把最新代码落到左侧富文本。
+// AI 辅助预留：sourceAiApi 经 defineExpose(sourceAi) 暴露给父组件。
 // ---------------------------------------------------------------------------
 const sourceHostRef = ref(null);
 const sourceView = shallowRef(null);
@@ -809,16 +750,10 @@ let sourceMountSeq = 0;
 
 function onSourceDocChange(value) {
   if (applyingExternalSource) return;
-  // 双栏（非纯源码）下右侧为定位视角：只收文本，不向编辑器回写，
-  // 避免逐键 setContent 导致左侧光标/撤销栈丢失；由“应用右侧改动”显式落盘
-  if (isSplitView.value && !isSourceMode.value) {
-    sourceCode.value = value;
-    return;
-  }
-  applySourceCode(value);
+  sourceCode.value = value;
 }
 
-/** 双栏：把右侧源码显式应用到左侧编辑器（与退出源码同语义，但保留双栏） */
+/** 双栏：把右侧源码显式应用到左侧编辑器 */
 function applySplitSourceToEditor() {
   if (sourceView.value) {
     sourceCode.value = sourceView.value.state.doc.toString();
@@ -834,6 +769,24 @@ function applySplitSourceToEditor() {
   message.success('已将右侧源码应用到左侧');
 }
 
+/**
+ * 用户在右侧源码区发生交互（点击代码、移动光标、输入等）：
+ * 1. 立即解除右侧同步高亮；
+ * 2. 清除等待执行的定位定时器；
+ * 3. 清除左侧的元素选中状态，断开与刚才代码的关联，避免任何事件触发再次跳回旧代码。
+ */
+function onSourceEditorInteract() {
+  sourceAiApi.value?.clearLocate?.();
+  if (splitLocateTimer) {
+    clearTimeout(splitLocateTimer);
+    splitLocateTimer = 0;
+  }
+  clearSelection();
+  clearElementSelection();
+  clearColumnsSelection();
+  clearTableSelection();
+}
+
 async function mountSourceEditor(initialDoc) {
   sourceMountSeq += 1;
   const seq = sourceMountSeq;
@@ -846,8 +799,9 @@ async function mountSourceEditor(initialDoc) {
       doc: initialDoc,
       placeholderText: '在此编辑 HTML 源码...',
       onChange: onSourceDocChange,
-      // Ctrl/Cmd+S、Ctrl/Cmd+Enter = 完成并应用
-      onApply: () => exitSourceMode(),
+      // Ctrl/Cmd+S、Ctrl/Cmd+Enter = 应用到左侧
+      onApply: () => applySplitSourceToEditor(),
+      onInteract: () => onSourceEditorInteract(),
     });
     if (seq !== sourceMountSeq) {
       // 等待加载期间源码模式已再次切换，丢弃本次实例
@@ -911,7 +865,7 @@ watch(showSource, (active) => {
 /** 一键格式化源码（复用 formatHtml，单事务可撤销；降级 textarea 时直接改写） */
 function formatSourceCode() {
   if (sourceTextareaFallback.value || !sourceView.value) {
-    applySourceCode(formatHtml(sourceCode.value));
+    sourceCode.value = formatHtml(sourceCode.value);
     return;
   }
   const view = sourceView.value;
@@ -1161,7 +1115,7 @@ function getActiveColumnIndex(columnsEl, targetEl) {
 }
 
 function selectColumns(columnsEl, targetEl = null) {
-  if (!columnsEl || !editorInstance.value || !isEditable.value || isSourceMode.value) return;
+  if (!columnsEl || !editorInstance.value || !isEditable.value) return;
   const found = findColumnsNodeAndPos(editorInstance.value.view, columnsEl);
   if (!found) return;
 
@@ -1379,7 +1333,7 @@ function refreshSelectedTableNode() {
 }
 
 function selectTable(tableEl) {
-  if (!tableEl || !editorInstance.value || !isEditable.value || isSourceMode.value) return;
+  if (!tableEl || !editorInstance.value || !isEditable.value) return;
   const found = findTableNodeAndPos(editorInstance.value.view, tableEl);
   if (!found) return;
 
@@ -1685,7 +1639,7 @@ function resolveHoverElement() {
 }
 
 function onHoverMove(event) {
-  if (!selectedElementTarget.value || isSourceMode.value) {
+  if (!selectedElementTarget.value) {
     if (isHoveringSelected.value) isHoveringSelected.value = false;
     return;
   }
@@ -1694,7 +1648,7 @@ function onHoverMove(event) {
   const y = event.clientY;
   hoverRaf = requestAnimationFrame(() => {
     hoverRaf = 0;
-    if (!selectedElementTarget.value || isSourceMode.value) {
+    if (!selectedElementTarget.value) {
       isHoveringSelected.value = false;
       return;
     }
@@ -1774,7 +1728,7 @@ function boxRingOf(outer, inner) {
 function refreshBoxOverlay() {
   const sel = selectedElementTarget.value;
   const editor = editorInstance.value;
-  if (!sel || !editor || isSourceMode.value) {
+  if (!sel || !editor) {
     boxOverlay.visible = false;
     return;
   }
@@ -2357,7 +2311,7 @@ function toggleMediaBleed() {
 // Dock 全局模式：文档级一键排版（全部可撤销）
 // ---------------------------------------------------------------------------
 
-const isGlobalActionDisabled = computed(() => !isEditable.value || isSourceMode.value);
+const isGlobalActionDisabled = computed(() => !isEditable.value);
 
 function justifyAllContent() {
   if (!editorInstance.value || isGlobalActionDisabled.value) return;
@@ -2401,7 +2355,7 @@ async function copyContentStyles() {
 // ---------------------------------------------------------------------------
 
 function shouldShowBubbleMenu({ state, editor }) {
-  if (!editor?.isEditable || isSourceMode.value) return false;
+  if (!editor?.isEditable) return false;
   const { from, to } = state.selection;
   if (from === to) return false;
   try {
@@ -2415,7 +2369,7 @@ function shouldShowBubbleMenu({ state, editor }) {
 }
 
 function shouldShowFloatingMenu({ state, editor }) {
-  if (!editor?.isEditable || isSourceMode.value) return false;
+  if (!editor?.isEditable) return false;
   try {
     const { $from } = state.selection;
     // 仅顶层空段落（与官方默认一致，避免栏内/表格内误弹）
@@ -2427,7 +2381,7 @@ function shouldShowFloatingMenu({ state, editor }) {
 
 function floatingInsert(kind) {
   const editor = editorInstance.value;
-  if (!editor || !isEditable.value || isSourceMode.value) return;
+  if (!editor || !isEditable.value) return;
   const chain = editor.chain().focus();
   if (kind === 'paragraph') {
     chain.setParagraph().run();
@@ -2630,7 +2584,7 @@ function requireFreshMediaPos() {
 }
 
 function selectImage(imgEl) {
-  if (!imgEl || !editorInstance.value || !isEditable.value || isSourceMode.value)
+  if (!imgEl || !editorInstance.value || !isEditable.value)
     return;
   clearSelection();
 
@@ -2660,7 +2614,7 @@ function selectImage(imgEl) {
 }
 
 function selectVideo(videoEl) {
-  if (!videoEl || !editorInstance.value || !isEditable.value || isSourceMode.value)
+  if (!videoEl || !editorInstance.value || !isEditable.value)
     return;
   clearSelection();
 
@@ -3227,8 +3181,7 @@ function deleteSelectedImage() {
 function updateHandlePosition() {
   if (
     !['image', 'video'].includes(selectedTarget.value?.type) ||
-    !selectedTarget.value?.el ||
-    isSourceMode.value
+    !selectedTarget.value?.el
   ) {
     handleVisible.value = false;
     return;
@@ -3524,7 +3477,7 @@ function stashPendingClick(target) {
 function flushPendingClickSelect() {
   const p = pendingClickSelect.value;
   pendingClickSelect.value = null;
-  if (!p || !editorInstance.value || isSourceMode.value || !isEditable.value) return;
+  if (!p || !editorInstance.value || !isEditable.value) return;
   if (p.el && !p.el.isConnected) return;
   try {
     if (p.kind === 'image') {
@@ -3565,7 +3518,6 @@ function flushPendingClickSelect() {
 }
 
 function onContentClick(event) {
-  if (isSourceMode.value) return;
   const target = event.target;
   if (
     !target ||
@@ -3731,14 +3683,24 @@ function onKeyDown(event) {
 }
 
 function onEditorSelectionUpdate() {
-  if (isSourceMode.value || !isEditable.value) return;
+  if (!isEditable.value) return;
 
   const editor = editorInstance.value;
   if (!editor) return;
 
+  // 如果焦点在右侧源码编辑器内（用户在右侧点击/编辑代码），不响应左侧失焦触发的 selectionUpdate，防跳回旧代码
+  try {
+    if (sourceView.value?.hasFocus) return;
+  } catch {}
+
   // 选区变化（含任意文本范围划选）即触发 AI 作用域更新
   if (!aiSession.value) {
     aiContextVersion.value += 1;
+  }
+
+  // 双栏模式下选区/光标变化即消抖定位右侧源码
+  if (isSplitView.value) {
+    scheduleSplitLocate();
   }
 
   // AI 比对中：光标/点击落到某变更块内，该块即成为当前比对处（只切高亮不滚动）
@@ -3830,7 +3792,7 @@ function onEditorSelectionUpdate() {
  */
 function syncTableFromSelection() {
   const editor = editorInstance.value;
-  if (!editor || isSourceMode.value || !isEditable.value) return;
+  if (!editor || !isEditable.value) return;
 
   const { $from } = editor.state.selection;
   let tablePos = null;
@@ -3876,11 +3838,11 @@ let splitRefreshTimer = 0;
 
 /** 左侧改动后节流刷新右侧源码（右侧正被编辑时跳过，不抢改） */
 function scheduleSplitSourceRefresh() {
-  if (!isSplitView.value || isSourceMode.value) return;
+  if (!isSplitView.value) return;
   if (splitRefreshTimer) clearTimeout(splitRefreshTimer);
   splitRefreshTimer = setTimeout(() => {
     splitRefreshTimer = 0;
-    if (!isSplitView.value || isSourceMode.value) return;
+    if (!isSplitView.value) return;
     try {
       if (sourceView.value?.hasFocus) return;
     } catch {
@@ -4011,6 +3973,40 @@ function currentSplitSignature() {
       tag: null,
     };
   }
+
+  // 兜底：使用编辑器当前选区/光标所在节点或选中文本定位
+  try {
+    const { selection } = editor.state;
+    if (selection && !selection.empty) {
+      const text = editor.state.doc
+        .textBetween(selection.from, selection.to, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (text.length >= 2) {
+        return { snippet: text.slice(0, 40), ratio: ratioOf(selection.from), tag: null };
+      }
+    }
+    if (selection) {
+      const { $from } = selection;
+      for (let d = $from.depth; d > 0; d -= 1) {
+        const node = $from.node(d);
+        if (node && (node.isBlock || node.type.name === 'paragraph' || node.type.name === 'heading')) {
+          const tag = splitTagOf(node);
+          const pos = $from.before(d);
+          const text = String(node.textContent || '').replace(/\s+/g, ' ').trim();
+          if (text.length >= 2) {
+            return { snippet: text.slice(0, 40), ratio: ratioOf(pos), tag };
+          }
+          if (SPLIT_TAG_SNIPPET[node.type.name]) {
+            return { snippet: SPLIT_TAG_SNIPPET[node.type.name], ratio: ratioOf(pos), tag };
+          }
+        }
+      }
+    }
+  } catch {
+    /* 忽略 */
+  }
+
   return null;
 }
 
@@ -4102,6 +4098,10 @@ function locateSelectedInSource() {
   ) {
     return;
   }
+  // 如果焦点在右侧源码编辑器内，用户正在查看或编辑右侧代码，绝不自动回弹定位
+  try {
+    if (sourceView.value.hasFocus) return;
+  } catch {}
   const sig = currentSplitSignature();
   if (!sig) {
     api.clearLocate?.();
@@ -5168,7 +5168,7 @@ const insertMediaModalOpen = ref(false);
 const insertMediaType = ref('image');
 
 function openInsertMedia(type = 'image') {
-  if (!isEditable.value || isSourceMode.value) return;
+  if (!isEditable.value) return;
   if (hasMediaLibrary.value) {
     insertMediaType.value = type === 'video' ? 'video' : 'image';
     insertMediaModalOpen.value = true;
@@ -5336,7 +5336,6 @@ defineExpose({
         :editable="isEditable"
         :previewable="previewable"
         :is-fullscreen="isFullscreen"
-        :is-source-mode="isSourceMode"
         :is-split-view="isSplitView"
         :upload-image="uploadImage"
         :upload-file="uploadGeneralFile"
@@ -5350,7 +5349,6 @@ defineExpose({
         @toggle-split-view="toggleSplitView"
         @open-external-assets="openExternalModal"
         @open-preview="openPreviewModal"
-        @toggle-source-mode="toggleSourceMode"
         @run-proofread="runProofread"
         @locate-proofread="locateProofreadIssue"
         @apply-proofread="applyProofreadSuggestion"
@@ -5360,7 +5358,7 @@ defineExpose({
 
       <!-- 头部外链标注通知条 -->
       <div
-        v-if="externalAssetsCount > 0 && !isBannerDismissed && !isSourceMode"
+        v-if="externalAssetsCount > 0 && !isBannerDismissed"
         class="flex items-center justify-between border-b border-amber-200/80 bg-amber-500/10 px-4 py-2 text-xs text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-300 transition-all"
       >
         <div class="flex items-center gap-2 min-w-0">
@@ -5405,7 +5403,7 @@ defineExpose({
       >
         <!-- 小屏幕视口仿真指示条（公众号 / 移动端） -->
         <div
-          v-if="editorCanvasWidth === '677px' && !isSourceMode"
+          v-if="editorCanvasWidth === '677px'"
           class="mx-auto my-2.5 flex max-w-[677px] items-center justify-between rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-1.5 text-xs text-emerald-800 dark:text-emerald-200 select-none shadow-xs transition-all"
         >
           <div class="flex items-center gap-2">
@@ -5423,7 +5421,7 @@ defineExpose({
         </div>
 
         <div
-          v-if="editorCanvasWidth === '375px' && !isSourceMode"
+          v-if="editorCanvasWidth === '375px'"
           class="mx-auto my-2.5 flex max-w-[375px] items-center justify-between rounded-lg border border-blue-500/30 bg-blue-500/10 px-3.5 py-1.5 text-xs text-blue-800 dark:text-blue-200 select-none shadow-xs transition-all"
         >
           <div class="flex items-center gap-2">
@@ -5453,7 +5451,7 @@ defineExpose({
       />
       <!-- AI 入口：常驻编辑区（双栏时为左栏）底部中央，胶囊态点击展开输入框 -->
       <AiChatBar
-        v-if="!isSourceMode && (!aiSession || aiSession.streaming)"
+        v-if="!aiSession || aiSession.streaming"
         class="app-editor-ai-float"
         :fetch-ai="props.fetchAi ?? defaultFetchAi"
         :upload-image="uploadImage"
@@ -5486,14 +5484,14 @@ defineExpose({
       <div
         v-if="showSource"
         class="app-editor-source app-editor-split__right flex flex-1 flex-col rounded-b-xl overflow-hidden bg-muted/20"
+        @mousedown="onSourceEditorInteract"
       >
         <div
           class="flex items-center justify-between border-b border-border bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground"
         >
           <div class="flex items-center gap-1.5 min-w-0">
             <span class="inline-block size-2 rounded-full bg-emerald-500 shrink-0"></span>
-            <span v-if="!isSplitView" class="truncate">HTML 源代码编辑模式（Ctrl/Cmd+S 应用 · Ctrl/Cmd+F 查找替换 · 光标置于标签/内容区两端同亮，Alt+M 或 Ctrl/Cmd+点击标签跳配对）</span>
-            <span v-else class="truncate">右侧代码（左侧选中元素自动定位高亮 · 右侧改动需点“应用”才会回写左侧）</span>
+            <span class="truncate">HTML 源代码（左侧选中元素自动定位高亮 · 右侧改动需点“应用”生效）</span>
           </div>
           <div class="flex items-center gap-1.5 shrink-0">
             <button
@@ -5505,30 +5503,20 @@ defineExpose({
               格式化
             </button>
             <button
-              v-if="isSplitView"
               class="rounded bg-emerald-600 px-2.5 py-0.5 text-xs font-medium text-white hover:opacity-90"
-              title="把右侧源码应用到左侧编辑器"
+              title="把右侧源码应用到左侧编辑器（快捷键 Ctrl/Cmd+S）"
               type="button"
               @click="applySplitSourceToEditor"
             >
               应用右侧改动
             </button>
             <button
-              v-if="isSplitView"
               class="rounded border border-border bg-background px-2.5 py-0.5 text-xs font-medium text-foreground hover:bg-muted"
-              title="退出双栏，返回单栏编辑（保留全屏）"
+              title="退出双栏，返回单栏编辑"
               type="button"
               @click="toggleSplitView"
             >
               收起双栏
-            </button>
-            <button
-              v-else
-              class="rounded bg-primary px-2.5 py-0.5 text-xs font-medium text-primary-foreground hover:opacity-90"
-              type="button"
-              @click="exitSourceMode"
-            >
-              完成并应用
             </button>
           </div>
         </div>
@@ -5558,6 +5546,8 @@ defineExpose({
           }"
           placeholder="在此编辑 HTML 源码..."
           spellcheck="false"
+          @focus="onSourceEditorInteract"
+          @mousedown="onSourceEditorInteract"
           @input="onSourceInput"
         ></textarea>
       </div>
@@ -5748,7 +5738,6 @@ defineExpose({
     <!-- 底部固定 Dock 工具条：上下文模式（多栏/表格/检查器/媒体）与全局模式（一键排版）互斥显示，永不遮挡菜单与正文。
          编辑视口与复制样式表统一收在底部状态条，此处不再重复提供。 -->
     <div
-      v-if="!isSourceMode"
       class="app-editor-dock"
     >
       <!-- 元素检查器：任意选中元素的基础设置卡（面包屑可切换祖先） -->
@@ -7575,7 +7564,7 @@ defineExpose({
 
       <!-- 图片拖拽调宽手柄（仅在选中图片时显示于右下角） -->
       <div
-        v-if="handleVisible && !isSourceMode"
+        v-if="handleVisible"
         class="app-editor-resize-handle"
         :style="{
           left: `${handleCoords.left}px`,
@@ -7588,7 +7577,7 @@ defineExpose({
 
       <!-- 盒模型 overlay：选中元素的 margin / padding / content 三色分区 -->
       <div
-        v-if="boxOverlay.visible && isHoveringSelected && !isSourceMode"
+        v-if="boxOverlay.visible && isHoveringSelected"
         class="app-editor-boxoverlay"
         :style="{ clipPath: boxOverlay.clip }"
         contenteditable="false"
@@ -7808,7 +7797,7 @@ defineExpose({
 }
 
 /* 全屏单栏模式下：编辑器左栏撑满 split-body */
-.app-editor-tiptap.app-editor--fullscreen .app-editor-split__left {
+.app-editor-tiptap.app-editor--fullscreen:not(.app-editor--split) .app-editor-split__left {
   flex: 1 1 0% !important;
   min-height: 0 !important;
   height: 100% !important;
@@ -7926,15 +7915,16 @@ defineExpose({
   overflow: hidden auto !important;
 }
 
-/* 左栏：宽度由拖拽比例内联控制（默认 64%），340px 兜底不被压扁 */
+/* 左栏：宽度由拖拽比例内联控制（默认 50%），280px 兜底不被压扁 */
 .app-editor-tiptap.app-editor--split .app-editor-split__left {
   flex: 0 0 auto !important;
-  min-width: 340px !important;
+  min-width: 280px !important;
+  max-width: calc(100% - 240px) !important;
 }
 
 .app-editor-tiptap.app-editor--split .app-editor-split__right {
-  flex: 1 1 0 !important;
-  min-width: 300px !important;
+  flex: 1 1 0% !important;
+  min-width: 240px !important;
   background-color: hsl(var(--muted) / 20%) !important;
 }
 

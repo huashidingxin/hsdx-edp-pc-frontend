@@ -398,4 +398,164 @@ describe('app-editor 全屏模式工具栏与排版结构', () => {
     wrapper.vm.acceptAiCurrent();
     expect(wrapper.vm.aiSession).toBeNull();
   });
+
+  it('双栏模式开关与全屏解耦，左右并排且富文本始终可见', async () => {
+    const { default: AppEditor } = await import('../app-editor/index.vue');
+    const wrapper = mount(AppEditor, {
+      props: {
+        modelValue: '<p>双栏模式测试内容</p>',
+      },
+      global: {
+        stubs: {
+          EditorToolbar: true,
+          MediaLibraryModal: true,
+          ExternalAssetsModal: true,
+          VbenTiptap: VbenTiptapStub,
+          BubbleMenu: true,
+          FloatingMenu: true,
+        },
+      },
+    });
+
+    const dummyEditor = {
+      isDestroyed: false,
+      registerPlugin: vi.fn(),
+      unregisterPlugin: vi.fn(),
+      getHTML: () => '<p>双栏模式测试内容</p>',
+      state: {
+        doc: {
+          textBetween: () => '双栏模式测试内容',
+          content: { size: 50 },
+        },
+        selection: { from: 1, to: 1, empty: true },
+      },
+    };
+    wrapper.vm.editorInstance = dummyEditor;
+
+    expect(wrapper.vm.isSplitView).toBe(false);
+    expect(wrapper.vm.showEditor).toBe(true);
+    expect(wrapper.vm.showSource).toBe(false);
+    expect(wrapper.vm.isFullscreen).toBe(false);
+
+    // 切换进入双栏模式：不强制要求全屏
+    wrapper.vm.toggleSplitView();
+    await nextTick();
+
+    expect(wrapper.vm.isSplitView).toBe(true);
+    expect(wrapper.vm.showEditor).toBe(true);
+    expect(wrapper.vm.showSource).toBe(true);
+    expect(wrapper.vm.isFullscreen).toBe(false);
+
+    const rootEl = wrapper.find('.app-editor-tiptap');
+    expect(rootEl.classes()).toContain('app-editor--split');
+
+    // 退出双栏模式
+    wrapper.vm.toggleSplitView();
+    await nextTick();
+    expect(wrapper.vm.isSplitView).toBe(false);
+    expect(wrapper.vm.showSource).toBe(false);
+  });
+
+  it('工具栏已移除独立源码按钮，保留并支持双栏模式按钮', async () => {
+    const { default: EditorToolbar } = await import('../app-editor/editor-toolbar.vue');
+    const wrapper = mount(EditorToolbar, {
+      props: {
+        editor: null,
+        editable: true,
+        isSplitView: false,
+        isFullscreen: false,
+      },
+    });
+
+    // 验证独立源码模式按钮不存在
+    const sourceBtn = wrapper.find('button[title*="编辑 HTML 源代码"]');
+    expect(sourceBtn.exists()).toBe(false);
+
+    // 验证双栏模式按钮存在
+    const splitBtn = wrapper.find('button[title*="双栏模式"]');
+    expect(splitBtn.exists()).toBe(true);
+
+    // 点击双栏模式按钮触发 toggle-split-view emit
+    await splitBtn.trigger('click');
+    expect(wrapper.emitted('toggle-split-view')).toBeTruthy();
+  });
+
+  it('点击右侧源码时解除右侧高亮并清理左侧选中，防止回弹定位', async () => {
+    const { default: AppEditor } = await import('../app-editor/index.vue');
+    const wrapper = mount(AppEditor, {
+      props: {
+        modelValue: '<p>测试段落</p>',
+      },
+      global: {
+        stubs: {
+          EditorToolbar: true,
+          MediaLibraryModal: true,
+          ExternalAssetsModal: true,
+          VbenTiptap: VbenTiptapStub,
+          BubbleMenu: true,
+          FloatingMenu: true,
+        },
+      },
+    });
+
+    const dummyEditor = {
+      isDestroyed: false,
+      registerPlugin: vi.fn(),
+      unregisterPlugin: vi.fn(),
+      getHTML: () => '<p>测试段落</p>',
+      state: {
+        doc: {
+          textBetween: () => '测试段落',
+          content: { size: 20 },
+        },
+        selection: { from: 1, to: 1, empty: true },
+      },
+    };
+    wrapper.vm.editorInstance = dummyEditor;
+
+    wrapper.vm.toggleSplitView();
+    await nextTick();
+
+    // 模拟左侧选中一个元素
+    wrapper.vm.selectedElementTarget = {
+      kind: 'node',
+      pos: 1,
+      node: {
+        type: { name: 'paragraph' },
+        textContent: '测试段落',
+        attrs: {},
+      },
+    };
+
+    const clearLocateMock = vi.fn();
+    const locateElementMock = vi.fn();
+    wrapper.vm.sourceAiApi = {
+      clearLocate: clearLocateMock,
+      locateRange: vi.fn(),
+      locateElementAt: locateElementMock,
+    };
+    wrapper.vm.sourceView = {
+      hasFocus: false,
+      state: {
+        doc: {
+          toString: () => '<p>测试段落</p>',
+        },
+      },
+    };
+
+    // 触发左侧向右侧定位
+    wrapper.vm.locateSelectedInSource();
+    expect(locateElementMock).toHaveBeenCalled();
+
+    // 模拟点击右侧源码区域 (触发 onSourceEditorInteract)
+    wrapper.vm.onSourceEditorInteract();
+    expect(clearLocateMock).toHaveBeenCalled();
+    expect(wrapper.vm.selectedElementTarget).toBeNull();
+
+    // 当右侧聚焦时，再次尝试定位应被拦截，绝不跳回
+    wrapper.vm.sourceView.hasFocus = true;
+    locateElementMock.mockClear();
+    wrapper.vm.locateSelectedInSource();
+    expect(locateElementMock).not.toHaveBeenCalled();
+  });
 });

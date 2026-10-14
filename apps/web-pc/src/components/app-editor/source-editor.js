@@ -93,9 +93,12 @@ function buildTheme(EditorView) {
     '.cm-searchMatch-selected': { backgroundColor: 'hsl(var(--primary) / 55%)' },
     // 双栏模式选中同步高亮（左侧元素选中 → 右侧代码区间定位，不进选区）
     '.cm-sync-match': {
-      backgroundColor: 'hsl(var(--primary) / 18%)',
-      outline: '1px solid hsl(var(--primary) / 60%)',
+      backgroundColor: 'hsl(var(--primary) / 22%)',
+      outline: '1.5px solid hsl(var(--primary) / 75%)',
+      outlineOffset: '1px',
       borderRadius: '3px',
+      boxShadow: '0 0 8px hsl(var(--primary) / 25%)',
+      transition: 'background-color 0.15s ease, outline-color 0.15s ease',
     },
     '.cm-panels': {
       backgroundColor: 'hsl(var(--card))',
@@ -405,6 +408,7 @@ export async function createSourceCodeEditor({
   placeholderText = '',
   onChange,
   onApply,
+  onInteract,
 }) {
   if (!host) throw new Error('[source-editor] host is required');
   const {
@@ -425,9 +429,12 @@ export async function createSourceCodeEditor({
     placeholder,
   } = await loadModules();
 
+  let currentLocateRange = null;
+
   // ---------------------------------------------------------------------------
   // 双栏同步定位高亮：StateEffect + StateField 承载区间 Decoration，
   // 随文档 changes 自动 map（编辑他处时跟随文本漂移），与用户选区互不干扰。
+  // 用户在右侧主动移动光标或点击时，高亮自动解除。
   // ---------------------------------------------------------------------------
   const setSyncEffect = StateEffect.define();
   const syncField = StateField.define({
@@ -443,6 +450,10 @@ export async function createSourceCodeEditor({
         if (e.is(setSyncEffect)) {
           next = e.value ? e.value : Decoration.none;
         }
+      }
+      // 用户主动在右侧代码区移动光标或点击（非同步定位注入），自动解除高亮
+      if (tr.selectionSet && !tr.effects.some((e) => e.is(setSyncEffect))) {
+        next = Decoration.none;
       }
       return next;
     },
@@ -477,9 +488,28 @@ export async function createSourceCodeEditor({
       placeholderText ? placeholder(placeholderText) : [],
       buildTheme(EditorView),
       syntaxHighlighting(buildHighlight(tags, HighlightStyle), { fallback: true }),
+      EditorView.domEventHandlers({
+        mousedown(_event, _view) {
+          api.clearLocate();
+          onInteract?.();
+          return false;
+        },
+        focus(_event, _view) {
+          api.clearLocate();
+          onInteract?.();
+          return false;
+        },
+      }),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
           onChange?.(update.state.doc.toString());
+        }
+        if (
+          update.selectionSet &&
+          !update.transactions.some((tr) => tr.effects.some((e) => e.is(setSyncEffect)))
+        ) {
+          api.clearLocate();
+          onInteract?.();
         }
       }),
     ],
@@ -596,17 +626,21 @@ export async function createSourceCodeEditor({
         const a = Math.max(0, Math.min(Number(from) || 0, len));
         const b = Math.max(0, Math.min(Number(to) || 0, len));
         if (!(b > a)) {
+          currentLocateRange = null;
           view.dispatch({ effects: setSyncEffect.of(null) });
           return null;
         }
+        currentLocateRange = { from: a, to: b };
         const mark = Decoration.mark({ class: 'cm-sync-match' });
         view.dispatch({
-          effects: setSyncEffect.of(Decoration.set([mark.range(a, b)], true)),
-          selection: { anchor: a, head: b },
-          scrollIntoView: true,
+          effects: [
+            setSyncEffect.of(Decoration.set([mark.range(a, b)], true)),
+            EditorView.scrollIntoView(a, { y: 'center' }),
+          ],
         });
         return { from: a, to: b };
       } catch {
+        currentLocateRange = null;
         return null;
       }
     },
@@ -683,10 +717,16 @@ export async function createSourceCodeEditor({
     /** 清除同步定位高亮 */
     clearLocate() {
       try {
+        currentLocateRange = null;
         view.dispatch({ effects: setSyncEffect.of(null) });
       } catch {
         /* 忽略 */
       }
+    },
+
+    /** 是否处于定位高亮中 */
+    hasLocate() {
+      return Boolean(currentLocateRange);
     },
 
     destroy() {

@@ -25,10 +25,6 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
-  isSourceMode: {
-    type: Boolean,
-    default: false,
-  },
   isSplitView: {
     type: Boolean,
     default: false,
@@ -72,7 +68,6 @@ const emit = defineEmits([
   'toggle-fullscreen',
   'toggle-split-view',
   'open-preview',
-  'toggle-source-mode',
   'open-external-assets',
   'run-proofread',
   'locate-proofread',
@@ -126,7 +121,7 @@ const activeDropdownPanelRef = ref(null);
 const toolbarContainerRef = ref(null);
 
 const isActionDisabled = computed(
-  () => !props.editable || props.isSourceMode,
+  () => !props.editable,
 );
 
 const hasMediaLibrary = computed(() => {
@@ -2690,35 +2685,11 @@ const lineHeightLabel = computed(() => {
         </div>
       </div>
 
-      <!-- 源代码编辑切换按钮 -->
-      <button
-        class="toolbar-btn"
-        :class="{ 'is-active': isSourceMode }"
-        :title="isSourceMode ? '退出源码，返回可视化排版' : '编辑 HTML 源代码'"
-        type="button"
-        @mousedown.prevent
-        @click="emit('toggle-source-mode')"
-      >
-        <svg
-          class="size-3.5"
-          fill="none"
-          stroke="currentColor"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="2"
-          viewBox="0 0 24 24"
-        >
-          <polyline points="16 18 22 12 16 6" />
-          <polyline points="8 6 2 12 8 18" />
-        </svg>
-      </button>
-
       <button
         v-if="previewable"
         class="toolbar-btn"
         title="预览效果"
         type="button"
-        @mousedown.prevent
         @click="emit('open-preview')"
       >
         <svg
@@ -2738,9 +2709,8 @@ const lineHeightLabel = computed(() => {
       <button
         class="toolbar-btn"
         :class="{ 'is-active': isSplitView }"
-        :title="isSplitView ? '退出双栏，返回单栏编辑' : '双栏模式（全屏左编辑右代码，选中自动定位）'"
+        :title="isSplitView ? '收起源码双栏，返回单栏编辑' : '双栏模式（左侧图文 · 右侧代码，选中自动定位）'"
         type="button"
-        @mousedown.prevent
         @click="emit('toggle-split-view')"
       >
         <svg
@@ -2762,7 +2732,6 @@ const lineHeightLabel = computed(() => {
         :class="{ 'is-active': isFullscreen }"
         :title="isFullscreen ? '退出全屏' : '全屏编辑'"
         type="button"
-        @mousedown.prevent
         @click="emit('toggle-fullscreen')"
       >
         <svg
