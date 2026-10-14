@@ -30,6 +30,15 @@ import { BubbleMenu, FloatingMenu } from '@tiptap/vue-3/menus';
 
 import { upload as uploadFile } from '#/api';
 
+import AiChatBar from './ai-chat-bar.vue';
+import {
+  childOffsets,
+  diffBlocks,
+  dispatchAiDiffClear,
+  dispatchAiDiffCurrent,
+  dispatchAiDiffSet,
+  serializeChildBlocks,
+} from './ai-diff-plugin';
 import { findActiveColumnsInfo } from './columns';
 // 输出样式定义原文，供“复制样式”按钮使用，单一来源
 import { contentStylesCss, usesCustomStyleBlocks } from './content-styles.js';
@@ -158,6 +167,17 @@ const props = defineProps({
    */
   fetchProofread: {
     type: [Function, Boolean],
+    default: null,
+  },
+  /**
+   * AI 辅助修改服务：
+   * ({ instruction, preset, text, html, scope, label, images, signal, onChunk }) => Promise<string>
+   * scope: 'node'（选中节点）| 'full'（全文）；images: 设计稿 base64 dataURL 数组（可为空）。
+   * 默认 null（对话条提示未配置）；需后端代理模型接口，切勿前端直连带密钥。
+   * 流式可选：调用 onChunk(chunk) 即为流式输出，否则整包返回最终字符串。
+   */
+  fetchAi: {
+    type: [Function, null],
     default: null,
   },
   /**
@@ -322,7 +342,40 @@ const videoFloatingRef = ref(null);
 const isFullscreen = ref(false);
 const isPreviewModalOpen = ref(false);
 const previewDevice = ref('wechat'); // 'mobile' | 'wechat' | 'full'
-const editorCanvasWidth = ref('auto'); // 'auto' | '677px' | '375px'
+const editorCanvasWidth = ref('960px'); // '960px' | 'auto' | '677px' | '375px'
+
+/** 页面设置（收拢进字数栏下拉）：编辑视口选项 */
+const VIEWPORT_OPTIONS = [
+  { value: '960px', label: '960', title: '默认内容宽度 (960px)' },
+  { value: '677px', label: '公众号 677', title: '微信公众号标准宽 (677px)' },
+  { value: '375px', label: '手机 375', title: '手机端真实视口 (375px)' },
+  { value: 'auto', label: '自适应', title: '自适应跟随外部宽度' },
+];
+
+/** 状态栏按钮默认值：当前编辑视口 */
+const viewportLabel = computed(
+  () => VIEWPORT_OPTIONS.find((o) => o.value === editorCanvasWidth.value)?.label || '自适应',
+);
+
+function setViewportWidth(value) {
+  editorCanvasWidth.value = value;
+  isViewportMenuOpen.value = false;
+  nextTick(() => {
+    onScrollOrResize();
+  });
+}
+
+/** 字数栏页面设置下拉开关（点外部关闭） */
+const isViewportMenuOpen = ref(false);
+const statusbarRef = ref(null);
+
+function onViewportDocClick(event) {
+  if (!isViewportMenuOpen.value) return;
+  const el = statusbarRef.value;
+  if (el && !el.contains(event.target)) {
+    isViewportMenuOpen.value = false;
+  }
+}
 const isVideoPlaying = ref(false);
 const replaceVideoModalOpen = ref(false);
 const isSourceMode = ref(false);
@@ -337,6 +390,93 @@ const isSplitView = ref(false);
 const showSource = computed(() => isSourceMode.value || isSplitView.value);
 /** 纯源码时隐藏左侧可视化，双栏时两侧同时可见 */
 const showEditor = computed(() => !isSourceMode.value || isSplitView.value);
+
+// ---------------------------------------------------------------------------
+// 双栏宽度：默认左宽右窄 + 中间拖拽条（左侧有兜底最小宽度）
+// ---------------------------------------------------------------------------
+/** 左栏默认占比（右侧默认 ~36%，窄于左侧） */
+const SPLIT_DEFAULT_PCT = 64;
+/** 左侧兜底最小宽度（拖拽/窗口缩放都不得小于此值） */
+const SPLIT_LEFT_MIN = 340;
+/** 右侧最小宽度 */
+const SPLIT_RIGHT_MIN = 300;
+/** 拖拽条宽度 */
+const SPLIT_DIV_PX = 6;
+
+const splitBodyRef = ref(null);
+const splitLeftPct = ref(SPLIT_DEFAULT_PCT);
+const isSplitDragging = ref(false);
+let splitDragState = null;
+let lastSplitBodyW = 0;
+
+/** 按当前容器宽度把左栏占比钳制在 [左兜底, 右最小] 区间内 */
+function clampSplitPct(pct) {
+  const w = splitBodyRef.value?.clientWidth || 0;
+  const raw = Math.round(Number(pct) * 10) / 10;
+  if (!(w > 0)) return Math.max(20, Math.min(80, raw || SPLIT_DEFAULT_PCT));
+  const minPct = (SPLIT_LEFT_MIN / w) * 100;
+  const maxPct = ((w - SPLIT_RIGHT_MIN - SPLIT_DIV_PX) / w) * 100;
+  // 容器过窄时保左舍右：左侧兜底优先
+  if (!(maxPct >= minPct)) return minPct;
+  return Math.max(minPct, Math.min(maxPct, raw));
+}
+
+function onSplitDragStart(event) {
+  if (!isSplitView.value || !splitBodyRef.value) return;
+  event.preventDefault();
+  try {
+    event.currentTarget?.setPointerCapture?.(event.pointerId);
+  } catch {
+    /* 忽略 */
+  }
+  splitDragState = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startPct: splitLeftPct.value,
+    width: splitBodyRef.value.clientWidth || 1,
+  };
+  isSplitDragging.value = true;
+  const onMove = (e) => {
+    if (!splitDragState || e.pointerId !== splitDragState.pointerId) return;
+    const dx = e.clientX - splitDragState.startX;
+    splitLeftPct.value = clampSplitPct(
+      splitDragState.startPct + (dx / splitDragState.width) * 100,
+    );
+  };
+  const onUp = (e) => {
+    if (e.pointerId !== splitDragState?.pointerId) return;
+    splitDragState = null;
+    isSplitDragging.value = false;
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointercancel', onUp);
+    nextTick(() => {
+      onScrollOrResize();
+    });
+  };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+  window.addEventListener('pointercancel', onUp);
+}
+
+/** 双击拖拽条恢复默认比例 */
+function resetSplitRatio() {
+  splitLeftPct.value = SPLIT_DEFAULT_PCT;
+  nextTick(() => {
+    onScrollOrResize();
+  });
+}
+
+/** 窗口缩放导致越界时重新钳制（容器宽度变化才量，避免滚动时反复布局） */
+function clampSplitOnResize() {
+  if (!isSplitView.value || !splitBodyRef.value) return;
+  const w = splitBodyRef.value.clientWidth || 0;
+  if (w && Math.abs(w - lastSplitBodyW) > 1) {
+    lastSplitBodyW = w;
+    const fixed = clampSplitPct(splitLeftPct.value);
+    if (fixed !== splitLeftPct.value) splitLeftPct.value = fixed;
+  }
+}
 
 const isEditable = computed(() => !props.disabled);
 
@@ -3243,6 +3383,8 @@ function onContentClick(event) {
     target.closest('.app-editor-floating') ||
     target.closest('.app-editor-resize-handle') ||
     target.closest('.app-editor-toolbar') ||
+    target.closest('.app-editor-ai-chat') ||
+    target.closest('.app-editor-ai-pillwrap') ||
     // Dock 在编辑器根容器内部，其按钮点击不得视为“点空白处”清除选中
     target.closest('.app-editor-dock') ||
     // 状态条 / 弹窗等 chrome 点击保持原样（不触动选中）
@@ -3377,9 +3519,17 @@ function onScrollOrResize() {
   if (selectedElementTarget.value) {
     refreshBoxOverlay();
   }
+  clampSplitOnResize();
+  // AI 比对中小丸跟随滚动
+  if (aiSession.value) refreshAiPill();
 }
 
 function onKeyDown(event) {
+  // 字数栏下拉优先关闭（不影响全屏/双栏的退出链）
+  if (event.key === 'Escape' && isViewportMenuOpen.value) {
+    isViewportMenuOpen.value = false;
+    return;
+  }
   if (event.key === 'Escape' && isSplitView.value) {
     // 双栏优先退出双栏（保留全屏），再按一次才退全屏
     isSplitView.value = false;
@@ -3396,6 +3546,22 @@ function onEditorSelectionUpdate() {
 
   const editor = editorInstance.value;
   if (!editor) return;
+
+  // AI 比对中：光标/点击落到某变更块内，该块即成为当前比对处（只切高亮不滚动）
+  if (aiSession.value && !aiApplying) {
+    try {
+      const from = editor.state.selection.from;
+      const hit = aiSession.value.hunks.find(
+        (h) => h.to > h.from && from >= h.from && from < h.to,
+      );
+      if (hit && hit.key !== aiSession.value.currentKey) {
+        aiSession.value.currentKey = hit.key;
+        dispatchAiDiffCurrent(editor, hit.key);
+      }
+    } catch {
+      /* 忽略 */
+    }
+  }
 
   const info = findActiveColumnsInfo(editor.state);
   if (info) {
@@ -3571,8 +3737,10 @@ function splitFileOf(src) {
 }
 
 /**
- * 由当前四路选中构造源码搜索签名 { snippet, ratio }。
- * ratio 为 ProseMirror 文档进度，用于重复片段时就近命中。
+ * 由当前四路选中构造源码搜索签名 { snippet, ratio, tag }。
+ * ratio 为 ProseMirror 文档进度，用于重复片段时就近命中；
+ * tag 为期望标签（小写），供右侧沿语法树上浮到整个元素高亮，
+ * null 表示直接取包含命中点的最内层元素（如分栏容器 div）。
  */
 function currentSplitSignature() {
   const editor = editorInstance.value;
@@ -3582,7 +3750,7 @@ function currentSplitSignature() {
     Math.max(0, Math.min(1, (typeof pos === 'number' ? pos : 0) / size));
 
   const elSel = selectedElementTarget.value;
-  // 行内 span：取区间文本
+  // 行内 span：取区间文本，目标即该 span
   if (elSel?.kind === 'span') {
     try {
       const text = editor.state.doc
@@ -3590,7 +3758,7 @@ function currentSplitSignature() {
         .replace(/\s+/g, ' ')
         .trim();
       if (text.length >= 2) {
-        return { snippet: text.slice(0, 40), ratio: ratioOf(elSel.from) };
+        return { snippet: text.slice(0, 40), ratio: ratioOf(elSel.from), tag: 'span' };
       }
     } catch {
       /* 忽略 */
@@ -3599,51 +3767,83 @@ function currentSplitSignature() {
   // 媒体（图片/视频）：用文件名定位最准
   const media = selectedTarget.value;
   if (media && (media.type === 'image' || media.type === 'video')) {
+    const tag = media.type === 'image' ? 'img' : 'video';
     const file = splitFileOf(media.node?.attrs?.src);
-    if (file) return { snippet: file, ratio: ratioOf(media.pos) };
+    if (file) return { snippet: file, ratio: ratioOf(media.pos), tag };
     return {
       snippet: media.type === 'image' ? '<img' : '<video',
       ratio: ratioOf(media.pos),
+      tag,
     };
   }
   // 通用元素检查器
   if (elSel?.kind === 'node' && elSel.node) {
     const t = elSel.node.type.name;
     if (t === 'image' || t === 'video') {
+      const tag = t === 'image' ? 'img' : 'video';
       const file = splitFileOf(elSel.node.attrs?.src);
-      if (file) return { snippet: file, ratio: ratioOf(elSel.pos) };
+      if (file) return { snippet: file, ratio: ratioOf(elSel.pos), tag };
     }
-    if (t === 'table') return { snippet: '<table', ratio: ratioOf(elSel.pos) };
+    if (t === 'table') return { snippet: '<table', ratio: ratioOf(elSel.pos), tag: 'table' };
+    // 分栏容器/列：div  tag 太泛滥，传 null 取命中点最内层元素
     if (t === 'columns') {
-      return { snippet: 'cms-columns', ratio: ratioOf(elSel.pos) };
+      return { snippet: 'cms-columns', ratio: ratioOf(elSel.pos), tag: null };
     }
     if (t === 'column') {
-      return { snippet: 'cms-column', ratio: ratioOf(elSel.pos) };
+      return { snippet: 'cms-column', ratio: ratioOf(elSel.pos), tag: null };
     }
+    const tag = splitTagOf(elSel.node);
     try {
       const text = String(elSel.node.textContent || '')
         .replace(/\s+/g, ' ')
         .trim();
       if (text.length >= 2) {
-        return { snippet: text.slice(0, 40), ratio: ratioOf(elSel.pos) };
+        return { snippet: text.slice(0, 40), ratio: ratioOf(elSel.pos), tag };
       }
     } catch {
       /* 忽略 */
     }
     if (SPLIT_TAG_SNIPPET[t]) {
-      return { snippet: SPLIT_TAG_SNIPPET[t], ratio: ratioOf(elSel.pos) };
+      return { snippet: SPLIT_TAG_SNIPPET[t], ratio: ratioOf(elSel.pos), tag };
     }
   }
   if (selectedTableTarget.value) {
-    return { snippet: '<table', ratio: ratioOf(selectedTableTarget.value.pos) };
+    return { snippet: '<table', ratio: ratioOf(selectedTableTarget.value.pos), tag: 'table' };
   }
   if (selectedColumnsTarget.value) {
     return {
       snippet: 'cms-columns',
       ratio: ratioOf(selectedColumnsTarget.value.pos),
+      tag: null,
     };
   }
   return null;
+}
+
+/** 检查器节点类型 → 输出标签（heading 带级别；无明确标签返回 null） */
+function splitTagOf(node) {
+  if (!node) return null;
+  const t = node.type.name;
+  if (t === 'heading') return `h${node.attrs?.level || 1}`;
+  if (t === 'bulletList' || t === 'taskList') return 'ul';
+  if (t === 'orderedList') return 'ol';
+  if (t === 'listItem' || t === 'taskItem') return 'li';
+  if (t === 'tableRow') return 'tr';
+  if (t === 'tableCell') return 'td';
+  if (t === 'tableHeader') return 'th';
+  const map = {
+    paragraph: 'p',
+    blockquote: 'blockquote',
+    codeBlock: 'pre',
+    horizontalRule: 'hr',
+    image: 'img',
+    video: 'video',
+    table: 'table',
+    section: 'section',
+    details: 'details',
+    mention: 'a',
+  };
+  return map[t] || null;
 }
 
 function splitAllIndices(haystack, needle) {
@@ -3721,8 +3921,542 @@ function locateSelectedInSource() {
   }
   if (!docText) return;
   const range = findNearestSnippet(docText, sig.snippet, sig.ratio * docText.length);
-  if (range) api.locateRange(range.from, range.to);
-  else api.clearLocate?.();
+  if (!range) {
+    api.clearLocate?.();
+    return;
+  }
+  // 片段命中后沿语法树上浮到整个元素高亮 + 选中 + 滚动；失败回落片段区间
+  let expanded = null;
+  try {
+    expanded = api.locateElementAt?.(range.from, sig.tag);
+  } catch {
+    expanded = null;
+  }
+  if (!expanded) api.locateRange(range.from, range.to);
+}
+
+// ---------------------------------------------------------------------------
+// AI 内联修改（编辑区中央悬浮入口 + 文档内 diff + 逐处接受/全部接受）
+// ---------------------------------------------------------------------------
+
+/** 比对会话（null=无会话）：{ scopeKind, scopePos, scopeType, scopeEl,
+ *  origBlocks:[{html,sig}], origHTML, hunks:[{key,o,c,cAnchor,from,to}],
+ *  currentKey, decided:Set } */
+const aiSession = ref(null);
+/** 对话条节点 chip 刷新版本（选中变化时递增） */
+const aiContextVersion = ref(0);
+/** AI 自身写文档中（此时编辑器 onChange 不触发重算，由会话逻辑显式重算） */
+let aiApplying = false;
+let aiRecomputeTimer = 0;
+
+/** 行内容器白名单（行内 span 选中时上浮到它们；表格内则提级到整个表格） */
+const AI_SAFE_BLOCKS = new Set([
+  'paragraph',
+  'heading',
+  'blockquote',
+  'listItem',
+  'taskItem',
+  'codeBlock',
+  'section',
+  'column',
+  'detailsContent',
+]);
+
+/** 内容同步回 content + emit（AI 写文档后统一调用） */
+function syncAiContent() {
+  const editor = editorInstance.value;
+  if (!editor || editor.isDestroyed) return;
+  try {
+    const html = editor.getHTML();
+    content.value = html;
+    emit('update:value', html);
+    emit('update:modelValue', html);
+    emit('change', html);
+  } catch {
+    /* 忽略 */
+  }
+}
+
+/** 对话条选中节点解析（现取现用）：{ pos, node, label, text, html } | null */
+function resolveAiScopeTarget() {
+  const editor = editorInstance.value;
+  if (!editor || editor.isDestroyed) return null;
+  const doc = editor.state.doc;
+  const pick = (pos, node) => {
+    if (!node || typeof pos !== 'number') return null;
+    let text = '';
+    let html = '';
+    try {
+      text = node.textContent || '';
+    } catch {
+      text = '';
+    }
+    try {
+      let el = null;
+      try {
+        const dom = editor.view.nodeDOM(pos);
+        el = dom instanceof HTMLElement ? dom : null;
+      } catch {
+        el = null;
+      }
+      html = el?.outerHTML || '';
+    } catch {
+      html = '';
+    }
+    const name = friendlyNodeName(node);
+    // chip 显示内容摘要而非字数（过长截断）
+    const clean = text.replace(/\s+/g, ' ').trim();
+    const summary = clean.length > 24 ? `${clean.slice(0, 24)}…` : clean;
+    return {
+      pos,
+      node,
+      text,
+      html,
+      label: summary ? `${name}：${summary}` : name,
+    };
+  };
+  // 行内 span：上浮到安全块级容器，表格内则提级到整个表格
+  const elSel = selectedElementTarget.value;
+  if (elSel?.kind === 'span') {
+    try {
+      const $p = doc.resolve(elSel.from);
+      for (let d = $p.depth; d >= 0; d -= 1) {
+        const n = $p.node(d);
+        if (!n) continue;
+        if (AI_SAFE_BLOCKS.has(n.type.name)) return pick($p.before(d), n);
+        if (n.type.name === 'table') return pick($p.before(d), n);
+      }
+    } catch {
+      /* 忽略 */
+    }
+  }
+  const media = selectedTarget.value;
+  if (media && (media.type === 'image' || media.type === 'video')) {
+    const n = doc.nodeAt(media.pos);
+    if (n && n.type.name === media.type) return pick(media.pos, n);
+  }
+  if (elSel?.kind === 'node' && elSel.node) {
+    const n = doc.nodeAt(elSel.pos);
+    if (n && n.type.name !== 'doc') return pick(elSel.pos, n);
+  }
+  for (const holder of [selectedTableTarget, selectedColumnsTarget]) {
+    const v = holder.value;
+    if (v) {
+      const n = doc.nodeAt(v.pos);
+      if (n && n.type.name !== 'doc') return pick(v.pos, n);
+    }
+  }
+  // 兜底：光标所在最深块（margin 缝隙等点不到元素时）
+  try {
+    const found = resolveElementFromSelection(editor.state);
+    if (found && found.node) return pick(found.pos, found.node);
+  } catch {
+    /* 忽略 */
+  }
+  return null;
+}
+
+/** 全文索取：{ text, html } | null（空文档返回 null） */
+function getAiFull() {
+  const editor = editorInstance.value;
+  if (!editor || editor.isDestroyed) return null;
+  try {
+    const text = editor.getText() || '';
+    if (!text.trim()) return null;
+    return { text, html: editor.getHTML() || '' };
+  } catch {
+    return null;
+  }
+}
+
+/** 节点 chip 点击：回跳定位到该节点 */
+function locateAiScope() {
+  const t = resolveAiScopeTarget();
+  if (!t || !t.node) return;
+  focusAiHunk({ from: t.pos, to: t.pos + t.node.nodeSize });
+}
+
+/**
+ * 会话作用域实时解析（每次重算都校验，防位置陈旧）。
+ * @returns {{ node: object, base: number } | null}
+ */
+function resolveAiScopeLive(s) {
+  const editor = editorInstance.value;
+  if (!editor || editor.isDestroyed || !s) return null;
+  try {
+    if (s.scopeKind === 'full') {
+      return { node: editor.state.doc, base: 0 };
+    }
+    let node = editor.state.doc.nodeAt(s.scopePos);
+    if ((!node || node.type.name !== s.scopeType) && s.scopeEl?.isConnected) {
+      // 存储 pos 失效时用 DOM 身份重解析（与媒体/元素选中同策略）
+      const found = resolveInspectorTarget(editor.view, s.scopeEl, {
+        findImageNodeAndPos,
+        findVideoNodeAndPos,
+        findColumnsNodeAndPos,
+        findTableNodeAndPos,
+      });
+      if (found && found.node && found.node.type.name === s.scopeType) {
+        s.scopePos = found.pos;
+        node = editor.state.doc.nodeAt(found.pos);
+      }
+    }
+    if (!node || node.type.name !== s.scopeType) return null;
+    return { node, base: s.scopePos + 1 };
+  } catch {
+    return null;
+  }
+}
+
+/** 对话条流式完成：把 AI 建议落盘并开启比对（原文快照先行，单事务可撤销） */
+function onAiSuggestionReady({ html, scope }) {
+  const editor = editorInstance.value;
+  const body = String(html || '').trim();
+  if (!editor || editor.isDestroyed || !body) {
+    message.warning('AI 结果为空，已丢弃');
+    return;
+  }
+  aiApplying = true;
+  try {
+    let scopeNode;
+    let scopePos = 0;
+    let scopeType = 'doc';
+    let scopeEl = null;
+    let origHTML = '';
+    if (scope.kind === 'full') {
+      scopeNode = editor.state.doc;
+      origHTML = editor.getHTML() || '';
+      content.value = body;
+      editor.commands.setContent(body, true);
+    } else {
+      if (typeof scope.pos !== 'number') {
+        message.warning('作用域丢失，请重新选中后发送');
+        return;
+      }
+      const live = editor.state.doc.nodeAt(scope.pos);
+      if (!live || (scope.type && live.type.name !== scope.type)) {
+        message.warning('选中内容已变化，请重新选中后发送');
+        return;
+      }
+      scopeNode = live;
+      scopePos = scope.pos;
+      scopeType = live.type.name;
+      try {
+        const dom = editor.view.nodeDOM(scopePos);
+        scopeEl = dom instanceof HTMLElement ? dom : null;
+      } catch {
+        scopeEl = null;
+      }
+      origHTML = scopeEl?.outerHTML || '';
+      editor
+        .chain()
+        .focus()
+        .deleteRange({ from: scopePos, to: scopePos + live.nodeSize })
+        .insertContentAt(scopePos, body)
+        .run();
+    }
+    const origBlocks = serializeChildBlocks(editor.schema, scopeNode);
+    syncAiContent();
+    aiSession.value = {
+      scopeKind: scope.kind === 'full' ? 'full' : 'node',
+      scopePos,
+      scopeType,
+      scopeEl,
+      origBlocks,
+      origHTML,
+      hunks: [],
+      currentKey: null,
+      decided: new Set(),
+    };
+    recomputeAiSession();
+    if (aiSession.value) {
+      focusAiHunk(aiSession.value.hunks[0]);
+      message.success('AI 建议已标出，请逐处比对接受');
+    }
+  } catch (err) {
+    console.error('[app-editor] 应用 AI 建议失败:', err);
+    message.error('应用 AI 建议失败，请重试');
+  } finally {
+    aiApplying = false;
+  }
+}
+
+/** 重算比对（原文签名 vs 现文签名 LCS，原文下标稳定，可跨次对齐） */
+function recomputeAiSession() {
+  const s = aiSession.value;
+  const editor = editorInstance.value;
+  if (!s || !editor || editor.isDestroyed) return;
+  const live = resolveAiScopeLive(s);
+  if (!live) {
+    finishAiSession('文档结构变化较大，已结束比对（当前内容保留）');
+    return;
+  }
+  const cur = serializeChildBlocks(editor.schema, live.node);
+  const offsets = childOffsets(live.node, live.base);
+  const scopeEnd = live.base + live.node.content.size;
+  const hunks = diffBlocks(
+    s.origBlocks.map((b) => b.sig),
+    cur.map((b) => b.sig),
+  );
+  const pending = [];
+  for (const h of hunks) {
+    if (s.decided.has(h.key)) continue;
+    let from;
+    let to;
+    if (h.c.length > 0) {
+      from = offsets[h.c[0]]?.from;
+      to = offsets[h.c[h.c.length - 1]]?.to;
+      if (from == null || to == null) continue;
+    } else {
+      // 纯删：锚在现文对应光标处（只计数、可恢复，不画高亮）
+      const at = h.cAnchor < offsets.length ? offsets[h.cAnchor].from : scopeEnd;
+      from = at;
+      to = at;
+    }
+    pending.push({ ...h, from, to });
+  }
+  s.hunks = pending;
+  if (!pending.some((h) => h.key === s.currentKey)) {
+    s.currentKey = pending[0]?.key ?? null;
+  }
+  dispatchAiDiffSet(
+    editor,
+    pending
+      .filter((h) => h.to > h.from)
+      .map((h) => ({ from: h.from, to: h.to, key: h.key })),
+    s.currentKey,
+  );
+  if (pending.length === 0) {
+    finishAiSession('AI 建议已处理完毕');
+    return;
+  }
+  // DOM 落定后刷新小丸位置
+  nextTick(() => {
+    refreshAiPill();
+  });
+}
+
+/** 用户手动改文档时消抖重算（AI 自身写文档时由 aiApplying 屏蔽） */
+function scheduleAiRecompute() {
+  if (aiRecomputeTimer) clearTimeout(aiRecomputeTimer);
+  aiRecomputeTimer = setTimeout(() => {
+    aiRecomputeTimer = 0;
+    if (aiSession.value && !aiApplying) recomputeAiSession();
+  }, 400);
+}
+
+const pendingAiHunks = computed(() => aiSession.value?.hunks || []);
+const currentAiHunk = computed(() => {
+  const s = aiSession.value;
+  if (!s) return null;
+  return s.hunks.find((h) => h.key === s.currentKey) || s.hunks[0] || null;
+});
+const aiCurrentIndex = computed(() => {
+  const s = aiSession.value;
+  if (!s) return 0;
+  const idx = s.hunks.findIndex((h) => h.key === s.currentKey);
+  return idx >= 0 ? idx : 0;
+});
+
+/** 小丸位置（fixed，跟随当前变更节点；节点不可见时隐藏） */
+const aiPill = reactive({ show: false, top: 0, left: 0 });
+
+function refreshAiPill() {
+  const h = currentAiHunk.value;
+  const editor = editorInstance.value;
+  if (!aiSession.value || !h || !editor || editor.isDestroyed) {
+    aiPill.show = false;
+    return;
+  }
+  let rect = null;
+  try {
+    let dom = null;
+    try {
+      dom = editor.view.nodeDOM(h.from);
+    } catch {
+      dom = null;
+    }
+    const el = dom instanceof HTMLElement ? dom : dom?.parentElement;
+    if (el?.isConnected) rect = el.getBoundingClientRect();
+  } catch {
+    rect = null;
+  }
+  if (!rect || !(rect.width > 0) || !(rect.height > 0)) {
+    aiPill.show = false;
+    return;
+  }
+  const PILL_W = 240;
+  const PILL_H = 110;
+  const left = Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - PILL_W - 8));
+  let top = rect.top - PILL_H - 8;
+  if (top < 8) top = rect.bottom + 8;
+  aiPill.top = Math.round(Math.max(8, top));
+  aiPill.left = Math.round(left);
+  aiPill.show = true;
+}
+
+/** 切换当前比对处（导航/点击选中跟随，小丸跟过去） */
+function setAiCurrent(key, scroll = false) {
+  const s = aiSession.value;
+  const editor = editorInstance.value;
+  if (!s || !editor) return;
+  s.currentKey = key;
+  dispatchAiDiffCurrent(editor, key);
+  if (scroll) {
+    const h = s.hunks.find((x) => x.key === key);
+    if (h) focusAiHunk(h);
+  }
+  refreshAiPill();
+}
+
+/** 滚动并框选到指定区间（尽力而为：文本选区 → 节点选区 → 仅滚动） */
+function focusAiHunk(h) {
+  const editor = editorInstance.value;
+  if (!editor || editor.isDestroyed || !h) return;
+  try {
+    const doc = editor.state.doc;
+    const to = Math.max(0, Math.min(h.to, doc.content.size));
+    const from = Math.max(0, Math.min(h.from, to));
+    editor.view.dispatch(
+      editor.state.tr.setSelection(TextSelection.create(doc, from, to)),
+    );
+  } catch {
+    try {
+      const doc = editor.state.doc;
+      editor.view.dispatch(
+        editor.state.tr.setSelection(NodeSelection.create(doc, h.from)),
+      );
+    } catch {
+      /* 忽略 */
+    }
+  }
+  try {
+    let dom = null;
+    try {
+      dom = editor.view.nodeDOM(h.from);
+    } catch {
+      dom = null;
+    }
+    const el = dom instanceof HTMLElement ? dom : dom?.parentElement;
+    if (el?.isConnected) {
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+  } catch {
+    /* 忽略 */
+  }
+}
+
+/** 接受当前处（保留 AI 改法，仅去掉高亮） */
+function acceptAiCurrent() {
+  const s = aiSession.value;
+  const h = currentAiHunk.value;
+  if (!s || !h) return;
+  s.decided.add(h.key);
+  const before = s.hunks.length;
+  recomputeAiSession();
+  if (aiSession.value && aiSession.value.hunks.length > 0) {
+    message.success(`已接受（剩余 ${aiSession.value.hunks.length} 处）`);
+  } else if (before > 0 && aiSession.value) {
+    // recompute 内已结束会话并提示，无需重复
+  }
+}
+
+/** 恢复当前处（用原文换回 AI 改法） */
+function rejectAiCurrent() {
+  const s = aiSession.value;
+  const h = currentAiHunk.value;
+  const editor = editorInstance.value;
+  if (!s || !h || !editor || editor.isDestroyed) return;
+  aiApplying = true;
+  try {
+    if (h.o.length > 0) {
+      const oldHTML = h.o.map((i) => s.origBlocks[i]?.html || '').join('');
+      if (h.c.length > 0) {
+        editor
+          .chain()
+          .focus()
+          .deleteRange({ from: h.from, to: h.to })
+          .insertContentAt(h.from, oldHTML)
+          .run();
+      } else {
+        editor.chain().focus().insertContentAt(h.from, oldHTML).run();
+      }
+    } else {
+      // 纯增：删掉 AI 新增块
+      editor.chain().focus().deleteRange({ from: h.from, to: h.to }).run();
+    }
+    syncAiContent();
+    nextTick(() => {
+      onScrollOrResize();
+    });
+  } catch (err) {
+    console.error('[app-editor] 恢复原文失败:', err);
+    message.error('恢复失败，请重试');
+  } finally {
+    aiApplying = false;
+  }
+  recomputeAiSession();
+}
+
+/** 全部接受（保留现状，结束会话） */
+function acceptAllAi() {
+  if (!aiSession.value) return;
+  finishAiSession('已接受全部 AI 修改');
+}
+
+/** 放弃修改（整段恢复原文，结束会话） */
+function abandonAi() {
+  const s = aiSession.value;
+  const editor = editorInstance.value;
+  if (!s || !editor || editor.isDestroyed) {
+    finishAiSession('');
+    return;
+  }
+  aiApplying = true;
+  try {
+    if (s.scopeKind === 'full') {
+      content.value = s.origHTML;
+      editor.commands.setContent(s.origHTML, true);
+    } else {
+      const live = resolveAiScopeLive(s);
+      if (!live) {
+        finishAiSession('作用域已失效，会话结束（当前内容保留）');
+        return;
+      }
+      const from = s.scopePos;
+      const to = from + live.node.nodeSize;
+      editor
+        .chain()
+        .focus()
+        .deleteRange({ from, to })
+        .insertContentAt(from, s.origHTML)
+        .run();
+    }
+    syncAiContent();
+    clearAllSelection();
+    nextTick(() => {
+      onScrollOrResize();
+    });
+    finishAiSession('已放弃 AI 修改，恢复原文');
+  } catch (err) {
+    console.error('[app-editor] 放弃 AI 修改失败:', err);
+    finishAiSession('放弃失败，会话已结束（当前内容保留）');
+  } finally {
+    aiApplying = false;
+  }
+}
+
+/** 结束会话（保留当前文档，仅清高亮与状态） */
+function finishAiSession(toast) {
+  const editor = editorInstance.value;
+  if (editor && !editor.isDestroyed) dispatchAiDiffClear(editor);
+  aiSession.value = null;
+  aiPill.show = false;
+  if (aiRecomputeTimer) {
+    clearTimeout(aiRecomputeTimer);
+    aiRecomputeTimer = 0;
+  }
+  if (toast) message.success(toast);
 }
 
 // 四路选中任一变化即触发右侧定位（flush:post，等本轮选中落定）
@@ -3730,6 +4464,8 @@ watch(
   [selectedElementTarget, selectedTableTarget, selectedColumnsTarget, selectedTarget],
   () => {
     if (isSplitView.value) scheduleSplitLocate();
+    // 对话条节点 chip 常驻，直接刷新（比对中跳过，不打断）
+    if (!aiSession.value) aiContextVersion.value += 1;
   },
   { flush: 'post' },
 );
@@ -3849,6 +4585,8 @@ function onChange(payload) {
   emit('change', payload);
   // 双栏下左侧每次改动节流刷新右侧源码
   scheduleSplitSourceRefresh();
+  // AI 比对进行中用户又改了文档：消抖重算（AI 自身写文档时屏蔽）
+  if (aiSession.value && !aiApplying) scheduleAiRecompute();
   if (selectedTarget.value?.type === 'image') {
     nextTick(() => {
       updateHandlePosition();
@@ -3860,6 +4598,8 @@ onMounted(() => {
   window.addEventListener('scroll', onScrollOrResize, true);
   window.addEventListener('resize', onScrollOrResize);
   window.addEventListener('keydown', onKeyDown);
+  // 字数栏页面设置下拉：点外部关闭
+  document.addEventListener('click', onViewportDocClick);
   // hover 监听挂编辑器容器（冒泡即止）：移出容器 mouseleave 熄灭；
   // 不挂 document，避免与表格库的全局 mousemove 监听纠缠
   editorContainerRef.value?.addEventListener('mousemove', onHoverMove);
@@ -3874,6 +4614,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('scroll', onScrollOrResize, true);
   window.removeEventListener('resize', onScrollOrResize);
   window.removeEventListener('keydown', onKeyDown);
+  document.removeEventListener('click', onViewportDocClick);
   editorContainerRef.value?.removeEventListener('mousemove', onHoverMove);
   editorContainerRef.value?.removeEventListener('mouseleave', onHoverLeave);
   if (hoverRaf) {
@@ -3887,6 +4628,10 @@ onBeforeUnmount(() => {
   if (splitLocateTimer) {
     clearTimeout(splitLocateTimer);
     splitLocateTimer = 0;
+  }
+  if (aiRecomputeTimer) {
+    clearTimeout(aiRecomputeTimer);
+    aiRecomputeTimer = 0;
   }
   sourceMountSeq += 1;
   unmountSourceEditor();
@@ -3903,8 +4648,8 @@ defineExpose({
 <template>
   <div
     ref="editorContainerRef"
-    class="app-editor-tiptap"
-    :class="{ 'app-editor--fullscreen': isFullscreen, 'app-editor--split': isSplitView }"
+    class="app-editor-tiptap relative"
+    :class="{ 'app-editor--fullscreen': isFullscreen, 'app-editor--split': isSplitView, 'app-editor--split-drag': isSplitDragging }"
     :data-editor-ready="editorInstance ? 'true' : 'false'"
     @click.capture="onContentClick"
   >
@@ -3912,10 +4657,11 @@ defineExpose({
       {{ label }}
     </div>
 
-    <!-- 包装外框：移除 overflow-hidden，确保工具栏弹出面板自由悬浮不被截断 -->
+    <!-- 包装外框：非全屏移除 overflow-hidden 确保弹层自由悬浮；全屏由样式表锁定 flex 列容器与内部滚动 -->
     <div
       class="app-editor-wrapper relative flex flex-col rounded-xl border border-border bg-card transition-all"
       :class="{
+        'viewport--960px': editorCanvasWidth === '960px',
         'viewport--677px': editorCanvasWidth === '677px',
         'viewport--375px': editorCanvasWidth === '375px',
       }"
@@ -3984,26 +4730,51 @@ defineExpose({
 
       <!-- 双栏容器：单栏时纵向堆叠（仅其一可见），双栏时左右并排 -->
       <div
+        ref="splitBodyRef"
         class="app-editor-split-body"
         :class="{ 'is-split': isSplitView }"
       >
       <!-- 可视化富文本排版区（下半部独立圆角防溢出；双栏时为左半栏） -->
       <div
         v-show="showEditor"
-        class="app-editor-split__left"
+        class="app-editor-split__left relative"
+        :style="isSplitView ? { width: `${splitLeftPct}%` } : null"
       >
       <VbenTiptap
         v-model="content"
         :editable="!disabled"
         :placeholder="placeholder"
-        :min-height="isFullscreen ? 'calc(100vh - 120px)' : minHeight"
-        :max-height="isFullscreen ? 'calc(100vh - 120px)' : maxHeight"
+        :min-height="isFullscreen ? 200 : minHeight"
+        :max-height="isFullscreen ? 'none' : maxHeight"
         :toolbar="false"
         :previewable="false"
         :extensions="extensions"
         class="rounded-b-xl overflow-hidden"
         @change="onChange"
       />
+      <!-- AI 入口：常驻编辑区（双栏时为左栏）底部中央，胶囊态点击展开输入框 -->
+      <AiChatBar
+        v-if="!isSourceMode && !aiSession"
+        class="app-editor-ai-float"
+        :fetch-ai="props.fetchAi ?? null"
+        :review-active="false"
+        :resolve-scope="resolveAiScopeTarget"
+        :get-full="getAiFull"
+        :context-version="aiContextVersion"
+        @suggestion-ready="onAiSuggestionReady"
+        @locate-scope="locateAiScope"
+      />
+      </div>
+
+      <!-- 双栏拖拽条：左右拖动调整宽度，双击恢复默认（窄屏堆叠时隐藏） -->
+      <div
+        v-if="isSplitView"
+        class="app-editor-split-divider"
+        title="拖拽调整左右宽度（双击恢复默认）"
+        @pointerdown="onSplitDragStart"
+        @dblclick="resetSplitRatio"
+      >
+        <span></span>
       </div>
 
       <!-- HTML 源代码编辑区（下半部独立圆角防溢出；双栏时为右半栏） -->
@@ -4085,6 +4856,92 @@ defineExpose({
           @input="onSourceInput"
         ></textarea>
       </div>
+      </div>
+
+      <!-- AI 比对浮动控制卡：跟随当前变更节点，逐处确认或全部处理 -->
+      <div
+        v-if="aiSession && currentAiHunk && aiPill.show"
+        class="app-editor-ai-pillwrap"
+        :style="{ position: 'fixed', top: `${aiPill.top}px`, left: `${aiPill.left}px`, zIndex: 60 }"
+      >
+        <div class="app-editor-ai-pill-card flex flex-col rounded-xl border border-border/80 bg-card/95 p-1.5 shadow-2xl backdrop-blur-md select-none text-xs">
+          <!-- 主操作行 -->
+          <div class="flex items-center gap-1">
+            <span class="flex items-center gap-1 pl-1.5 pr-2 py-1 text-[11px] font-semibold text-primary">
+              <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z" />
+              </svg>
+              <span>AI 建议</span>
+              <span v-if="pendingAiHunks.length > 1" class="ml-0.5 rounded-full bg-primary/10 px-1.5 py-0.2 text-[10px] text-primary">
+                {{ aiCurrentIndex + 1 }}/{{ pendingAiHunks.length }}
+              </span>
+            </span>
+
+            <button
+              class="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+              title="恢复该处为原文"
+              type="button"
+              @click="rejectAiCurrent"
+            >
+              <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+              <span>拒绝</span>
+            </button>
+
+            <button
+              class="inline-flex items-center gap-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 px-3 py-1 text-xs font-medium text-white shadow-xs transition-all hover:scale-[1.02]"
+              title="接受该处修改"
+              type="button"
+              @click="acceptAiCurrent"
+            >
+              <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+              <span>接受</span>
+            </button>
+
+            <button
+              class="ml-1 rounded-md p-1 text-muted-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
+              title="结束比对（保留当前文档）"
+              type="button"
+              @click="finishAiSession('已结束比对')"
+            >
+              <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+          </div>
+
+          <!-- 多处变更批量操作栏 -->
+          <div
+            v-if="pendingAiHunks.length > 1"
+            class="mt-1 flex items-center justify-between gap-2 border-t border-border/50 pt-1.5 px-1 text-[11px]"
+          >
+            <span class="text-muted-foreground">剩余 {{ pendingAiHunks.length }} 处待确认</span>
+            <div class="flex items-center gap-1">
+              <button
+                class="rounded px-2 py-0.5 text-primary hover:bg-primary/10 transition-colors font-medium"
+                title="接受全部剩余修改"
+                type="button"
+                @click="acceptAllAi"
+              >
+                接受全部
+              </button>
+              <span class="text-border">|</span>
+              <button
+                class="rounded px-2 py-0.5 text-muted-foreground hover:bg-muted transition-colors"
+                title="放弃本次 AI 修改，整段恢复原文"
+                type="button"
+                @click="abandonAi"
+              >
+                放弃修改
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     <!-- 选区 Bubble 菜单：行内格式快捷操作（AI 写作入口预留位）
       常驻挂载（仅跟随 editor 实例），显隐由 shouldShow + hide meta 控制；
@@ -4177,9 +5034,9 @@ defineExpose({
       </div>
     </FloatingMenu>
 
-    <!-- 底部固定 Dock 工具条：上下文模式（多栏/媒体）与全局模式（编辑视口/一键排版）互斥显示，永不遮挡菜单与正文 -->
+    <!-- 底部固定 Dock 工具条：上下文模式（检查器/多栏/表格/媒体）有选中才显示 -->
     <div
-      v-if="!isSourceMode"
+      v-if="!isSourceMode && (selectedElementTarget || selectedColumnsTarget || selectedTarget || selectedTableTarget)"
       class="app-editor-dock"
     >
       <!-- 元素检查器：任意选中元素的基础设置卡（面包屑可切换祖先） -->
@@ -5729,104 +6586,103 @@ defineExpose({
         </div>
         </div>
       </div>
-      <!-- 全局模式：未选中任何节点时的文档级调整 -->
-      <div
-        v-if="!selectedColumnsTarget && !selectedTarget"
-        class="app-editor-floating__toolbar app-editor-global-toolbar"
-      >
-        <div class="app-editor-floating__header">
-          <span class="app-editor-tag">页面设置</span>
-          <span class="text-[10px] text-muted-foreground">未选中节点时显示</span>
-        </div>
-
-        <div class="app-editor-floating__actions">
-          <span class="app-editor-panel-title" title="仅调整编辑区显示宽度，用于预览窄屏排版效果，不会改变发布后的页面宽度">编辑视口</span>
-          <div class="inline-flex rounded-md border border-border bg-background p-0.5">
-            <button
-              type="button"
-              class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
-              :class="editorCanvasWidth === 'auto' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
-              title="自适应跟随外部宽度"
-              @click="editorCanvasWidth = 'auto'"
-            >
-              自适应
-            </button>
-            <button
-              type="button"
-              class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
-              :class="editorCanvasWidth === '677px' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
-              title="微信公众号标准宽 (677px)"
-              @click="editorCanvasWidth = '677px'"
-            >
-              公众号 (677px)
-            </button>
-            <button
-              type="button"
-              class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
-              :class="editorCanvasWidth === '375px' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
-              title="手机端真实视口 (375px)"
-              @click="editorCanvasWidth = '375px'"
-            >
-              手机 (375px)
-            </button>
-          </div>
-
-          <span class="app-editor-divider"></span>
-
-          <span class="app-editor-panel-title">一键排版</span>
-          <button
-            class="app-editor-btn app-editor-btn--pill"
-            :disabled="!isEditable"
-            title="全文设置为两端对齐（可撤销）"
-            type="button"
-            @click="justifyAllContent"
-          >
-            <span class="app-editor-btn-label">两端对齐</span>
-          </button>
-          <button
-            class="app-editor-btn app-editor-btn--pill"
-            :disabled="!isEditable"
-            title="全文行高统一为 1.75（可撤销）"
-            type="button"
-            @click="unifyAllLineHeight"
-          >
-            <span class="app-editor-btn-label">行高 1.75</span>
-          </button>
-          <button
-            class="app-editor-btn app-editor-btn--pill"
-            :disabled="!isEditable"
-            title="删除顶层多余空段落（至少保留一个块，可撤销）"
-            type="button"
-            @click="cleanEmptyParagraphsUi"
-          >
-            <span class="app-editor-btn-label">清除空段</span>
-          </button>
-
-          <span class="app-editor-divider"></span>
-
-          <button
-            class="app-editor-btn app-editor-btn--pill app-editor-copy-styles-btn"
-            :class="{ 'is-active': needsCustomStyles }"
-            :title="needsCustomStyles ? '文档使用了多栏布局，发布到自有站点前建议复制样式定义（公众号等终端可忽略）' : '复制输出样式定义（当前文档未使用多栏，可忽略）'"
-            type="button"
-            @click="copyContentStyles"
-          >
-            <span
-              v-if="needsCustomStyles"
-              class="inline-block size-1.5 rounded-full bg-primary animate-pulse shrink-0"
-            ></span>
-            <span class="app-editor-btn-label">复制样式</span>
-          </button>
-        </div>
-      </div>
     </div>
 
       <!-- 底部状态条与外链标注 -->
       <div
+        ref="statusbarRef"
         class="app-editor-statusbar flex flex-wrap items-center justify-between border-t border-border bg-muted/20 px-4 py-1.5 text-[11px] text-muted-foreground select-none"
       >
         <div class="flex items-center gap-3">
           <span>字符数: {{ plainTextCount }}</span>
+          <span class="text-border">|</span>
+          <!-- 页面设置：按钮默认显示当前编辑视口，点击展开下拉 -->
+          <div class="relative">
+            <button
+              class="flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-foreground hover:bg-muted"
+              :title="`页面设置（当前视口：${viewportLabel}），点击展开`"
+              type="button"
+              @click="isViewportMenuOpen = !isViewportMenuOpen"
+            >
+              <span>宽度 {{ viewportLabel }}</span>
+              <svg
+                class="size-3 opacity-60"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  d="m6 15 6-6 6 6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                />
+              </svg>
+            </button>
+            <div
+              v-if="isViewportMenuOpen"
+              class="absolute bottom-full left-0 z-30 mb-1.5 w-72 rounded-lg border border-border bg-card p-2.5 text-xs text-foreground shadow-xl"
+            >
+              <div class="mb-1.5 font-medium text-muted-foreground" title="仅调整编辑区显示宽度，用于预览窄屏排版效果，不会改变发布后的页面宽度">编辑视口</div>
+              <div class="flex flex-wrap gap-1.5">
+                <button
+                  v-for="opt in VIEWPORT_OPTIONS"
+                  :key="opt.value"
+                  class="rounded-md border px-2 py-1 transition-colors"
+                  :class="editorCanvasWidth === opt.value ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-border hover:bg-muted'"
+                  :title="opt.title"
+                  type="button"
+                  @click="setViewportWidth(opt.value)"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
+              <div class="my-2 border-t border-border/60"></div>
+              <div class="mb-1.5 font-medium text-muted-foreground">一键排版</div>
+              <div class="flex flex-wrap gap-1.5">
+                <button
+                  class="app-editor-btn app-editor-btn--pill"
+                  :disabled="!isEditable"
+                  title="全文设置为两端对齐（可撤销）"
+                  type="button"
+                  @click="justifyAllContent"
+                >
+                  <span class="app-editor-btn-label">两端对齐</span>
+                </button>
+                <button
+                  class="app-editor-btn app-editor-btn--pill"
+                  :disabled="!isEditable"
+                  title="全文行高统一为 1.75（可撤销）"
+                  type="button"
+                  @click="unifyAllLineHeight"
+                >
+                  <span class="app-editor-btn-label">行高 1.75</span>
+                </button>
+                <button
+                  class="app-editor-btn app-editor-btn--pill"
+                  :disabled="!isEditable"
+                  title="删除顶层多余空段落（至少保留一个块，可撤销）"
+                  type="button"
+                  @click="cleanEmptyParagraphsUi"
+                >
+                  <span class="app-editor-btn-label">清除空段</span>
+                </button>
+                <button
+                  class="app-editor-btn app-editor-btn--pill app-editor-copy-styles-btn"
+                  :class="{ 'is-active': needsCustomStyles }"
+                  :title="needsCustomStyles ? '文档使用了多栏布局，发布到自有站点前建议复制样式定义（公众号等终端可忽略）' : '复制输出样式定义（当前文档未使用多栏，可忽略）'"
+                  type="button"
+                  @click="copyContentStyles"
+                >
+                  <span
+                    v-if="needsCustomStyles"
+                    class="inline-block size-1.5 rounded-full bg-primary animate-pulse shrink-0"
+                  ></span>
+                  <span class="app-editor-btn-label">复制样式</span>
+                </button>
+              </div>
+            </div>
+          </div>
           <span class="text-border">|</span>
           <!-- 底部外链资源标注 -->
           <div
@@ -6070,18 +6926,127 @@ defineExpose({
   background-color: hsl(var(--background)) !important;
   display: flex !important;
   flex-direction: column !important;
+  overflow: hidden !important;
 }
 
 .app-editor-tiptap.app-editor--fullscreen .app-editor-wrapper {
-  flex: 1 !important;
+  flex: 1 1 0% !important;
   height: 100% !important;
   max-height: 100% !important;
+  min-height: 0 !important;
   border-radius: 8px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
 }
 
-.app-editor-tiptap.app-editor--fullscreen .vben-tiptap {
-  flex: 1 !important;
+.app-editor-tiptap.app-editor--fullscreen .app-editor-toolbar {
+  flex-shrink: 0 !important;
+  z-index: 20 !important;
+}
+
+.app-editor-tiptap.app-editor--fullscreen .app-editor-split-body {
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  height: 100% !important;
+  display: flex !important;
+  overflow: hidden !important;
+}
+
+/* 全屏单栏模式下：编辑器左栏撑满 split-body */
+.app-editor-tiptap.app-editor--fullscreen .app-editor-split__left {
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  height: 100% !important;
+  width: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+  position: relative !important;
+}
+
+.app-editor-tiptap.app-editor--fullscreen .app-editor-split__left > .vben-tiptap {
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  height: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+  border: none !important;
+  border-radius: 0 !important;
+}
+
+/* EditorContent 在根与 ProseMirror 之间包了一层无 class 的 div:
+ * display:contents 穿透它，让滚动区成为 flex 直接子项 */
+.app-editor-tiptap.app-editor--fullscreen .app-editor-split__left > .vben-tiptap > div {
+  display: contents !important;
+}
+
+.app-editor-tiptap.app-editor--fullscreen .app-editor-split__left .vben-tiptap-content {
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  max-height: 100% !important;
+  height: 100% !important;
   overflow-y: auto !important;
+  overflow-x: hidden !important;
+  padding-bottom: 60px !important;
+}
+
+/* 全屏双栏模式 */
+.app-editor-tiptap.app-editor--fullscreen.app-editor--split .app-editor-split-body.is-split {
+  flex-direction: row !important;
+}
+
+.app-editor-tiptap.app-editor--fullscreen.app-editor--split .app-editor-split__left {
+  height: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+
+.app-editor-tiptap.app-editor--fullscreen.app-editor--split .app-editor-split__right {
+  height: 100% !important;
+  min-height: 0 !important;
+  flex: 1 1 0% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+}
+
+/* 源码模式在全屏下的滚动容器约束 */
+.app-editor-tiptap.app-editor--fullscreen .app-editor-source {
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  height: 100% !important;
+  overflow: hidden !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+.app-editor-tiptap.app-editor--fullscreen .app-editor-source-host,
+.app-editor-tiptap.app-editor--fullscreen .app-editor-source-textarea {
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  height: 100% !important;
+  overflow-y: auto !important;
+}
+
+/* 底部固定工具条与状态栏：固定于编辑器底部，不跟随内容滚动，不遮挡正文 */
+.app-editor-tiptap.app-editor--fullscreen .app-editor-dock {
+  flex-shrink: 0 !important;
+  max-height: 240px !important;
+  overflow-y: auto !important;
+  background-color: hsl(var(--card)) !important;
+  border-top: 1px solid hsl(var(--border)) !important;
+  position: relative !important;
+  z-index: 10 !important;
+}
+
+.app-editor-tiptap.app-editor--fullscreen .app-editor-statusbar {
+  flex-shrink: 0 !important;
+  background-color: hsl(var(--card)) !important;
+  border-top: 1px solid hsl(var(--border)) !important;
+  position: relative !important;
+  z-index: 10 !important;
 }
 
 /* 双栏模式：全屏下左编辑右代码并排（单栏时 split-body 为普通纵向容器） */
@@ -6101,20 +7066,123 @@ defineExpose({
 
 .app-editor-tiptap.app-editor--split .app-editor-split__left,
 .app-editor-tiptap.app-editor--split .app-editor-split__right {
-  flex: 1 1 0 !important;
-  min-width: 0 !important;
   min-height: 0 !important;
   display: flex !important;
   flex-direction: column !important;
   overflow: hidden auto !important;
 }
 
+/* 左栏：宽度由拖拽比例内联控制（默认 64%），340px 兜底不被压扁 */
 .app-editor-tiptap.app-editor--split .app-editor-split__left {
-  border-right: 1px solid hsl(var(--border)) !important;
+  flex: 0 0 auto !important;
+  min-width: 340px !important;
 }
 
 .app-editor-tiptap.app-editor--split .app-editor-split__right {
+  flex: 1 1 0 !important;
+  min-width: 300px !important;
   background-color: hsl(var(--muted) / 20%) !important;
+}
+
+/* 双栏拖拽条：6px 命中区 + 中线，hover/拖拽时高亮 */
+.app-editor-split-divider {
+  flex: 0 0 6px !important;
+  position: relative;
+  cursor: col-resize;
+  touch-action: none;
+  background-color: transparent;
+  user-select: none;
+}
+
+.app-editor-split-divider > span {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 2px;
+  right: 2px;
+  border-radius: 3px;
+  background-color: hsl(var(--border));
+  transition: background-color 0.15s;
+  pointer-events: none;
+}
+
+.app-editor-split-divider:hover > span,
+.app-editor-split-divider:active > span {
+  background-color: hsl(var(--primary) / 60%);
+}
+
+/* 拖拽中：全局 col-resize + 禁止选中，避免拖出文字 */
+.app-editor-tiptap.app-editor--split-drag,
+.app-editor-tiptap.app-editor--split-drag * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+.app-editor-tiptap.app-editor--split-drag .app-editor-split-divider > span {
+  background-color: hsl(var(--primary));
+}
+
+/* AI 入口：悬浮于编辑区底部中央 */
+.app-editor-split__left {
+  position: relative !important;
+}
+
+.app-editor-ai-float {
+  position: absolute !important;
+  bottom: 24px !important;
+  left: 0 !important;
+  right: 0 !important;
+  width: min(680px, 92%) !important;
+  margin: 0 auto !important;
+  z-index: 40 !important;
+  display: flex !important;
+  justify-content: center !important;
+  pointer-events: none !important;
+}
+
+.app-editor-ai-float > * {
+  pointer-events: auto !important;
+}
+
+/* AI 比对浮动卡片 */
+.app-editor-ai-pillwrap {
+  position: fixed !important;
+  z-index: 60 !important;
+  filter: drop-shadow(0 12px 30px rgba(0, 0, 0, 0.18));
+}
+
+.app-editor-ai-pill-card {
+  border: 1px solid hsl(var(--border) / 80%);
+  background-color: hsl(var(--card) / 95%);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), 0 0 0 1px hsl(var(--primary) / 10%);
+}
+
+/* AI 比对高亮：待比对淡绿底虚线框，当前处强描边与发光动画 */
+.vben-tiptap-content .app-editor-ai-changed {
+  background-color: rgba(16, 185, 129, 0.08) !important;
+  outline: 1.5px dashed rgba(16, 185, 129, 0.6) !important;
+  outline-offset: 1px !important;
+  border-radius: 6px !important;
+  transition: all 0.2s ease;
+}
+
+.vben-tiptap-content .app-editor-ai-current {
+  background-color: rgba(16, 185, 129, 0.18) !important;
+  outline: 2px solid #10b981 !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.2) !important;
+  border-radius: 6px !important;
+  animation: app-editor-ai-pulse 2s infinite ease-in-out;
+}
+
+@keyframes app-editor-ai-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.32);
+  }
 }
 
 /* 双栏下 CodeMirror 宿主占满右栏（min-height 改由右栏滚动承载） */
@@ -6130,8 +7198,13 @@ defineExpose({
     overflow-y: auto;
   }
   .app-editor-tiptap.app-editor--split .app-editor-split__left {
-    border-right: none !important;
+    width: auto !important;
+    flex: none !important;
+    min-width: 0 !important;
     border-bottom: 1px solid hsl(var(--border)) !important;
+  }
+  .app-editor-split-divider {
+    display: none !important;
   }
 }
 
@@ -6224,6 +7297,13 @@ defineExpose({
 }
 
 /* 画布视口模式模拟（针对编辑器内容区） */
+.app-editor-wrapper.viewport--960px .vben-tiptap-content {
+  max-width: 960px !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  box-shadow: 0 0 20px rgba(0, 0, 0, 0.04);
+}
+
 .app-editor-wrapper.viewport--677px .vben-tiptap-content {
   max-width: 677px !important;
   margin-left: auto !important;

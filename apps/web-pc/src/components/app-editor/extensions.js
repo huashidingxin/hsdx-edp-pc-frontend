@@ -39,6 +39,7 @@ import { Plugin, PluginKey } from '@tiptap/pm/state';
 import StarterKit from '@tiptap/starter-kit';
 
 import { PasteSanitizer, RichTextStyle, Section } from './paste-preserve';
+import { aiDiffPlugin } from './ai-diff-plugin';
 import { Column, Columns, createColumnsResizerPlugin } from './columns';
 import { findPlugin } from './find-plugin';
 import { createAppMentionExtension } from './mention';
@@ -580,6 +581,13 @@ export function createEditorExtensions(options = {}) {
       name: 'appEditorSelection',
       addProseMirrorPlugins() {
         return [selectionPlugin];
+      },
+    }),
+    // AI 内联比对高亮（Decorations）：待接受/当前处的底色描边，区间自动跟随
+    Extension.create({
+      name: 'appEditorAiDiff',
+      addProseMirrorPlugins() {
+        return [aiDiffPlugin];
       },
     }),
     TextAlign.configure({

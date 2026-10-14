@@ -16,8 +16,9 @@
  * - replaceSelection(text)      替换选中片段
  * - setCode(text)               整体替换（AI 重写后应用）
  * - clear()/focus()/destroy()
- * - locateRange(from, to)/clearLocate()  双栏同步定位高亮（只写 Decoration +
- *                               滚动，不动选区不抢焦点；区间随文档编辑自动 map）
+ * - locateRange(from, to)/clearLocate()  双栏同步定位高亮（高亮 + 选中 +
+ *                               滚动，只 dispatch 不 focus；区间随文档编辑自动 map）
+ * - locateElementAt(pos, tagName)    由命中点沿语法树上浮到目标元素整体高亮
  * 所有写入均为单事务（可整体撤销）+ scrollIntoView，保证「AI 改了哪一眼可见」。
  * 流式说明：appendCode 每次 dispatch 一个 chunk 即可，无需额外流式协议。
  */
@@ -584,8 +585,9 @@ export async function createSourceCodeEditor({
     },
 
     /**
-     * 双栏同步定位：高亮 [from, to] 区间并滚动到可视区。
-     * 只写 Decoration + 滚动，不动用户选区、不抢焦点。
+     * 双栏同步定位：高亮 [from, to] 区间、选中该区间并滚动到可视区。
+     * 选中是滚动的载体（scrollIntoView 跟选区走）；只 dispatch 不 focus，
+     * 焦点仍在左侧编辑器，不干扰左侧输入。
      * @returns {{ from: number, to: number } | null}
      */
     locateRange(from, to) {
@@ -600,9 +602,79 @@ export async function createSourceCodeEditor({
         const mark = Decoration.mark({ class: 'cm-sync-match' });
         view.dispatch({
           effects: setSyncEffect.of(Decoration.set([mark.range(a, b)], true)),
+          selection: { anchor: a, head: b },
           scrollIntoView: true,
         });
         return { from: a, to: b };
+      } catch {
+        return null;
+      }
+    },
+
+    /**
+     * 双栏同步定位（按元素展开）：从命中点 pos 沿语法树上浮到目标元素，
+     * 高亮整个元素（开标签到闭标签，含子节点），并选中+滚动到可视区。
+     * @param {number} pos 片段命中点（findNearestSnippet 的 from）
+     * @param {string|null} tagName 期望标签（'p'/'table'/'img' 等小写）；
+     *   null 则取包含命中点的最内层元素（如分栏 div.cx 列容器）
+     * @returns {{ from: number, to: number } | null}
+     */
+    locateElementAt(pos, tagName) {
+      try {
+        const len = view.state.doc.length;
+        const p = Math.max(0, Math.min(Number(pos) || 0, len));
+        const tree = syntaxTree(view.state);
+        let node = null;
+        try {
+          node = tree.resolveInner(p, -1);
+        } catch {
+          node = null;
+        }
+        if (!node) {
+          try {
+            node = tree.resolveInner(p, 1);
+          } catch {
+            node = null;
+          }
+        }
+        if (!node) return null;
+        // 上浮到 Element（命中标签名/属性/文本均可，统一归属到元素）
+        const toElement = (n) => {
+          let el = n;
+          while (el && el.name !== 'Element') el = el.parent;
+          return el || null;
+        };
+        const tagOf = (elem) => {
+          try {
+            for (let ch = elem.firstChild; ch; ch = ch.nextSibling) {
+              if (ch.name === 'OpenTag' || ch.name === 'SelfClosingTag') {
+                for (let g = ch.firstChild; g; g = g.nextSibling) {
+                  if (g.name === 'TagName') {
+                    return view.state.doc.sliceString(g.from, g.to).toLowerCase();
+                  }
+                }
+              }
+            }
+          } catch {
+            /* 忽略 */
+          }
+          return '';
+        };
+        let el = toElement(node);
+        const want = String(tagName || '').toLowerCase();
+        if (el && want) {
+          let depth = 0;
+          while (el && tagOf(el) !== want && depth < 8) {
+            const up = toElement(el.parent);
+            if (!up || up === el) break;
+            el = up;
+            depth += 1;
+          }
+          // 吻合失败则回落最内层，避免误高亮整篇
+          if (!el || tagOf(el) !== want) el = toElement(node);
+        }
+        if (!el) return null;
+        return api.locateRange(el.from, el.to);
       } catch {
         return null;
       }
