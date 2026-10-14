@@ -82,7 +82,7 @@ describe('app-editor 扩展与保真解析验证', () => {
     expect(cleaned).toContain('内容');
   });
 
-  it('CMS 多栏扩展：标准 HTML 输出、无 data-*、间隙 gap 与 768px 自适应模式验证', () => {
+  it('CMS 多栏扩展：内联基线「一排 x 个」、perRow 切换与旧版 round-trip', () => {
     const extensions = createEditorExtensions();
     expect(extensions.some((ext) => ext.name === 'columns')).toBe(true);
     expect(extensions.some((ext) => ext.name === 'column')).toBe(true);
@@ -92,28 +92,147 @@ describe('app-editor 扩展与保真解析验证', () => {
       content: '<p>初始内容</p>',
     });
 
-    editor.commands.insertColumns({ cols: 2, layout: '1:2', gap: '24px', responsive: 'stack', keepContent: true });
+    // 默认 perRow=1：容器不带 display，列宽 100% 块流堆叠（无 CSS 环境原样保真）
+    editor.commands.insertColumns({ cols: 2, layout: '1:2', gap: '24px', keepContent: true });
     let html = editor.getHTML();
 
-    expect(html).toContain('cms-columns');
-    expect(html).toContain('cms-columns--stack');
+    expect(html).toContain('cms-columns cms-columns--row1');
     expect(html).toContain('cms-column');
-    expect(html).toContain('gap: 24px');
+    expect(html).toContain('--cms-columns-gap: 24px');
+    expect(html).not.toContain('display: flex');
     expect(html).not.toContain('data-');
+    // 一排 1 个：列宽 100%，列间距由第 2 列的 margin-top 承载
+    expect(html).toContain('width: 100%');
+    expect(html).toContain('margin-top: 24px');
+    // flex 权重常驻内联：宽屏被 class 适配为 flex 时按 1:2 分配
+    // （happy-dom 序列化会把 flex 简写展开为 longhand，断言兼容两种形态）
+    expect(html).toMatch(/flex(-grow)?\s*:\s*1\b/);
+    expect(html).toMatch(/flex(-grow)?\s*:\s*2\b/);
 
-    editor.commands.setColumnsResponsive('keep');
+    // 每行 2 个：浮动两列 + 对侧内衬距 + 百分比宽（1:2 → 33.33% / 66.67%）
+    editor.commands.setColumnsPerRow(2);
     html = editor.getHTML();
-    expect(html).toContain('cms-columns--keep');
-    expect(html).not.toContain('cms-columns--stack');
+    expect(html).toContain('cms-columns--row2');
+    expect(html).not.toContain('cms-columns--row1');
+    expect(html).toContain('float: left');
+    expect(html).toContain('width: 33.33%');
+    expect(html).toContain('width: 66.67%');
+    expect(html).toContain('padding-right: 12px');
+    expect(html).toContain('padding-left: 12px');
+    expect(html).toContain('overflow: hidden');
 
+    // 间隙变化同步重建内衬距（24px → 8px，对侧各 4px）
     editor.commands.setColumnsGap('8px');
     html = editor.getHTML();
-    expect(html).toContain('gap: 8px');
+    expect(html).toContain('--cms-columns-gap: 8px');
+    expect(html).toContain('padding-right: 4px');
+
+    // 旧版内容（--stack/--keep + 内联 flex）原样 round-trip，不被静默改写
+    const legacy = new Editor({
+      extensions,
+      content: [
+        '<div class="cms-columns cms-columns--stack" style="display: flex; gap: 16px; margin: 16px 0; box-sizing: border-box; width: 100%;">',
+        '<div class="cms-column" style="flex: 1 1 0%; min-width: 0; box-sizing: border-box;"><p>11</p></div>',
+        '<div class="cms-column" style="flex: 1 1 0%; min-width: 0; box-sizing: border-box;"><p>22</p></div>',
+        '</div>',
+      ].join(''),
+    });
+    expect(legacy.getHTML()).toContain('cms-columns--stack');
+    expect(legacy.getHTML()).toContain('display: flex');
+    // 被任一结构命令触碰即整体迁移到新基线（class 与内联样式原子切换）
+    legacy.commands.setColumnsGap('8px');
+    const migrated = legacy.getHTML();
+    expect(migrated).toContain('cms-columns--row1');
+    expect(migrated).not.toContain('cms-columns--stack');
+    expect(migrated).not.toContain('display: flex');
+    legacy.destroy();
 
     editor.commands.unsetColumns();
     html = editor.getHTML();
     expect(html).not.toContain('cms-columns');
     expect(html).toContain('初始内容');
+
+    editor.destroy();
+  });
+
+  it('多栏结构命令（加列/右移/删列）后内联基线保持一致', () => {
+    const extensions = createEditorExtensions();
+    const editor = new Editor({ extensions, content: '<p>种子</p>' });
+
+    editor.commands.insertColumns({ cols: 3, layout: '1:1:1', gap: '16px', perRow: 2, keepContent: false });
+    // 3 列按一排 2 个：前两列各半（含对侧内衬距），落单末列占满整行
+    let html = editor.getHTML();
+    expect(html.match(/class="cms-column"/g)?.length).toBe(3);
+    expect(html.match(/float: left/g)?.length).toBe(3);
+    expect(html).toContain('width: 100%');
+
+    editor.commands.addColumn('after');
+    html = editor.getHTML();
+    // 4 列两两一排：无落单列，全部 50% + 交替内衬距
+    expect(html.match(/class="cms-column"/g)?.length).toBe(4);
+    expect(html.match(/width: 50%/g)?.length).toBe(4);
+    expect(html.match(/padding-right: 8px/g)?.length).toBe(2);
+    expect(html.match(/padding-left: 8px/g)?.length).toBe(2);
+
+    editor.commands.moveColumnRight();
+    html = editor.getHTML();
+    expect(html.match(/class="cms-column"/g)?.length).toBe(4);
+    expect(html.match(/width: 50%/g)?.length).toBe(4);
+
+    editor.commands.deleteColumnAtIndex(0);
+    html = editor.getHTML();
+    expect(html.match(/class="cms-column"/g)?.length).toBe(3);
+    expect(html).toContain('cms-columns--row2');
+
+    editor.destroy();
+  });
+
+  it('版式网格（web-article / web-bleed）：全宽标记切换与输出样式覆盖', () => {
+    const extensions = createEditorExtensions();
+    const editor = new Editor({
+      extensions,
+      content: '<p>段落</p>',
+    });
+
+    editor.commands.insertColumns({ cols: 2, layout: '1:1', gap: '16px' });
+    let html = editor.getHTML();
+    expect(html).not.toContain('web-bleed');
+    expect(usesCustomStyleBlocks(html)).toBe(true);
+
+    // 切换多栏为全宽通栏（web-bleed）
+    editor.commands.toggleColumnsBleed();
+    html = editor.getHTML();
+    expect(html).toContain('cms-columns');
+    expect(html).toContain('web-bleed');
+
+    // 调整间距时 web-bleed 必须被原子保留
+    editor.commands.setColumnsGap('24px');
+    html = editor.getHTML();
+    expect(html).toContain('web-bleed');
+    expect(html).toContain('--cms-columns-gap: 24px');
+
+    // 再次切换退出全宽
+    editor.commands.toggleColumnsBleed();
+    html = editor.getHTML();
+    expect(html).not.toContain('web-bleed');
+
+    // 纯 HTML 中仅含 web-bleed 也被识别为依赖样式表
+    expect(usesCustomStyleBlocks('<section class="banner web-bleed">内容</section>')).toBe(true);
+    expect(usesCustomStyleBlocks('<p>纯文本</p>')).toBe(false);
+
+    // 输出样式表包含 web-article 与 web-bleed 网格定义
+    expect(contentStylesCss).toContain('.web-article');
+    expect(contentStylesCss).toContain('.web-bleed');
+    expect(contentStylesCss).toContain('--web-article-width: 1200px');
+    expect(contentStylesCss).toContain('--web-article-gutter: 24px');
+    expect(contentStylesCss).toContain('section.web-bleed');
+    expect(contentStylesCss).toContain('div.web-bleed:not(.cms-columns)');
+    expect(contentStylesCss).toContain('img.web-bleed');
+
+    // Slash 命令表中包含全宽命令
+    const bleedCmd = SLASH_COMMANDS.find((c) => c.id === 'bleed');
+    expect(bleedCmd).toBeDefined();
+    expect(bleedCmd.title).toContain('全宽通栏');
 
     editor.destroy();
   });
@@ -338,13 +457,20 @@ describe('app-editor 扩展与保真解析验证', () => {
     legacy.destroy();
   });
 
-  it('输出样式定义可复制：包含多栏/响应式/图片兜底，不含编辑器内部类', () => {
+  it('输出样式定义可复制：多栏双轨（旧版兼容 + 新版宽屏适配）/图片兜底，不含编辑器内部类', () => {
     expect(typeof contentStylesCss).toBe('string');
     expect(contentStylesCss).toContain('.cms-columns');
     expect(contentStylesCss).toContain('.cms-column');
+    // 旧版内容兼容（--stack/--keep + 内联 flex）
     expect(contentStylesCss).toContain('.cms-columns--stack');
     expect(contentStylesCss).toContain('.cms-columns--keep');
     expect(contentStylesCss).toContain('@media (max-width: 768px)');
+    // 新版内容（--row1/--row2）：宽屏适配为 N 栏一排，间隙经 var 透传
+    expect(contentStylesCss).toContain('.cms-columns--row1');
+    expect(contentStylesCss).toContain('.cms-columns--row2');
+    expect(contentStylesCss).toContain('@media (min-width: 769px)');
+    expect(contentStylesCss).toContain('--cms-columns-gap');
+    expect(contentStylesCss).toContain('float: none !important');
     expect(contentStylesCss).toContain('img.edp-editor__image');
     // 存量内容旧类保留兼容
     expect(contentStylesCss).toContain('img.vben-tiptap__image');

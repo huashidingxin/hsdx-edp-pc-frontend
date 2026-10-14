@@ -7,8 +7,14 @@
  * 3. 完美解包 (unsetColumns)：支持一键解包分栏，提取并平铺所有栏目的内部段落、图片、表格等，保留全部内容。
  * 4. 边界隔离与防非法嵌套：column 采用 isolating: true 与 selectable: false，回车/退格不破坏分栏骨架，禁止列内嵌套插入分栏。
  * 5. 比例自适应与拖拽调宽：列宽保存为无量纲 flex 权重（如 1:1、1:2、1:1:1），通过 ProseMirror 事务安全更新。
- * 6. 间隙宽度（gap）自定义：支持 0px / 8px / 16px / 24px / 32px 间隙设置，内联 style 存储。
- * 7. 移动端 768px 自适应方案：支持“自动堆叠 (cms-columns--stack)”与“保持并排 (cms-columns--keep)”一键切换。
+ * 6. 间隙宽度（gap）自定义：支持 0px / 8px / 16px / 24px / 32px 间隙设置。
+ * 7. 内联基线 = 「一排 x 个」（perRow，1 或 2）：容器不带 display，列宽/浮动/内衬距全部内联——
+ *    perRow=1 为块流堆叠；perRow=2 为浮动两列（列间距用对侧 padding 半距表达，刻意不用 flex
+ *    gap）。无 CSS 环境（微信公众号图文、邮件客户端）下这份内联样式原样保真，是最兼容的保障；
+ *    宽屏「N 栏一排」由 class（cms-columns--row1 / --row2 + 站点/导出样式里的
+ *    min-width:769px 适配）承担，窄屏不覆盖、直接回落内联基线。
+ * 8. 旧版内容（--stack/--keep + 内联 flex）原样 round-trip；被任一结构命令触碰时，
+ *    按「stack→一排 1 个、keep→一排 2 个」整体迁移到新基线（class 与内联样式原子切换）。
  */
 import { mergeAttributes, Node } from "@tiptap/core";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
@@ -37,18 +43,95 @@ export function extractFlexWeight(styleStr) {
 }
 
 /**
- * 构造单列标准内联样式
+ * 间隙值取半（浮动两列的对侧内衬距）："16px" -> "8px"，"0px"/不可解析 -> ""
  */
-export function buildColumnStyle(flexWeight = 1) {
+export function halfGapValue(gap) {
+  const match = String(gap ?? "").match(/^\s*([\d.]+)\s*(px|em|rem|pt|%)?\s*$/i);
+  if (!match) return "";
+  const value = Number.parseFloat(match[1]);
+  if (Number.isNaN(value) || value <= 0) return "";
+  const unit = match[2] || "px";
+  return `${Math.round((value / 2) * 100) / 100}${unit}`;
+}
+
+/**
+ * 构造单列标准内联样式（内联基线：一排 x 个）
+ *
+ * @param {number} flexWeight 该列 flex 权重（无量纲，常驻内联；容器被 class 适配为 flex 时生效）
+ * @param {object} [options]
+ * @param {1|2} [options.perRow] 每行栏数：1=块流堆叠，2=浮动两列
+ * @param {number} [options.index] 该列在容器中的序号（0 起）
+ * @param {number} [options.total] 总列数
+ * @param {number[]} [options.weights] 各列权重数组（长度须等于 total）
+ * @param {string} [options.gap] 间隙宽度
+ */
+export function buildColumnStyle(flexWeight = 1, options = {}) {
+  const {
+    perRow = 1,
+    index = 0,
+    total = 1,
+    weights = null,
+    gap = "16px",
+  } = options;
   const normalized = Math.round(flexWeight * 100) / 100;
-  return `flex: ${normalized} 1 0%; min-width: 0; box-sizing: border-box;`;
+  const safeTotal = Math.max(1, total);
+  // flex 权重常驻内联：容器被 class 适配为 flex（宽屏）时按比例分配；非 flex 环境下被忽略。
+  let style = `box-sizing: border-box; min-width: 0; flex: ${normalized} 1 0%;`;
+
+  if (perRow === 2) {
+    const rowStart = Math.floor(index / 2) * 2;
+    const rowCount = Math.min(2, Math.max(1, safeTotal - rowStart));
+    const isLone = rowCount <= 1;
+    const rowWeights =
+      Array.isArray(weights) && weights.length === safeTotal
+        ? weights.slice(rowStart, rowStart + rowCount)
+        : Array.from({ length: rowCount }, () => 1);
+    const rowSum =
+      rowWeights.reduce((acc, w) => acc + (Number(w) || 1), 0) || rowCount;
+    // 行内按权重比例分宽（整数百分比两位小数，总和 100）；落单的末列占满整行
+    const widthPct = isLone
+      ? 100
+      : ((Number(rowWeights[index - rowStart]) || 1) / rowSum) * 100;
+    style += ` float: left; width: ${Math.round(widthPct * 100) / 100}%;`;
+    // 列间距 = 对侧内衬距各一半（box-sizing: border-box，宽度含内衬，总和恒 100%）
+    if (!isLone) {
+      const half = halfGapValue(gap);
+      const isLeftOfPair = (index - rowStart) % 2 === 0;
+      if (half) {
+        style += isLeftOfPair ? ` padding-right: ${half};` : ` padding-left: ${half};`;
+      }
+    }
+    // 行间距 = 非末行列的 margin-bottom（浮动布局按 margin 盒排后续行）
+    const lastRowStart = Math.floor((safeTotal - 1) / 2) * 2;
+    if (rowStart < lastRowStart && String(gap) !== "0px") {
+      style += ` margin-bottom: ${gap};`;
+    }
+  } else {
+    // 一排 1 个：块流自然堆叠，列间距 = 非首列的 margin-top
+    style += " width: 100%;";
+    if (index > 0 && String(gap) !== "0px") {
+      style += ` margin-top: ${gap};`;
+    }
+  }
+  return style;
 }
 
 /**
  * 构造多栏容器标准内联样式
+ *
+ * 容器刻意不带 display：内联基线（一排 x 个）自身就是完整布局，无 CSS 环境原样保真；
+ * --cms-columns-gap 仅把间隙值透传给 class 层的 flex gap（无 CSS 环境静默忽略）。
  */
-export function buildColumnsContainerStyle(gap = "16px") {
-  return `display: flex; gap: ${gap}; margin: 16px 0; box-sizing: border-box; width: 100%;`;
+export function buildColumnsContainerStyle(gap = "16px", perRow = 1) {
+  const gapValue = String(gap ?? "").trim() || "16px";
+  return `margin: 16px 0; box-sizing: border-box; width: 100%; --cms-columns-gap: ${gapValue};${
+    perRow === 2 ? " overflow: hidden;" : ""
+  }`;
+}
+
+/** 新版多栏容器 class（perRow 语义标记，站点/导出样式据此适配宽屏） */
+export function normalizeColumnsClass(perRow) {
+  return `cms-columns cms-columns--row${perRow === 2 ? 2 : 1}`;
 }
 
 /**
@@ -134,6 +217,54 @@ function resolveColumnsNodeAndPos(state, targetPos = null) {
   return findActiveColumnsInfo(state);
 }
 
+/**
+ * 按容器属性（perRow/gap/权重）整体重建一个多栏块：容器 class + 内联样式与
+ * 每一列的内联基线原子切换。凡改变结构/比例/间隙/每行栏数的命令都走这里，
+ * 保证「class 与内联样式永不漂移」（旧版 flex 块被触碰即整体迁移到新基线）。
+ *
+ * @param {object} tr ProseMirror 事务
+ * @param {number} columnsPos 容器位置
+ * @param {object} columnsNode 容器节点（迁移前的 doc 节点）
+ * @param {object} [overrides] 需覆盖的容器属性（如 { perRow: 2 } / { gap: "8px" }）
+ * @param {number[]} [weightsOverride] 覆盖后的各列权重（改比例/拖拽时传入）
+ */
+function rebuildColumnsBlock(tr, columnsPos, columnsNode, overrides = {}, weightsOverride = null) {
+  const attrs = { ...columnsNode.attrs, ...overrides };
+  const perRow = attrs.perRow === 2 ? 2 : 1;
+  const gap = attrs.gap || "16px";
+  const total = columnsNode.childCount;
+  const weights = [];
+  for (let i = 0; i < total; i += 1) {
+    const raw = weightsOverride ? weightsOverride[i] : columnsNode.child(i).attrs?.flex;
+    const w = Number.parseFloat(raw);
+    weights.push(Number.isNaN(w) || w <= 0 ? 1 : w);
+  }
+
+  const rawClass = attrs.class || columnsNode.attrs?.class || '';
+  const hadBleed = rawClass.split(/\s+/).includes('web-bleed');
+  const baseClass = normalizeColumnsClass(perRow);
+  const finalClass = hadBleed ? `${baseClass} web-bleed` : baseClass;
+
+  tr.setNodeMarkup(columnsPos, null, {
+    ...attrs,
+    perRow,
+    gap,
+    class: finalClass,
+    style: buildColumnsContainerStyle(gap, perRow),
+  });
+
+  let offset = columnsPos + 1;
+  for (let i = 0; i < total; i += 1) {
+    const col = columnsNode.child(i);
+    tr.setNodeMarkup(offset, null, {
+      ...col.attrs,
+      flex: String(weights[i]),
+      style: buildColumnStyle(weights[i], { perRow, index: i, total, weights, gap }),
+    });
+    offset += col.nodeSize;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 3. Columns（多栏容器）节点
 // ---------------------------------------------------------------------------
@@ -148,19 +279,32 @@ export const Columns = Node.create({
 
   addAttributes() {
     return {
+      // class 忠实 round-trip：旧版内容（--stack/--keep）原样保留渲染行为，
+      // 被结构命令触碰时才由 rebuildColumnsBlock 原子切换为 --row1/--row2。
       class: {
-        default: "cms-columns cms-columns--stack",
-        parseHTML: (el) => el.getAttribute("class") || "cms-columns cms-columns--stack",
-        renderHTML: (attrs) => {
-          const mode = attrs.responsive === "keep" ? "cms-columns--keep" : "cms-columns--stack";
-          return { class: `cms-columns ${mode}` };
-        },
-      },
-      style: {
-        default: buildColumnsContainerStyle("16px"),
-        parseHTML: (el) => el.getAttribute("style") || buildColumnsContainerStyle("16px"),
+        default: normalizeColumnsClass(1),
+        parseHTML: (el) => el.getAttribute("class") || normalizeColumnsClass(1),
         renderHTML: (attrs) => ({
-          style: buildColumnsContainerStyle(attrs.gap || "16px"),
+          class: attrs.class || normalizeColumnsClass(attrs.perRow === 2 ? 2 : 1),
+        }),
+      },
+      // 每行栏数（内联基线口径）：1=堆叠，2=两两并排。旧版 --keep 视同 2、--stack/裸类视同 1。
+      perRow: {
+        default: 1,
+        parseHTML: (el) => {
+          if (el.classList?.contains("cms-columns--row2")) return 2;
+          if (el.classList?.contains("cms-columns--keep")) return 2;
+          return 1;
+        },
+        renderHTML: () => ({}),
+      },
+      // 容器内联样式为权威存储（解析时原样保留，旧版 flex 块因此不被静默改写）；
+      // 结构命令统一经 rebuildColumnsBlock 重生成为当前基线。
+      style: {
+        default: buildColumnsContainerStyle("16px", 1),
+        parseHTML: (el) => el.getAttribute("style") || buildColumnsContainerStyle("16px", 1),
+        renderHTML: (attrs) => ({
+          style: attrs.style || buildColumnsContainerStyle("16px", 1),
         }),
       },
       layout: {
@@ -180,16 +324,12 @@ export const Columns = Node.create({
       gap: {
         default: "16px",
         parseHTML: (el) => {
-          const match = el.getAttribute("style")?.match(/gap\s*:\s*([^;]+)/i);
+          const style = el.getAttribute("style") || "";
+          // 新版基线把间隙透传给 class 层的 var；旧版基线是直接的 gap 属性
+          const varMatch = style.match(/--cms-columns-gap\s*:\s*([^;]+)/i);
+          if (varMatch) return varMatch[1].trim();
+          const match = style.match(/(?:^|[;{\s])gap\s*:\s*([^;]+)/i);
           return match ? match[1].trim() : "16px";
-        },
-        renderHTML: () => ({}),
-      },
-      responsive: {
-        default: "stack",
-        parseHTML: (el) => {
-          if (el.classList.contains("cms-columns--keep")) return "keep";
-          return "stack";
         },
         renderHTML: () => ({}),
       },
@@ -247,11 +387,14 @@ export const Columns = Node.create({
             cols = 2,
             layout = "1:1",
             gap = "16px",
-            responsive = "stack",
+            perRow = 1,
             keepContent = true,
           } = options;
           const weights = parseRatioString(layout);
           const finalCols = Math.max(2, Math.min(6, cols || weights.length));
+          // 列数多于比例项时按 1 补齐，layout 归一化为等长比例串
+          const fullWeights = Array.from({ length: finalCols }, (_, i) => weights[i] ?? 1);
+          const rowPerRow = perRow === 2 ? 2 : 1;
 
           const { selection } = state;
           let firstColContent = [];
@@ -296,13 +439,19 @@ export const Columns = Node.create({
 
           const columnNodes = [];
           for (let i = 0; i < finalCols; i += 1) {
-            const weight = weights[i] !== undefined ? weights[i] : 1;
+            const weight = fullWeights[i];
             const content = i === 0 ? firstColContent : [schema.nodes.paragraph.create()];
             columnNodes.push(
               schema.nodes.column.create(
                 {
                   flex: String(weight),
-                  style: buildColumnStyle(weight),
+                  style: buildColumnStyle(weight, {
+                    perRow: rowPerRow,
+                    index: i,
+                    total: finalCols,
+                    weights: fullWeights,
+                    gap,
+                  }),
                 },
                 content,
               ),
@@ -311,11 +460,11 @@ export const Columns = Node.create({
 
           const columnsNode = schema.nodes.columns.create(
             {
-              layout,
+              layout: fullWeights.join(":"),
               gap,
-              responsive,
-              class: `cms-columns cms-columns--${responsive}`,
-              style: buildColumnsContainerStyle(gap),
+              perRow: rowPerRow,
+              class: normalizeColumnsClass(rowPerRow),
+              style: buildColumnsContainerStyle(gap, rowPerRow),
             },
             columnNodes,
           );
@@ -386,27 +535,19 @@ export const Columns = Node.create({
           if (!info) return false;
           const { columnsNode, columnsPos } = info;
           const weights = parseRatioString(layoutStr);
+          const fullWeights = Array.from(
+            { length: columnsNode.childCount },
+            (_, i) => weights[i] ?? 1,
+          );
 
           if (dispatch) {
-            let childOffset = columnsPos + 1;
-            const childCount = columnsNode.childCount;
-
-            for (let i = 0; i < childCount; i += 1) {
-              const col = columnsNode.child(i);
-              const w = weights[i] !== undefined ? weights[i] : 1;
-              const newStyle = buildColumnStyle(w);
-              tr.setNodeMarkup(childOffset, null, {
-                ...col.attrs,
-                flex: String(w),
-                style: newStyle,
-              });
-              childOffset += col.nodeSize;
-            }
-
-            tr.setNodeMarkup(columnsPos, null, {
-              ...columnsNode.attrs,
-              layout: layoutStr,
-            });
+            rebuildColumnsBlock(
+              tr,
+              columnsPos,
+              columnsNode,
+              { layout: fullWeights.join(":") },
+              fullWeights,
+            );
             tr.scrollIntoView();
           }
 
@@ -424,10 +565,27 @@ export const Columns = Node.create({
           const { columnsNode, columnsPos } = info;
 
           if (dispatch) {
-            tr.setNodeMarkup(columnsPos, null, {
-              ...columnsNode.attrs,
-              gap,
-              style: buildColumnsContainerStyle(gap),
+            rebuildColumnsBlock(tr, columnsPos, columnsNode, { gap });
+            tr.scrollIntoView();
+          }
+
+          return true;
+        },
+
+      /**
+       * 设置内联基线的每行栏数（perRow）：1=一排 1 个（堆叠），2=一排 2 个（两两并排）。
+       * 作用于无 CSS 环境（公众号图文等）与窄屏；宽屏 N 栏一排由 class 适配，不受影响。
+       */
+      setColumnsPerRow:
+        (perRow = 1, targetPos = null) =>
+        ({ tr, dispatch, state }) => {
+          const info = resolveColumnsNodeAndPos(state, targetPos);
+          if (!info) return false;
+          const { columnsNode, columnsPos } = info;
+
+          if (dispatch) {
+            rebuildColumnsBlock(tr, columnsPos, columnsNode, {
+              perRow: perRow === 2 ? 2 : 1,
             });
             tr.scrollIntoView();
           }
@@ -436,23 +594,26 @@ export const Columns = Node.create({
         },
 
       /**
-       * 设置移动端自适应方案（768px 分界："stack" 自动堆叠 vs "keep" 保持并排）
+       * 切换当前多栏通栏全宽标记（.web-bleed）
        */
-      setColumnsResponsive:
-        (mode = "stack", targetPos = null) =>
+      toggleColumnsBleed:
+        (targetPos = null) =>
         ({ tr, dispatch, state }) => {
           const info = resolveColumnsNodeAndPos(state, targetPos);
           if (!info) return false;
           const { columnsNode, columnsPos } = info;
-
-          const validMode = mode === "keep" ? "keep" : "stack";
-          const newClass = `cms-columns cms-columns--${validMode}`;
+          const currentClass = columnsNode.attrs?.class || '';
+          const classList = currentClass.split(/\s+/).filter(Boolean);
+          const hasBleed = classList.includes('web-bleed');
+          const nextClassList = hasBleed
+            ? classList.filter((c) => c !== 'web-bleed')
+            : [...classList, 'web-bleed'];
+          const nextClass = nextClassList.join(' ');
 
           if (dispatch) {
             tr.setNodeMarkup(columnsPos, null, {
               ...columnsNode.attrs,
-              responsive: validMode,
-              class: newClass,
+              class: nextClass,
             });
             tr.scrollIntoView();
           }
@@ -471,24 +632,15 @@ export const Columns = Node.create({
           const { columnsNode, columnsPos } = info;
 
           if (dispatch) {
-            let childOffset = columnsPos + 1;
             const childCount = columnsNode.childCount;
-            const equalLayout = Array(childCount).fill(1).join(":");
-
-            for (let i = 0; i < childCount; i += 1) {
-              const col = columnsNode.child(i);
-              tr.setNodeMarkup(childOffset, null, {
-                ...col.attrs,
-                flex: "1",
-                style: buildColumnStyle(1),
-              });
-              childOffset += col.nodeSize;
-            }
-
-            tr.setNodeMarkup(columnsPos, null, {
-              ...columnsNode.attrs,
-              layout: equalLayout,
-            });
+            const equalWeights = Array.from({ length: childCount }, () => 1);
+            rebuildColumnsBlock(
+              tr,
+              columnsPos,
+              columnsNode,
+              { layout: equalWeights.join(":") },
+              equalWeights,
+            );
             tr.scrollIntoView();
           }
 
@@ -524,6 +676,11 @@ export const Columns = Node.create({
             );
 
             tr.insert(insertPos, newCol);
+            // 栏数变了：行归属/比例/内衬距全部重算（临时样式即被覆盖）
+            const freshNode = tr.doc.nodeAt(columnsPos);
+            if (freshNode && freshNode.type.name === "columns") {
+              rebuildColumnsBlock(tr, columnsPos, freshNode);
+            }
             tr.setSelection(TextSelection.near(tr.doc.resolve(insertPos + 1)));
             tr.scrollIntoView();
           }
@@ -563,6 +720,10 @@ export const Columns = Node.create({
             }
             const col = columnsNode.child(colIndex);
             tr.delete(offset, offset + col.nodeSize);
+            const freshNode = tr.doc.nodeAt(columnsPos);
+            if (freshNode && freshNode.type.name === "columns") {
+              rebuildColumnsBlock(tr, columnsPos, freshNode);
+            }
             tr.scrollIntoView();
           }
 
@@ -610,6 +771,11 @@ export const Columns = Node.create({
 
             tr.delete(currentColPos, currentColPos + currentCol.nodeSize);
             tr.insert(prevColPos, currentCol);
+            // 列序变了：行归属/比例/内衬距全部重算
+            const freshNode = tr.doc.nodeAt(columnsPos);
+            if (freshNode && freshNode.type.name === "columns") {
+              rebuildColumnsBlock(tr, columnsPos, freshNode);
+            }
             tr.setSelection(TextSelection.near(tr.doc.resolve(prevColPos + 1)));
             tr.scrollIntoView();
           }
@@ -643,11 +809,17 @@ export const Columns = Node.create({
             }
             const currentCol = columnsNode.child(idx);
             const nextCol = columnsNode.child(idx + 1);
-            const targetInsertPos = currentColPos + nextCol.nodeSize;
 
             tr.delete(currentColPos, currentColPos + currentCol.nodeSize);
-            tr.insert(targetInsertPos, currentCol);
-            tr.setSelection(TextSelection.near(tr.doc.resolve(targetInsertPos + 1)));
+            // 删除后 next 前移 currentCol.nodeSize：目标边界（next 之后）在
+            // 新文档中的位置（tr.insert 不做位置映射，不能用删除前算的原始 pos）
+            const movedPos = currentColPos + nextCol.nodeSize;
+            tr.insert(movedPos, currentCol);
+            const freshNode = tr.doc.nodeAt(columnsPos);
+            if (freshNode && freshNode.type.name === "columns") {
+              rebuildColumnsBlock(tr, columnsPos, freshNode);
+            }
+            tr.setSelection(TextSelection.near(tr.doc.resolve(movedPos + 1)));
             tr.scrollIntoView();
           }
 
@@ -739,17 +911,18 @@ export const Column = Node.create({
         parseHTML: (el) => String(extractFlexWeight(el.getAttribute("style"))),
         renderHTML: () => ({}),
       },
+      // 内联样式为权威存储：解析时原样保留（旧版 flex 块不被静默改写），
+      // 结构命令经 rebuildColumnsBlock 重生成为当前基线（一排 x 个）。
       style: {
         default: buildColumnStyle(1),
         parseHTML: (el) => {
           const style = el.getAttribute("style") || "";
           const w = extractFlexWeight(style);
-          return buildColumnStyle(w);
+          return style || buildColumnStyle(w);
         },
-        renderHTML: (attrs) => {
-          const w = Number.parseFloat(attrs.flex) || 1;
-          return { style: attrs.style || buildColumnStyle(w) };
-        },
+        renderHTML: (attrs) => ({
+          style: attrs.style || buildColumnStyle(Number.parseFloat(attrs.flex) || 1),
+        }),
       },
     };
   },
@@ -917,24 +1090,38 @@ export function createColumnsResizerPlugin() {
               draggingState.calculatedLeftWeight &&
               draggingState.calculatedRightWeight
             ) {
-              const { view: v, leftColPos, rightColPos, calculatedLeftWeight, calculatedRightWeight } = draggingState;
+              const {
+                view: v,
+                leftColPos: lPos,
+                calculatedLeftWeight,
+                calculatedRightWeight,
+              } = draggingState;
               const tr = v.state.tr;
 
-              const lNode = tr.doc.nodeAt(leftColPos);
-              const rNode = tr.doc.nodeAt(rightColPos);
-
+              const lNode = tr.doc.nodeAt(lPos);
+              const rNode = tr.doc.nodeAt(draggingState.rightColPos);
               if (lNode && rNode) {
-                tr.setNodeMarkup(leftColPos, null, {
-                  ...lNode.attrs,
-                  flex: String(calculatedLeftWeight),
-                  style: buildColumnStyle(calculatedLeftWeight),
-                });
-                tr.setNodeMarkup(rightColPos, null, {
-                  ...rNode.attrs,
-                  flex: String(calculatedRightWeight),
-                  style: buildColumnStyle(calculatedRightWeight),
-                });
-                v.dispatch(tr);
+                // 左列位置必在容器内部：据此反解容器节点/位置与两列序号，
+                // 经 rebuildColumnsBlock 原子重生（权重 + 全部列的内联基线）。
+                try {
+                  const $lp = tr.doc.resolve(lPos);
+                  const columnsNode = $lp.parent;
+                  if (columnsNode?.type.name === "columns") {
+                    const columnsPos = $lp.before($lp.depth);
+                    const leftIndex = $lp.indexAfter();
+                    const total = columnsNode.childCount;
+                    const weights = [];
+                    for (let i = 0; i < total; i += 1) {
+                      const w = Number.parseFloat(columnsNode.child(i).attrs?.flex);
+                      weights.push(Number.isNaN(w) || w <= 0 ? 1 : w);
+                    }
+                    weights[leftIndex] = calculatedLeftWeight;
+                    weights[leftIndex + 1] = calculatedRightWeight;
+
+                    rebuildColumnsBlock(tr, columnsPos, columnsNode, {}, weights);
+                    v.dispatch(tr);
+                  }
+                } catch {}
               }
             }
 

@@ -13,7 +13,8 @@
  * 检测 HTML 是否使用了依赖自定义样式的块（目前仅多栏布局）。
  * 图片已内联 max-width 自给自足，不计入，避免无谓打扰。
  */
-const CUSTOM_STYLE_BLOCK_PATTERN = /class\s*=\s*["'][^"']*\bcms-columns?\b/i;
+const CUSTOM_STYLE_BLOCK_PATTERN =
+  /class\s*=\s*["'][^"']*\b(cms-columns?|web-bleed)\b/i;
 
 export function usesCustomStyleBlocks(html) {
   if (!html || typeof html !== 'string') return false;
@@ -23,23 +24,75 @@ export const contentStylesCss = `
 /**
  * EDP 富文本输出样式定义
  *
- * 用途：编辑器输出的 HTML 带有少量语义 class（多栏布局等），在自有站点/
+ * 用途：编辑器输出的 HTML 带有少量语义 class（多栏布局、全宽通栏等），在自有站点/
  * 落地页使用这份 HTML 时，复制本模块导出的 CSS 文本到样式表即可还原排版。只包含
  * 输出内容相关的选择器（编辑器内部的选中高亮、拖拽手柄等不在此列），
  * 全部使用字面量（无 CSS 变量、无 Tailwind），任何站点可直接使用。
  *
- * 兼容性说明：
- * 1. 内联优先：容器/列宽/间距/图片尺寸等关键排版已是内联 style，
- *    即使 class 被剥离也能保持基本可读。
- * 2. 微信公众号等不支持自定义 class 的终端：class 会被剥离，
- *    多栏退化为内联 flex 行为（flex 有效则并排，无效则自然上下堆叠），
- *    均可读；“≤768px 自动堆叠 / 保持并排”开关在该类终端下不生效。
- * 3. 媒体查询中的 !important 是刻意为之：用于覆盖内联的 gap / flex，
- *    实现移动端堆叠，勿删。
+ * 兼容性说明（多栏布局双轨制 & 版式网格）：
+ * 1. 版式网格：正文外层挂 .web-article，所有子节点默认落内容列；
+ *    仅打上了 .web-bleed 标记的直接子块跨满整行（全宽通栏）。
+ * 2. 内联基线：新版多栏（--row1/--row2）的容器不带 display，列宽/浮动/对侧
+ *    内衬距/间距全部内联，语义即小屏基线（单列堆叠或双列并排）。
+ *    无 CSS 环境（微信公众号图文、邮件客户端）下这份内联样式原样保真，
+ *    是最兼容的保障；class 被整体剥离也不塌。
+ * 3. class 适配：--row1/--row2 仅负责「其他分辨率」——宽屏（>768px）把内联
+ *    基线适配为 N 栏一排（flex + 内联 flex 权重，!important 清掉浮动/宽度/
+ *    内衬距）；窄屏不写任何覆盖，直接回落内联基线。
+ * 4. 旧版内容（--stack/--keep + 内联 flex）：保持历史行为——宽屏 flex 并排、
+ *    ≤768px 按档位堆叠/保持；媒体查询里的 !important 是刻意为之，勿删。
  */
 
-/* 多栏容器：与内联 style 一致，内联缺失时兜底 */
-.cms-columns {
+/* ---------- 正文版式网格（web-article / web-bleed） ----------
+ * 全局富文本正文版式：容器全宽，三列网格 [gutter] [内容列] [gutter]。
+ * 所有直接子节点默认落内容列；全宽块加 .web-bleed 跨满整行。 */
+.web-article {
+  --web-article-width: 1200px;
+  --web-article-gutter: 24px;
+  --web-article-template:
+    [full-start] minmax(var(--web-article-gutter), 1fr)
+    [content-start] minmax(0, var(--web-article-width)) [content-end]
+    minmax(var(--web-article-gutter), 1fr) [full-end];
+  display: grid;
+  grid-template-columns: var(--web-article-template);
+}
+
+.web-article > * {
+  grid-column: content;
+  min-width: 0;
+}
+
+.web-article > .web-bleed,
+.web-article > :has(> .web-bleed:only-child) {
+  grid-column: full;
+}
+
+.web-article > section.web-bleed,
+.web-article > div.web-bleed:not(.cms-columns) {
+  display: grid;
+  grid-template-columns: var(--web-article-template);
+}
+
+.web-article > section.web-bleed > *,
+.web-article > div.web-bleed:not(.cms-columns) > * {
+  grid-column: content;
+  min-width: 0;
+}
+
+.web-article .cms-columns {
+  margin-block: 0 !important;
+}
+
+.web-article img.web-bleed,
+.web-article video.web-bleed {
+  width: 100% !important;
+  max-width: 100% !important;
+  display: block;
+}
+
+/* ===== 旧版内容兼容（内联 flex 基线 + --stack/--keep 标记） ===== */
+.cms-columns--stack,
+.cms-columns--keep {
   display: flex;
   flex-wrap: wrap;
   gap: 16px;
@@ -48,11 +101,48 @@ export const contentStylesCss = `
   width: 100%;
 }
 
-/* 单列：无量纲 flex 权重由内联 style 承载，此处仅兜底 */
-.cms-column {
+.cms-columns--stack > .cms-column,
+.cms-columns--keep > .cms-column {
   flex: 1 1 0%;
   min-width: 0;
   box-sizing: border-box;
+}
+
+/* 旧版移动端 768px 自适应：--stack 堆叠 / --keep 保持并排 */
+@media (max-width: 768px) {
+  .cms-columns--stack {
+    flex-direction: column !important;
+    gap: 12px !important;
+  }
+
+  .cms-columns--stack > .cms-column {
+    flex: 1 1 100% !important;
+    width: 100% !important;
+  }
+
+  .cms-columns--keep {
+    flex-direction: row !important;
+  }
+}
+
+/* ===== 新版多栏（--row1/--row2）：宽屏适配为 N 栏一排 =====
+ * 内联基线是「一排 x 个」，这里只在有 CSS 的宽屏场景覆盖它；
+ * 间隙值由容器内联的 --cms-columns-gap 透传。 */
+@media (min-width: 769px) {
+  .cms-columns--row1,
+  .cms-columns--row2 {
+    display: flex;
+    flex-direction: row;
+    gap: var(--cms-columns-gap, 16px);
+  }
+
+  .cms-columns--row1 > .cms-column,
+  .cms-columns--row2 > .cms-column {
+    float: none !important;
+    width: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
 }
 
 /* 图片：内联已有 max-width，此处双保险（窄屏不溢出）
@@ -69,24 +159,5 @@ a.edp-mention {
   text-decoration: none;
   border-bottom: 1px solid #bfdbfe;
   padding: 0 2px;
-}
-
-/* 移动端 768px 自适应：默认堆叠，--keep 保持并排 */
-@media (max-width: 768px) {
-  .cms-columns:not(.cms-columns--keep),
-  .cms-columns--stack {
-    flex-direction: column !important;
-    gap: 12px !important;
-  }
-
-  .cms-columns:not(.cms-columns--keep) > .cms-column,
-  .cms-columns--stack > .cms-column {
-    flex: 1 1 100% !important;
-    width: 100% !important;
-  }
-
-  .cms-columns--keep {
-    flex-direction: row !important;
-  }
 }
 `;

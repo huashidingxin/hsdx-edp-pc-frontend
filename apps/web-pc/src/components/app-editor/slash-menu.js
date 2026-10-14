@@ -168,6 +168,32 @@ export const SLASH_COMMANDS = [
       editor.chain().focus().setHorizontalRule().run();
     },
   },
+  {
+    id: 'bleed',
+    title: '全宽通栏 (web-bleed)',
+    hint: '切换当前块全宽/普通宽',
+    run: ({ editor, range }) => {
+      deleteTrigger({ editor, range });
+      const { from } = editor.state.selection;
+      const $pos = editor.state.doc.resolve(from);
+      if ($pos.depth >= 1) {
+        const topNode = $pos.node(1);
+        const topPos = $pos.before(1);
+        const currentClass = topNode.attrs?.class || '';
+        const classList = currentClass.split(/\s+/).filter(Boolean);
+        const hasBleed = classList.includes('web-bleed');
+        const nextClassList = hasBleed
+          ? classList.filter((c) => c !== 'web-bleed')
+          : [...classList, 'web-bleed'];
+        editor.view.dispatch(
+          editor.state.tr.setNodeMarkup(topPos, null, {
+            ...topNode.attrs,
+            class: nextClassList.join(' ') || null,
+          }),
+        );
+      }
+    },
+  },
 ];
 
 function filterCommands(query) {

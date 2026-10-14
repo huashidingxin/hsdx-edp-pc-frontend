@@ -359,19 +359,67 @@ const videoFloatingRef = ref(null);
 const isFullscreen = ref(false);
 const isPreviewModalOpen = ref(false);
 const previewDevice = ref('wechat'); // 'mobile' | 'wechat' | 'full'
-const editorCanvasWidth = ref('960px'); // '960px' | 'auto' | '677px' | '375px'
+const editorCanvasWidth = ref('1300px'); // '1300px' | 'auto' | '960px' | '677px' | '375px'
 
 /** 页面设置（收拢进字数栏下拉）：编辑视口选项 */
 const VIEWPORT_OPTIONS = [
-  { value: '960px', label: '960', title: '默认内容宽度 (960px)' },
-  { value: '677px', label: '公众号 677', title: '微信公众号标准宽 (677px)' },
-  { value: '375px', label: '手机 375', title: '手机端真实视口 (375px)' },
-  { value: 'auto', label: '自适应', title: '自适应跟随外部宽度' },
+  {
+    value: '1300px',
+    label: '1300px (标准宽)',
+    shortLabel: '1300px',
+    icon: '🖥️',
+    title: '标准文章宽度 (1300px，匹配 web-article 1200px 内容列 + 边距)',
+  },
+  {
+    value: 'auto',
+    label: '自适应全屏',
+    shortLabel: '自适应',
+    icon: '↔️',
+    title: '自适应跟随外部窗口宽度',
+  },
+  {
+    value: '960px',
+    label: '960px (传统宽)',
+    shortLabel: '960px',
+    icon: '💻',
+    title: '传统窄版内容宽度 (960px)',
+  },
+  {
+    value: '677px',
+    label: '公众号 (677px)',
+    shortLabel: '公众号 677px',
+    icon: '📰',
+    group: '小屏幕',
+    title: '微信公众号标准宽 (677px，内联严格保真)',
+  },
+  {
+    value: '375px',
+    label: '手机 (375px)',
+    shortLabel: '手机 375px',
+    icon: '📱',
+    group: '小屏幕',
+    title: '手机移动端视口 (375px，内联严格保真)',
+  },
 ];
+
+const currentViewportOption = computed(() => {
+  return (
+    VIEWPORT_OPTIONS.find((o) => o.value === editorCanvasWidth.value) ||
+    VIEWPORT_OPTIONS[0]
+  );
+});
+
+const desktopViewportOptions = computed(() =>
+  VIEWPORT_OPTIONS.filter((o) => !o.group),
+);
+
+const smallScreenViewportOptions = computed(() =>
+  VIEWPORT_OPTIONS.filter((o) => o.group === '小屏幕'),
+);
 
 /** 状态栏按钮默认值：当前编辑视口 */
 const viewportLabel = computed(
-  () => VIEWPORT_OPTIONS.find((o) => o.value === editorCanvasWidth.value)?.label || '自适应',
+  () => currentViewportOption.value.shortLabel,
 );
 
 function setViewportWidth(value) {
@@ -385,10 +433,11 @@ function setViewportWidth(value) {
 /** 字数栏页面设置下拉开关（点外部关闭） */
 const isViewportMenuOpen = ref(false);
 const statusbarRef = ref(null);
+const viewportDropdownRef = ref(null);
 
 function onViewportDocClick(event) {
   if (!isViewportMenuOpen.value) return;
-  const el = statusbarRef.value;
+  const el = viewportDropdownRef.value || statusbarRef.value;
   if (el && !el.contains(event.target)) {
     isViewportMenuOpen.value = false;
   }
@@ -940,7 +989,7 @@ function getContentContainerEl() {
 const selectedColumnsTarget = ref(null);
 // 结构: { el: HTMLElement, pos: number, node: Node, activeColIndex: number }
 
-const columnsActivePanel = ref(null); // 'layout' | 'gap' | 'responsive' | null
+const columnsActivePanel = ref(null); // 'layout' | 'gap' | 'perRow' | null
 
 function toggleColumnsPanel(panelName) {
   columnsActivePanel.value =
@@ -963,8 +1012,11 @@ const currentColumnsGap = computed(() => {
   return selectedColumnsTarget.value?.node?.attrs?.gap || '16px';
 });
 
-const currentColumnsResponsive = computed(() => {
-  return selectedColumnsTarget.value?.node?.attrs?.responsive || 'stack';
+// 内联基线的每行栏数（perRow）：1=一排 1 个（堆叠），2=一排 2 个（两两并排）。
+// 作用于无 CSS 环境（公众号图文等）与窄屏；宽屏 N 栏一排由 class 适配，与此无关。
+const currentColumnsPerRow = computed(() => {
+  const value = selectedColumnsTarget.value?.node?.attrs?.perRow;
+  return value === 2 ? 2 : 1;
 });
 
 function refreshSelectedColumnsNode() {
@@ -1031,10 +1083,10 @@ function setColumnsGapValue(gap) {
   columnsActivePanel.value = null;
 }
 
-function setColumnsResponsiveMode(mode) {
+function setColumnsPerRowValue(perRow) {
   if (!editorInstance.value || !selectedColumnsTarget.value) return;
   const { pos } = selectedColumnsTarget.value;
-  editorInstance.value.chain().focus().setColumnsResponsive(mode, pos).run();
+  editorInstance.value.chain().focus().setColumnsPerRow(perRow, pos).run();
   refreshSelectedColumnsNode();
   columnsActivePanel.value = null;
 }
@@ -2179,6 +2231,126 @@ function deleteSelectedElement() {
 
 function insertParagraphBesideSelected(direction) {
   runElementOp((editor, pos) => insertParagraphBeside(editor, pos, direction));
+}
+
+// ---------------------------------------------------------------------------
+// 全宽通栏（.web-bleed）开关：配合 .web-article 突破内容列跨满整行
+// ---------------------------------------------------------------------------
+
+const isElementBleed = computed(() => {
+  const node = selectedElementTarget.value?.node;
+  if (!node) return false;
+  return (node.attrs?.class || '').split(/\s+/).includes('web-bleed');
+});
+
+function toggleElementBleed() {
+  const sel = selectedElementTarget.value;
+  const editor = editorInstance.value;
+  if (!editor || !sel) return;
+  const pos = resolveElementPos();
+  if (pos === null) return;
+  const node = tryNodeAt(editor, pos);
+  if (!node) return;
+
+  const currentClass = node.attrs?.class || '';
+  const classList = currentClass.split(/\s+/).filter(Boolean);
+  const hasBleed = classList.includes('web-bleed');
+  const nextClassList = hasBleed
+    ? classList.filter((c) => c !== 'web-bleed')
+    : [...classList, 'web-bleed'];
+  const nextClass = nextClassList.join(' ');
+
+  const tr = editor.state.tr;
+  tr.setNodeMarkup(pos, null, {
+    ...node.attrs,
+    class: nextClass || null,
+  });
+  editor.view.dispatch(tr);
+  refreshSelectedElementNode();
+  message.success(
+    hasBleed ? '已恢复为普通正文内容宽' : '已设置为全宽通栏 (已添加 .web-bleed)',
+  );
+}
+
+const isColumnsBleed = computed(() => {
+  const node = selectedColumnsTarget.value?.node;
+  if (!node) return false;
+  return (node.attrs?.class || '').split(/\s+/).includes('web-bleed');
+});
+
+function toggleColumnsBleed() {
+  if (!selectedColumnsTarget.value || !editorInstance.value) return;
+  const { pos, node } = selectedColumnsTarget.value;
+  const currentClass = node.attrs?.class || '';
+  const classList = currentClass.split(/\s+/).filter(Boolean);
+  const hasBleed = classList.includes('web-bleed');
+  const nextClassList = hasBleed
+    ? classList.filter((c) => c !== 'web-bleed')
+    : [...classList, 'web-bleed'];
+  const nextClass = nextClassList.join(' ');
+
+  const tr = editorInstance.value.state.tr;
+  tr.setNodeMarkup(pos, null, {
+    ...node.attrs,
+    class: nextClass || null,
+  });
+  editorInstance.value.view.dispatch(tr);
+  selectedColumnsTarget.value.node = editorInstance.value.state.doc.nodeAt(pos);
+  message.success(
+    hasBleed ? '多栏已恢复为普通正文内容宽' : '多栏已设置为全宽通栏 (已添加 .web-bleed)',
+  );
+}
+
+const isMediaBleed = computed(() => {
+  const node = selectedTarget.value?.node;
+  if (!node) return false;
+  return (node.attrs?.class || '').split(/\s+/).includes('web-bleed');
+});
+
+function toggleMediaBleed() {
+  if (!selectedTarget.value || !editorInstance.value) return;
+  const editor = editorInstance.value;
+  const { pos, node } = selectedTarget.value;
+  const currentClass = node.attrs?.class || '';
+  const classList = currentClass.split(/\s+/).filter(Boolean);
+  const hasBleed = classList.includes('web-bleed');
+  const nextClassList = hasBleed
+    ? classList.filter((c) => c !== 'web-bleed')
+    : [...classList, 'web-bleed'];
+  const nextClass = nextClassList.join(' ');
+
+  const tr = editor.state.tr;
+  tr.setNodeMarkup(pos, null, {
+    ...node.attrs,
+    class: nextClass || null,
+  });
+
+  // 若媒体在段落内，同步更新/移除外层段落的 web-bleed 类名（双重保障）
+  try {
+    const $pos = editor.state.doc.resolve(pos);
+    if ($pos.depth >= 1) {
+      const parentNode = $pos.node(1);
+      const parentPos = $pos.before(1);
+      if (parentNode && parentNode.type.name === 'paragraph') {
+        const pClassList = (parentNode.attrs?.class || '').split(/\s+/).filter(Boolean);
+        const pNextClassList = hasBleed
+          ? pClassList.filter((c) => c !== 'web-bleed')
+          : (pClassList.includes('web-bleed') ? pClassList : [...pClassList, 'web-bleed']);
+        tr.setNodeMarkup(parentPos, null, {
+          ...parentNode.attrs,
+          class: pNextClassList.join(' ') || null,
+        });
+      }
+    }
+  } catch {
+    /* 忽略 */
+  }
+
+  editor.view.dispatch(tr);
+  selectedTarget.value.node = editor.state.doc.nodeAt(pos);
+  message.success(
+    hasBleed ? '媒体已恢复为普通正文内容宽' : '媒体已设置为全宽通栏 (已添加 .web-bleed)',
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -5151,6 +5323,7 @@ defineExpose({
     <div
       class="app-editor-wrapper relative flex flex-col rounded-xl border border-border bg-card transition-all"
       :class="{
+        'viewport--1300px': editorCanvasWidth === '1300px',
         'viewport--960px': editorCanvasWidth === '960px',
         'viewport--677px': editorCanvasWidth === '677px',
         'viewport--375px': editorCanvasWidth === '375px',
@@ -5230,6 +5403,42 @@ defineExpose({
         class="app-editor-split__left relative"
         :style="isSplitView ? { width: `${splitLeftPct}%` } : null"
       >
+        <!-- 小屏幕视口仿真指示条（公众号 / 移动端） -->
+        <div
+          v-if="editorCanvasWidth === '677px' && !isSourceMode"
+          class="mx-auto my-2.5 flex max-w-[677px] items-center justify-between rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-1.5 text-xs text-emerald-800 dark:text-emerald-200 select-none shadow-xs transition-all"
+        >
+          <div class="flex items-center gap-2">
+            <span class="inline-block size-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span class="font-medium">📰 小屏幕视口仿真：微信公众号 (677px)</span>
+            <span class="text-[11px] opacity-75 hidden sm:inline">· 纯内联排版渲染，单列堆叠/双列并排保真预览</span>
+          </div>
+          <button
+            class="text-[11px] text-emerald-700 dark:text-emerald-300 hover:underline font-medium"
+            type="button"
+            @click="editorCanvasWidth = '1300px'"
+          >
+            返回标准 1300px
+          </button>
+        </div>
+
+        <div
+          v-if="editorCanvasWidth === '375px' && !isSourceMode"
+          class="mx-auto my-2.5 flex max-w-[375px] items-center justify-between rounded-lg border border-blue-500/30 bg-blue-500/10 px-3.5 py-1.5 text-xs text-blue-800 dark:text-blue-200 select-none shadow-xs transition-all"
+        >
+          <div class="flex items-center gap-2">
+            <span class="inline-block size-2 rounded-full bg-blue-500 animate-pulse"></span>
+            <span class="font-medium">📱 小屏幕视口仿真：手机移动端 (375px)</span>
+          </div>
+          <button
+            class="text-[11px] text-blue-700 dark:text-blue-300 hover:underline font-medium"
+            type="button"
+            @click="editorCanvasWidth = '1300px'"
+          >
+            返回标准 1300px
+          </button>
+        </div>
+
       <VbenTiptap
         v-model="content"
         :editable="!disabled"
@@ -5873,6 +6082,16 @@ defineExpose({
                 </button>
                 <button
                   class="app-editor-btn app-editor-btn--pill"
+                  :class="{ 'is-active': isElementBleed }"
+                  :title="isElementBleed ? '当前块为通栏全宽 (.web-bleed)，点击恢复为普通正文宽' : '设置当前块为通栏全宽 (添加 .web-bleed，突破内容列跨满整行)'"
+                  type="button"
+                  @click="toggleElementBleed"
+                >
+                  <span class="app-editor-btn-label">↔️ 全宽通栏</span>
+                  <span v-if="isElementBleed" class="text-[10px] text-primary font-semibold">(已开)</span>
+                </button>
+                <button
+                  class="app-editor-btn app-editor-btn--pill"
                   title="复制当前块"
                   type="button"
                   @click="duplicateSelectedElement"
@@ -5922,9 +6141,9 @@ defineExpose({
         v-if="selectedColumnsTarget"
         class="app-editor-floating__toolbar app-editor-columns-toolbar"
       >
-        <div class="app-editor-floating__header">
-          <div class="flex items-center gap-1.5">
-            <span class="app-editor-tag">
+        <div class="app-editor-floating__header flex items-center justify-between pb-2 border-b border-border/60">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="app-editor-tag flex items-center gap-1.5 font-semibold text-primary">
               <svg
                 class="size-3.5"
                 fill="none"
@@ -5939,20 +6158,117 @@ defineExpose({
               </svg>
               多栏布局
             </span>
-            <span class="app-editor-tag-badge">{{ currentColumnsCount }} 栏</span>
-            <span class="text-[10px] text-muted-foreground">第 {{ currentColumnActiveIndex + 1 }} 列</span>
+            <span class="app-editor-tag-badge font-mono">{{ currentColumnsCount }} 栏</span>
+            <span class="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground font-medium">
+              第 {{ currentColumnActiveIndex + 1 }} 栏
+            </span>
+            <!-- 排版模式状态提示 -->
+            <span
+              class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
+              :class="currentColumnsPerRow === 2
+                ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20'
+                : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'"
+            >
+              <span>{{ currentColumnsPerRow === 2 ? '小屏布局: 双列并排' : '小屏布局: 单列堆叠' }}</span>
+            </span>
           </div>
-          <button
-            class="text-[11px] text-muted-foreground hover:text-foreground px-1"
-            title="关闭多栏工具栏"
-            type="button"
-            @click="clearColumnsSelection"
-          >
-            ✕
-          </button>
+
+          <div class="flex items-center gap-2">
+            <!-- 快捷视口切换（支持在编辑多栏时直接切端预览） -->
+            <div class="hidden sm:inline-flex items-center rounded-lg border border-border/80 bg-background/80 p-0.5 text-[10px] shadow-xs">
+              <span class="px-1.5 text-muted-foreground select-none">视口:</span>
+              <button
+                type="button"
+                class="rounded px-1.5 py-0.5 font-medium transition-colors"
+                :class="editorCanvasWidth === '1300px' ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'"
+                title="标准文章宽 (1300px，匹配 web-article 1200px 内容列)"
+                @click="editorCanvasWidth = '1300px'"
+              >
+                🖥️ 1300
+              </button>
+              <button
+                type="button"
+                class="rounded px-1.5 py-0.5 font-medium transition-colors"
+                :class="editorCanvasWidth === 'auto' ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'"
+                title="宽屏自适应跟随窗口"
+                @click="editorCanvasWidth = 'auto'"
+              >
+                自适应
+              </button>
+              <button
+                type="button"
+                class="rounded px-1.5 py-0.5 font-medium transition-colors"
+                :class="editorCanvasWidth === '677px' ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'"
+                title="微信公众号标准宽 677px（纯内联排版）"
+                @click="editorCanvasWidth = '677px'"
+              >
+                📰 公众号
+              </button>
+              <button
+                type="button"
+                class="rounded px-1.5 py-0.5 font-medium transition-colors"
+                :class="editorCanvasWidth === '375px' ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'"
+                title="手机端真实视口 375px（纯内联排版）"
+                @click="editorCanvasWidth = '375px'"
+              >
+                📱 手机
+              </button>
+            </div>
+
+            <button
+              class="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+              title="关闭多栏工具栏"
+              type="button"
+              @click="clearColumnsSelection"
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
-        <div class="app-editor-floating__actions">
+        <div class="app-editor-floating__actions flex items-center gap-2 pt-2 flex-wrap">
+          <!-- 核心功能：小屏排版模式（单列堆叠 vs 双列并排） -->
+          <div class="inline-flex items-center rounded-lg border border-border bg-background p-0.5 shadow-xs">
+            <button
+              type="button"
+              class="flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-all"
+              :class="currentColumnsPerRow === 1
+                ? 'bg-primary text-primary-foreground shadow-xs font-semibold'
+                : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'"
+              title="小屏幕（≤768px 及公众号等无 CSS 环境）单列垂直堆叠，宽屏自动按比例展开"
+              @click="setColumnsPerRowValue(1)"
+            >
+              <span>📱 单列堆叠</span>
+              <span v-if="currentColumnsPerRow === 1" class="text-[10px] opacity-80">(当前)</span>
+            </button>
+            <button
+              type="button"
+              class="flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-all"
+              :class="currentColumnsPerRow === 2
+                ? 'bg-primary text-primary-foreground shadow-xs font-semibold'
+                : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'"
+              title="小屏幕（≤768px 及公众号等无 CSS 环境）双列流式并排，宽屏自动按比例展开"
+              @click="setColumnsPerRowValue(2)"
+            >
+              <span>↔️ 双列并排</span>
+              <span v-if="currentColumnsPerRow === 2" class="text-[10px] opacity-80">(当前)</span>
+            </button>
+          </div>
+
+          <!-- 全宽通栏 (web-bleed) 开关 -->
+          <button
+            class="app-editor-btn app-editor-btn--pill"
+            :class="{ 'is-active': isColumnsBleed }"
+            :title="isColumnsBleed ? '当前多栏为通栏全宽 (.web-bleed)，点击恢复为普通正文宽' : '设置多栏为通栏全宽 (添加 .web-bleed，突破内容列跨满整行)'"
+            type="button"
+            @click="toggleColumnsBleed"
+          >
+            <span class="text-xs font-medium">↔️ 全宽通栏</span>
+            <span v-if="isColumnsBleed" class="text-[10px] text-primary font-semibold">(已开)</span>
+          </button>
+
+          <span class="app-editor-divider"></span>
+
           <!-- 比例调节 -->
           <button
             class="app-editor-btn app-editor-btn--pill"
@@ -5968,7 +6284,7 @@ defineExpose({
             />
           </button>
 
-          <!-- 间隙宽度调节（需求 3） -->
+          <!-- 间隙宽度调节 -->
           <button
             class="app-editor-btn app-editor-btn--pill"
             :class="{ 'is-active': columnsActivePanel === 'gap' }"
@@ -5983,288 +6299,251 @@ defineExpose({
             />
           </button>
 
-          <!-- 移动端自适应方案（需求 4） -->
-          <button
-            class="app-editor-btn app-editor-btn--pill"
-            :class="{ 'is-active': columnsActivePanel === 'responsive' }"
-            title="移动端自适应排版方案 (768px 断点)"
-            type="button"
-            @click="toggleColumnsPanel('responsive')"
-          >
-            <span class="app-editor-btn-label">
-              {{ currentColumnsResponsive === 'keep' ? '📱 保持并排' : '📱 ≤768px 堆叠' }}
-            </span>
-            <ChevronDown
-              class="size-3 opacity-60 transition-transform duration-200"
-              :class="{ 'rotate-180': columnsActivePanel === 'responsive' }"
-            />
-          </button>
-
           <span class="app-editor-divider"></span>
 
           <!-- 添加列 -->
           <button
             class="app-editor-btn"
             :disabled="currentColumnsCount >= 6"
-            title="在此列后添加一列 (最多 6 栏)"
+            title="在此列后追加一列 (最多 6 栏)"
             type="button"
             @click="addColumnToCurrent"
           >
-            <span class="text-xs font-semibold">+列</span>
+            <span class="text-xs font-semibold">+ 增加列</span>
           </button>
 
-          <!-- 左移当前列 -->
-          <button
-            class="app-editor-btn"
-            :disabled="currentColumnActiveIndex <= 0"
-            title="当前列左移"
-            type="button"
-            @click="moveCurrentActiveColumnLeft"
-          >
-            <svg class="size-3.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
-          </button>
-
-          <!-- 右移当前列 -->
-          <button
-            class="app-editor-btn"
-            :disabled="currentColumnActiveIndex >= currentColumnsCount - 1"
-            title="当前列右移"
-            type="button"
-            @click="moveCurrentActiveColumnRight"
-          >
-            <svg class="size-3.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
-          </button>
-
-          <!-- 删除当前列 -->
-          <button
-            class="app-editor-btn app-editor-btn--danger"
-            title="删除当前列 (若只剩2列则解包)"
-            type="button"
-            @click="deleteCurrentActiveColumn"
-          >
-            <svg class="size-3.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
-          </button>
+          <!-- 列顺序调整与删除 -->
+          <div class="inline-flex rounded-md border border-border bg-background p-0.5">
+            <button
+              class="rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40 transition-colors"
+              :disabled="currentColumnActiveIndex <= 0"
+              title="当前列向左移动"
+              type="button"
+              @click="moveCurrentActiveColumnLeft"
+            >
+              <svg class="size-3.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+            </button>
+            <button
+              class="rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40 transition-colors"
+              :disabled="currentColumnActiveIndex >= currentColumnsCount - 1"
+              title="当前列向右移动"
+              type="button"
+              @click="moveCurrentActiveColumnRight"
+            >
+              <svg class="size-3.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+            </button>
+            <button
+              class="rounded px-1.5 py-0.5 text-xs text-red-500 hover:bg-red-500/10 transition-colors"
+              title="删除当前列（若只剩2列则解包成单栏）"
+              type="button"
+              @click="deleteCurrentActiveColumn"
+            >
+              <svg class="size-3.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
+            </button>
+          </div>
 
           <span class="app-editor-divider"></span>
 
-          <!-- 在分栏上方插入空行 -->
-          <button
-            class="app-editor-btn"
-            title="在分栏上方插入空行 (可在此处换行输入)"
-            type="button"
-            @click="insertParagraphBeforeCurrentColumns"
-          >
-            <ArrowUp class="size-3.5" />
-          </button>
+          <!-- 在分栏上方/下方插入空行 -->
+          <div class="inline-flex rounded-md border border-border bg-background p-0.5">
+            <button
+              class="rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              title="在分栏上方插入空行聚焦"
+              type="button"
+              @click="insertParagraphBeforeCurrentColumns"
+            >
+              <ArrowUp class="size-3.5" />
+            </button>
+            <button
+              class="rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              title="在分栏下方插入空行聚焦"
+              type="button"
+              @click="insertParagraphAfterCurrentColumns"
+            >
+              <ArrowDown class="size-3.5" />
+            </button>
+          </div>
 
-          <!-- 在分栏下方插入空行 -->
+          <!-- 解包 -->
           <button
-            class="app-editor-btn"
-            title="在分栏下方插入空行 (可在此处换行输入)"
-            type="button"
-            @click="insertParagraphAfterCurrentColumns"
-          >
-            <ArrowDown class="size-3.5" />
-          </button>
-
-          <!-- 一键解包分栏（平铺内容，移除分栏外壳） -->
-          <button
-            class="app-editor-btn text-amber-600 hover:text-amber-700"
-            title="解包分栏 (提取所有文字与媒体，移除分栏外壳，内容不丢失)"
+            class="app-editor-btn text-amber-600 hover:text-amber-700 hover:bg-amber-500/10 font-medium text-xs"
+            title="解包分栏（平铺所有文字与图片，移除分栏外壳，内容不丢失）"
             type="button"
             @click="unsetCurrentColumns"
           >
-            <span class="text-[11px] font-medium">解包</span>
+            <span>解包平铺</span>
           </button>
 
-          <!-- 删除整个分栏 -->
+          <!-- 删多栏 -->
           <button
-            class="app-editor-btn app-editor-btn--danger"
-            title="删除整个多栏"
+            class="app-editor-btn app-editor-btn--danger text-xs font-medium"
+            title="删除整个多栏布局及其中所有内容"
             type="button"
             @click="deleteCurrentColumns"
           >
-            <svg class="size-3.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /></svg>
+            <span>删整栏</span>
           </button>
         </div>
 
-        <!-- 多栏二级面板区（比例、间隙、移动端适配） -->
+        <!-- 多栏二级面板区（比例设置、间隙设置、排版基线详解） -->
         <div v-if="columnsActivePanel" class="app-editor-floating__panels">
           <!-- 比例调节面板 -->
-          <div v-if="columnsActivePanel === 'layout'" class="app-editor-panel">
-            <div class="flex items-center justify-between">
-              <span class="app-editor-panel-title">快捷比例切换</span>
+          <div v-if="columnsActivePanel === 'layout'" class="app-editor-panel pt-3 mt-2 border-t border-border/70">
+            <div class="flex items-center justify-between pb-2">
+              <div class="flex items-center gap-1.5">
+                <span class="font-semibold text-xs text-foreground">快捷比例切换</span>
+                <span class="text-[10px] text-muted-foreground">（按比例分配列宽，拖拽列间分割线也可自定义）</span>
+              </div>
               <button
-                class="text-[11px] text-primary hover:underline"
+                class="text-xs text-primary font-medium hover:underline flex items-center gap-1"
                 type="button"
                 @click="resetColumnsEqualWidth"
               >
-                均等重置
+                <span>均等平分所有栏</span>
               </button>
             </div>
-            <div class="flex flex-wrap gap-1.5">
+
+            <div class="flex flex-wrap gap-2">
               <template v-if="currentColumnsCount === 2">
                 <button
-                  class="app-editor-preset-btn"
-                  :class="{ 'is-active': currentColumnsLayout === '1:1' }"
+                  class="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs font-medium transition-all hover:border-primary/50"
+                  :class="{ 'border-primary bg-primary/10 text-primary font-semibold ring-1 ring-primary/30': currentColumnsLayout === '1:1' }"
                   type="button"
                   @click="setColumnsLayoutPreset('1:1')"
                 >
-                  1 : 1 (等宽)
+                  <span class="inline-flex w-7 h-3 rounded bg-muted overflow-hidden border border-border/50">
+                    <span class="w-1/2 h-full bg-primary/40 border-r border-border"></span>
+                    <span class="w-1/2 h-full bg-primary/40"></span>
+                  </span>
+                  <span>1 : 1 (等宽平分)</span>
                 </button>
                 <button
-                  class="app-editor-preset-btn"
-                  :class="{ 'is-active': currentColumnsLayout === '1:2' }"
+                  class="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs font-medium transition-all hover:border-primary/50"
+                  :class="{ 'border-primary bg-primary/10 text-primary font-semibold ring-1 ring-primary/30': currentColumnsLayout === '1:2' }"
                   type="button"
                   @click="setColumnsLayoutPreset('1:2')"
                 >
-                  1 : 2 (左窄右宽)
+                  <span class="inline-flex w-7 h-3 rounded bg-muted overflow-hidden border border-border/50">
+                    <span class="w-1/3 h-full bg-primary/40 border-r border-border"></span>
+                    <span class="w-2/3 h-full bg-primary/60"></span>
+                  </span>
+                  <span>1 : 2 (左窄右宽)</span>
                 </button>
                 <button
-                  class="app-editor-preset-btn"
-                  :class="{ 'is-active': currentColumnsLayout === '2:1' }"
+                  class="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs font-medium transition-all hover:border-primary/50"
+                  :class="{ 'border-primary bg-primary/10 text-primary font-semibold ring-1 ring-primary/30': currentColumnsLayout === '2:1' }"
                   type="button"
                   @click="setColumnsLayoutPreset('2:1')"
                 >
-                  2 : 1 (左宽右窄)
+                  <span class="inline-flex w-7 h-3 rounded bg-muted overflow-hidden border border-border/50">
+                    <span class="w-2/3 h-full bg-primary/60 border-r border-border"></span>
+                    <span class="w-1/3 h-full bg-primary/40"></span>
+                  </span>
+                  <span>2 : 1 (左宽右窄)</span>
                 </button>
                 <button
-                  class="app-editor-preset-btn"
-                  :class="{ 'is-active': currentColumnsLayout === '1:3' }"
+                  class="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs font-medium transition-all hover:border-primary/50"
+                  :class="{ 'border-primary bg-primary/10 text-primary font-semibold ring-1 ring-primary/30': currentColumnsLayout === '1:3' }"
                   type="button"
                   @click="setColumnsLayoutPreset('1:3')"
                 >
-                  1 : 3
+                  <span class="inline-flex w-7 h-3 rounded bg-muted overflow-hidden border border-border/50">
+                    <span class="w-1/4 h-full bg-primary/40 border-r border-border"></span>
+                    <span class="w-3/4 h-full bg-primary/60"></span>
+                  </span>
+                  <span>1 : 3 (侧边栏)</span>
                 </button>
                 <button
-                  class="app-editor-preset-btn"
-                  :class="{ 'is-active': currentColumnsLayout === '3:1' }"
+                  class="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs font-medium transition-all hover:border-primary/50"
+                  :class="{ 'border-primary bg-primary/10 text-primary font-semibold ring-1 ring-primary/30': currentColumnsLayout === '3:1' }"
                   type="button"
                   @click="setColumnsLayoutPreset('3:1')"
                 >
-                  3 : 1
+                  <span class="inline-flex w-7 h-3 rounded bg-muted overflow-hidden border border-border/50">
+                    <span class="w-3/4 h-full bg-primary/60 border-r border-border"></span>
+                    <span class="w-1/4 h-full bg-primary/40"></span>
+                  </span>
+                  <span>3 : 1 (右侧栏)</span>
                 </button>
               </template>
               <template v-else-if="currentColumnsCount === 3">
                 <button
-                  class="app-editor-preset-btn"
-                  :class="{ 'is-active': currentColumnsLayout === '1:1:1' }"
+                  class="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs font-medium transition-all hover:border-primary/50"
+                  :class="{ 'border-primary bg-primary/10 text-primary font-semibold ring-1 ring-primary/30': currentColumnsLayout === '1:1:1' }"
                   type="button"
                   @click="setColumnsLayoutPreset('1:1:1')"
                 >
-                  1 : 1 : 1 (等宽)
+                  <span class="inline-flex w-8 h-3 rounded bg-muted overflow-hidden border border-border/50">
+                    <span class="w-1/3 h-full bg-primary/40 border-r border-border"></span>
+                    <span class="w-1/3 h-full bg-primary/40 border-r border-border"></span>
+                    <span class="w-1/3 h-full bg-primary/40"></span>
+                  </span>
+                  <span>1 : 1 : 1 (等宽三等分)</span>
                 </button>
                 <button
-                  class="app-editor-preset-btn"
-                  :class="{ 'is-active': currentColumnsLayout === '1:2:1' }"
+                  class="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs font-medium transition-all hover:border-primary/50"
+                  :class="{ 'border-primary bg-primary/10 text-primary font-semibold ring-1 ring-primary/30': currentColumnsLayout === '1:2:1' }"
                   type="button"
                   @click="setColumnsLayoutPreset('1:2:1')"
                 >
-                  1 : 2 : 1 (居中聚焦)
+                  <span class="inline-flex w-8 h-3 rounded bg-muted overflow-hidden border border-border/50">
+                    <span class="w-1/4 h-full bg-primary/40 border-r border-border"></span>
+                    <span class="w-2/4 h-full bg-primary/60 border-r border-border"></span>
+                    <span class="w-1/4 h-full bg-primary/40"></span>
+                  </span>
+                  <span>1 : 2 : 1 (居中聚焦)</span>
                 </button>
                 <button
-                  class="app-editor-preset-btn"
-                  :class="{ 'is-active': currentColumnsLayout === '2:1:1' }"
+                  class="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs font-medium transition-all hover:border-primary/50"
+                  :class="{ 'border-primary bg-primary/10 text-primary font-semibold ring-1 ring-primary/30': currentColumnsLayout === '2:1:1' }"
                   type="button"
                   @click="setColumnsLayoutPreset('2:1:1')"
                 >
-                  2 : 1 : 1
+                  <span>2 : 1 : 1</span>
                 </button>
                 <button
-                  class="app-editor-preset-btn"
-                  :class="{ 'is-active': currentColumnsLayout === '1:1:2' }"
+                  class="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs font-medium transition-all hover:border-primary/50"
+                  :class="{ 'border-primary bg-primary/10 text-primary font-semibold ring-1 ring-primary/30': currentColumnsLayout === '1:1:2' }"
                   type="button"
                   @click="setColumnsLayoutPreset('1:1:2')"
                 >
-                  1 : 1 : 2
+                  <span>1 : 1 : 2</span>
                 </button>
               </template>
               <template v-else>
                 <button
-                  class="app-editor-preset-btn is-active"
+                  class="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium bg-primary/10 text-primary"
                   type="button"
                   @click="resetColumnsEqualWidth"
                 >
-                  均等平分所有栏
+                  <span>均等平分所有 {{ currentColumnsCount }} 栏</span>
                 </button>
               </template>
             </div>
           </div>
 
-          <!-- 间隙宽度面板（需求 3） -->
-          <div v-else-if="columnsActivePanel === 'gap'" class="app-editor-panel">
-            <span class="app-editor-panel-title">列间隙宽度 (Gap)</span>
-            <div class="app-editor-presets">
-              <button
-                class="app-editor-preset-btn"
-                :class="{ 'is-active': currentColumnsGap === '0px' }"
-                type="button"
-                @click="setColumnsGapValue('0px')"
-              >
-                0px 无缝
-              </button>
-              <button
-                class="app-editor-preset-btn"
-                :class="{ 'is-active': currentColumnsGap === '8px' }"
-                type="button"
-                @click="setColumnsGapValue('8px')"
-              >
-                8px 紧凑
-              </button>
-              <button
-                class="app-editor-preset-btn"
-                :class="{ 'is-active': currentColumnsGap === '16px' }"
-                type="button"
-                @click="setColumnsGapValue('16px')"
-              >
-                16px 标准
-              </button>
-              <button
-                class="app-editor-preset-btn"
-                :class="{ 'is-active': currentColumnsGap === '24px' }"
-                type="button"
-                @click="setColumnsGapValue('24px')"
-              >
-                24px 宽松
-              </button>
-              <button
-                class="app-editor-preset-btn"
-                :class="{ 'is-active': currentColumnsGap === '32px' }"
-                type="button"
-                @click="setColumnsGapValue('32px')"
-              >
-                32px 大号
-              </button>
+          <!-- 间隙宽度面板 -->
+          <div v-else-if="columnsActivePanel === 'gap'" class="app-editor-panel pt-3 mt-2 border-t border-border/70">
+            <div class="flex items-center justify-between pb-2">
+              <span class="font-semibold text-xs text-foreground">列间隙宽度 (Gap)</span>
+              <span class="text-[10px] text-muted-foreground">（通过内联 padding/margin 保持多端一致）</span>
             </div>
-          </div>
-
-          <!-- 移动端自适应方案面板（需求 4） -->
-          <div v-else-if="columnsActivePanel === 'responsive'" class="app-editor-panel">
-            <span class="app-editor-panel-title">移动端自适应方案 (断点: 768px)</span>
-            <div class="flex flex-col gap-1.5">
+            <div class="flex flex-wrap gap-2">
               <button
-                class="app-editor-align-item"
-                :class="{ 'is-active': currentColumnsResponsive === 'stack' }"
+                v-for="g in [
+                  { label: '0px 无缝紧贴', val: '0px' },
+                  { label: '8px 紧凑微距', val: '8px' },
+                  { label: '16px 标准推荐', val: '16px' },
+                  { label: '24px 舒适宽松', val: '24px' },
+                  { label: '32px 大号开阔', val: '32px' }
+                ]"
+                :key="g.val"
+                class="rounded-lg border border-border px-3 py-1.5 text-xs font-medium transition-all hover:border-primary/50"
+                :class="{ 'border-primary bg-primary/10 text-primary font-semibold ring-1 ring-primary/30': currentColumnsGap === g.val }"
                 type="button"
-                @click="setColumnsResponsiveMode('stack')"
+                @click="setColumnsGapValue(g.val)"
               >
-                <span class="text-base">📱</span>
-                <div class="flex flex-col text-left">
-                  <span class="font-medium text-xs">自动垂直堆叠 (推荐)</span>
-                  <span class="text-[10px] text-muted-foreground">屏幕 ≤768px 或移动端预览时，各列自动占满100%单栏流，避免字图挤压变形</span>
-                </div>
-              </button>
-              <button
-                class="app-editor-align-item"
-                :class="{ 'is-active': currentColumnsResponsive === 'keep' }"
-                type="button"
-                @click="setColumnsResponsiveMode('keep')"
-              >
-                <span class="text-base">↔️</span>
-                <div class="flex flex-col text-left">
-                  <span class="font-medium text-xs">保持横向并排</span>
-                  <span class="text-[10px] text-muted-foreground">即使在移动端也强行维持多栏横向并列排版，适合紧凑数据或对比</span>
-                </div>
+                {{ g.label }}
               </button>
             </div>
           </div>
@@ -6491,6 +6770,19 @@ defineExpose({
           class="size-3 opacity-60 transition-transform duration-200"
           :class="{ 'rotate-180': activePanel === 'align' }"
         />
+      </button>
+      <span class="app-editor-divider"></span>
+
+      <!-- 全宽通栏 (.web-bleed) -->
+      <button
+        class="app-editor-btn app-editor-btn--pill"
+        :class="{ 'is-active': isMediaBleed }"
+        :title="isMediaBleed ? '当前图片为通栏全宽 (.web-bleed)，点击恢复为普通正文宽' : '设置图片为通栏全宽 (添加 .web-bleed，突破内容列跨满整行)'"
+        type="button"
+        @click="toggleMediaBleed"
+      >
+        <span class="text-xs font-medium">↔️ 全宽通栏</span>
+        <span v-if="isMediaBleed" class="text-[10px] text-primary font-semibold">(已开)</span>
       </button>
       <span class="app-editor-divider"></span>
 
@@ -6806,6 +7098,19 @@ defineExpose({
       </button>
       <span class="app-editor-divider"></span>
 
+      <!-- 全宽通栏 (.web-bleed) -->
+      <button
+        class="app-editor-btn app-editor-btn--pill"
+        :class="{ 'is-active': isMediaBleed }"
+        :title="isMediaBleed ? '当前视频为通栏全宽 (.web-bleed)，点击恢复为普通正文宽' : '设置视频为通栏全宽 (添加 .web-bleed，突破内容列跨满整行)'"
+        type="button"
+        @click="toggleMediaBleed"
+      >
+        <span class="text-xs font-medium">↔️ 全宽通栏</span>
+        <span v-if="isMediaBleed" class="text-[10px] text-primary font-semibold">(已开)</span>
+      </button>
+      <span class="app-editor-divider"></span>
+
       <!-- 5. 视频属性（控制条/封面） -->
       <button
         class="app-editor-btn"
@@ -7100,34 +7405,34 @@ defineExpose({
         </div>
 
         <div class="app-editor-floating__actions">
-          <span class="app-editor-panel-title" title="仅调整编辑区显示宽度，用于预览窄屏排版效果，不会改变发布后的页面宽度">编辑视口</span>
-          <div class="inline-flex rounded-md border border-border bg-background p-0.5">
+          <span class="app-editor-panel-title font-semibold text-xs" title="仅调整编辑区显示宽度，用于预览窄屏排版效果，不会改变发布后的页面宽度">编辑视口</span>
+          <div class="inline-flex rounded-lg border border-border bg-background p-0.5 shadow-xs">
             <button
               type="button"
-              class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
-              :class="editorCanvasWidth === 'auto' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
-              title="自适应跟随外部宽度"
+              class="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium transition-all"
+              :class="editorCanvasWidth === 'auto' ? 'bg-primary text-primary-foreground shadow-xs font-semibold' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'"
+              title="自适应跟随外部宽度（桌面大屏效果）"
               @click="editorCanvasWidth = 'auto'"
             >
-              自适应
+              <span>🖥️ 自适应</span>
             </button>
             <button
               type="button"
-              class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
-              :class="editorCanvasWidth === '677px' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
-              title="微信公众号标准宽 (677px)"
+              class="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium transition-all"
+              :class="editorCanvasWidth === '677px' ? 'bg-primary text-primary-foreground shadow-xs font-semibold' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'"
+              title="微信公众号标准宽 (677px，内联样式严格保真)"
               @click="editorCanvasWidth = '677px'"
             >
-              公众号 (677px)
+              <span>📰 公众号 (677px)</span>
             </button>
             <button
               type="button"
-              class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
-              :class="editorCanvasWidth === '375px' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
-              title="手机端真实视口 (375px)"
+              class="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium transition-all"
+              :class="editorCanvasWidth === '375px' ? 'bg-primary text-primary-foreground shadow-xs font-semibold' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'"
+              title="手机端真实视口 (375px，内联样式严格保真)"
               @click="editorCanvasWidth = '375px'"
             >
-              手机 (375px)
+              <span>📱 手机 (375px)</span>
             </button>
           </div>
 
@@ -7175,7 +7480,7 @@ defineExpose({
               v-if="needsCustomStyles"
               class="inline-block size-1.5 rounded-full bg-primary animate-pulse shrink-0"
             ></span>
-            <span class="app-editor-btn-label">复制样式</span>
+            <span class="app-editor-btn-label">复制样式表</span>
           </button>
         </div>
       </div>
@@ -7190,39 +7495,96 @@ defineExpose({
           <span>字符数: {{ plainTextCount }}</span>
           <span class="text-border">|</span>
 
-          <!-- 页面设置：始终在编辑器的最底部显示（数字统计的后面） -->
-          <div class="flex items-center gap-1.5">
+          <!-- 页面设置：始终在编辑器的最底部显示（只显示当前选中的宽度，其他点击弹出） -->
+          <div ref="viewportDropdownRef" class="relative flex items-center gap-1.5">
             <span class="font-medium text-foreground/80">页面设置:</span>
-            <div class="inline-flex rounded-md border border-border bg-background p-0.5">
-              <button
-                type="button"
-                class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
-                :class="editorCanvasWidth === 'auto' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
-                title="自适应跟随外部宽度"
-                @click="editorCanvasWidth = 'auto'"
-              >
-                自适应
-              </button>
-              <button
-                type="button"
-                class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
-                :class="editorCanvasWidth === '677px' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
-                title="微信公众号标准宽 (677px)"
-                @click="editorCanvasWidth = '677px'"
-              >
-                公众号 (677px)
-              </button>
-              <button
-                type="button"
-                class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
-                :class="editorCanvasWidth === '375px' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
-                title="手机端真实视口 (375px)"
-                @click="editorCanvasWidth = '375px'"
-              >
-                手机 (375px)
-              </button>
+            <button
+              class="flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-0.5 text-[11px] font-medium text-foreground hover:bg-muted shadow-2xs transition-all cursor-pointer"
+              :title="'当前编辑视口: ' + currentViewportOption.title + ' (点击展开选择其他宽度)'"
+              type="button"
+              @click.stop="isViewportMenuOpen = !isViewportMenuOpen"
+            >
+              <span>{{ currentViewportOption.icon }}</span>
+              <span class="font-semibold">{{ currentViewportOption.label }}</span>
+              <ChevronDown
+                class="size-3 text-muted-foreground transition-transform duration-200"
+                :class="{ 'rotate-180': isViewportMenuOpen }"
+              />
+            </button>
+
+            <!-- 弹出菜单 (向上弹出，避免遮挡底部或超出边界) -->
+            <div
+              v-show="isViewportMenuOpen"
+              class="absolute bottom-full left-12 mb-2 w-72 rounded-xl border border-border bg-popover p-2 shadow-xl z-50 animate-in fade-in slide-in-from-bottom-2 duration-150 select-none text-foreground"
+              @click.stop
+            >
+              <div class="px-2 py-1 text-[11px] font-semibold text-muted-foreground border-b border-border/60 mb-1 flex items-center justify-between">
+                <span>页面编辑视口</span>
+                <span class="text-[10px] text-muted-foreground/80">仅影响编辑画布</span>
+              </div>
+
+              <!-- 桌面/标准档位 -->
+              <div class="space-y-0.5">
+                <button
+                  v-for="opt in desktopViewportOptions"
+                  :key="opt.value"
+                  class="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs text-left transition-colors cursor-pointer"
+                  :class="editorCanvasWidth === opt.value ? 'bg-primary/10 text-primary font-semibold' : 'hover:bg-muted text-foreground'"
+                  :title="opt.title"
+                  type="button"
+                  @click="setViewportWidth(opt.value)"
+                >
+                  <span class="flex items-center gap-2">
+                    <span>{{ opt.icon }}</span>
+                    <span>{{ opt.label }}</span>
+                  </span>
+                  <span v-if="opt.value === '1300px'" class="text-[10px] text-primary bg-primary/10 px-1.5 py-0.5 rounded font-medium">默认</span>
+                </button>
+              </div>
+
+              <!-- 小屏幕（统一移动端与公众号） -->
+              <div class="mt-2 pt-1.5 border-t border-border/60">
+                <div class="px-2 py-0.5 text-[10px] font-semibold text-muted-foreground flex items-center justify-between">
+                  <span>📱 小屏幕 (≤768px / 纯内联排版)</span>
+                  <span class="text-[9px] text-muted-foreground/75">单列堆叠/双列并排</span>
+                </div>
+                <div class="space-y-0.5 mt-1">
+                  <button
+                    v-for="opt in smallScreenViewportOptions"
+                    :key="opt.value"
+                    class="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs text-left transition-colors cursor-pointer"
+                    :class="editorCanvasWidth === opt.value ? 'bg-primary/10 text-primary font-semibold' : 'hover:bg-muted text-foreground'"
+                    :title="opt.title"
+                    type="button"
+                    @click="setViewportWidth(opt.value)"
+                  >
+                    <span class="flex items-center gap-2">
+                      <span>{{ opt.icon }}</span>
+                      <span>{{ opt.label }}</span>
+                    </span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
+
+          <span class="text-border">|</span>
+
+          <!-- 复制样式表：常驻底部状态栏，随时可用 -->
+          <button
+            class="app-editor-btn app-editor-btn--pill app-editor-copy-styles-btn flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border border-border bg-background hover:bg-muted text-foreground transition-all cursor-pointer shadow-2xs"
+            :class="{ 'border-primary text-primary font-semibold ring-1 ring-primary/30': needsCustomStyles }"
+            :title="needsCustomStyles ? '文档使用了多栏或全宽通栏排版，发布到自有站点建议复制输出样式定义（公众号等终端可忽略）' : '复制输出样式定义（包含多栏与全宽 web-article 样式表）'"
+            type="button"
+            @click="copyContentStyles"
+          >
+            <span
+              v-if="needsCustomStyles"
+              class="inline-block size-1.5 rounded-full bg-primary animate-pulse shrink-0"
+            ></span>
+            <Copy class="size-3" />
+            <span class="app-editor-btn-label">复制样式表</span>
+          </button>
 
           <span class="text-border">|</span>
           <!-- 底部外链资源标注 -->
@@ -7379,9 +7741,9 @@ defineExpose({
             <div
               class="w-full transition-all duration-300"
               :class="{
-                'max-w-[375px] bg-card rounded-[2.5rem] shadow-2xl border-[6px] border-slate-800 p-5 min-h-[667px]': previewDevice === 'mobile',
-                'max-w-[677px] bg-card rounded-xl shadow-xl border border-border p-6 sm:p-8 min-h-[500px]': previewDevice === 'wechat',
-                'max-w-full bg-card rounded-xl border border-border p-6 min-h-[500px]': previewDevice === 'full',
+                'max-w-[375px] bg-card rounded-[2.5rem] shadow-2xl border-[6px] border-slate-800 p-5 min-h-[667px] preview-device--mobile': previewDevice === 'mobile',
+                'max-w-[677px] bg-card rounded-xl shadow-xl border border-border p-6 sm:p-8 min-h-[500px] preview-device--wechat': previewDevice === 'wechat',
+                'max-w-full bg-card rounded-xl border border-border p-6 min-h-[500px] preview-device--full': previewDevice === 'full',
               }"
             >
               <!-- 手机顶栏装饰 -->
@@ -7838,27 +8200,172 @@ defineExpose({
 }
 
 /* 画布视口模式模拟（针对编辑器内容区） */
-.app-editor-wrapper.viewport--960px .vben-tiptap-content {
-  max-width: 960px !important;
+.app-editor-wrapper:not(.viewport--auto):not(.viewport--677px):not(.viewport--375px) .vben-tiptap {
+  background-color: hsl(var(--muted) / 0.15);
+}
+
+.app-editor-wrapper.viewport--1300px .vben-tiptap-content {
+  max-width: 1300px !important;
+  width: 100%;
   margin-left: auto !important;
   margin-right: auto !important;
-  box-shadow: 0 0 20px rgba(0, 0, 0, 0.04);
+  background-color: hsl(var(--card));
+  box-shadow: 0 4px 24px -2px rgba(0, 0, 0, 0.08), 0 0 0 1px hsl(var(--border) / 60%);
+  border-radius: 6px;
+  padding-block: 20px;
+}
+
+.app-editor-wrapper.viewport--960px .vben-tiptap-content {
+  max-width: 960px !important;
+  width: 100%;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  background-color: hsl(var(--card));
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.06), 0 0 0 1px hsl(var(--border) / 60%);
+  border-radius: 6px;
+  padding-block: 20px;
 }
 
 .app-editor-wrapper.viewport--677px .vben-tiptap-content {
   max-width: 677px !important;
   margin-left: auto !important;
   margin-right: auto !important;
-  box-shadow: 0 0 20px rgba(0, 0, 0, 0.04);
+  background-color: hsl(var(--card));
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.08), 0 2px 6px -1px rgba(0, 0, 0, 0.04);
+  border: 1px solid hsl(var(--border) / 80%);
+  border-radius: 8px;
+  padding: 24px 20px;
+  margin-top: 8px;
+  margin-bottom: 24px;
 }
 
 .app-editor-wrapper.viewport--375px .vben-tiptap-content {
   max-width: 375px !important;
   margin-left: auto !important;
   margin-right: auto !important;
-  box-shadow: 0 0 20px rgba(0, 0, 0, 0.06);
-  border-left: 1px dashed hsl(var(--border));
-  border-right: 1px dashed hsl(var(--border));
+  background-color: hsl(var(--card));
+  box-shadow: 0 8px 30px -4px rgba(0, 0, 0, 0.12), 0 4px 10px -2px rgba(0, 0, 0, 0.06);
+  border: 2px solid hsl(var(--border));
+  border-radius: 20px;
+  padding: 20px 14px;
+  margin-top: 8px;
+  margin-bottom: 24px;
+}
+
+/* ---------- 正文版式网格（web-article / web-bleed） ----------
+ * 全局富文本正文版式：容器全宽，三列网格 [gutter] [内容列] [gutter]。
+ * 所有直接子节点默认落内容列——宽度与全局边距由网格模板唯一决定；
+ * 仅打上 .web-bleed 标记的直接子块跨满整行（全宽通栏）。
+ * 在公众号与手机小屏视口下，不应用 1200px 网格，保持纯内联流式自适应。
+ */
+.web-article,
+.app-editor-wrapper:not(.viewport--677px):not(.viewport--375px) .vben-tiptap-content,
+.preview-device--full .vben-tiptap-content {
+  --web-article-width: 1200px;
+  --web-article-gutter: 24px;
+  --web-article-template:
+    [full-start] minmax(var(--web-article-gutter), 1fr)
+    [content-start] minmax(0, var(--web-article-width)) [content-end]
+    minmax(var(--web-article-gutter), 1fr) [full-end];
+  display: grid !important;
+  grid-template-columns: var(--web-article-template);
+  width: 100%;
+}
+
+.web-article > *,
+.app-editor-wrapper:not(.viewport--677px):not(.viewport--375px) .vben-tiptap-content > *,
+.preview-device--full .vben-tiptap-content > * {
+  grid-column: content;
+  min-width: 0;
+}
+
+/* 全宽通栏块：跨满整行（直接挂 web-bleed，或段落包含仅一个 web-bleed 媒体） */
+.web-article > .web-bleed,
+.web-article > :has(> .web-bleed:only-child),
+.app-editor-wrapper:not(.viewport--677px):not(.viewport--375px) .vben-tiptap-content > .web-bleed,
+.app-editor-wrapper:not(.viewport--677px):not(.viewport--375px) .vben-tiptap-content > :has(> .web-bleed:only-child),
+.preview-device--full .vben-tiptap-content > .web-bleed,
+.preview-device--full .vben-tiptap-content > :has(> .web-bleed:only-child) {
+  grid-column: full;
+}
+
+/* 仅 section / div 等容器类全宽块内部复用同一模板对齐内容列（普通文本段落等直接撑满整行） */
+.web-article > section.web-bleed,
+.web-article > div.web-bleed:not(.cms-columns),
+.app-editor-wrapper:not(.viewport--677px):not(.viewport--375px) .vben-tiptap-content > section.web-bleed,
+.app-editor-wrapper:not(.viewport--677px):not(.viewport--375px) .vben-tiptap-content > div.web-bleed:not(.cms-columns),
+.preview-device--full .vben-tiptap-content > section.web-bleed,
+.preview-device--full .vben-tiptap-content > div.web-bleed:not(.cms-columns) {
+  display: grid;
+  grid-template-columns: var(--web-article-template);
+}
+
+.web-article > section.web-bleed > *,
+.web-article > div.web-bleed:not(.cms-columns) > *,
+.app-editor-wrapper:not(.viewport--677px):not(.viewport--375px) .vben-tiptap-content > section.web-bleed > *,
+.app-editor-wrapper:not(.viewport--677px):not(.viewport--375px) .vben-tiptap-content > div.web-bleed:not(.cms-columns) > *,
+.preview-device--full .vben-tiptap-content > section.web-bleed > *,
+.preview-device--full .vben-tiptap-content > div.web-bleed:not(.cms-columns) > * {
+  grid-column: content;
+  min-width: 0;
+}
+
+/* 版式网格内多栏上下边距归零 */
+.web-article .cms-columns,
+.app-editor-wrapper .vben-tiptap-content > .cms-columns {
+  margin-block: 0 !important;
+}
+
+/* 全宽图片与全宽视频：在全宽块内自动铺满整宽 */
+.app-editor-wrapper .vben-tiptap-content img.web-bleed,
+.app-editor-wrapper .vben-tiptap-content video.web-bleed,
+.web-article img.web-bleed,
+.web-article video.web-bleed {
+  width: 100% !important;
+  max-width: 100% !important;
+  display: block;
+}
+
+/* 编辑器内对全宽通栏块的视觉标识：边界虚线导引 + 常驻顶角标签 */
+.app-editor-wrapper .vben-tiptap-content > .web-bleed,
+.app-editor-wrapper .vben-tiptap-content > :has(> .web-bleed:only-child) {
+  position: relative;
+  outline: 1.5px dashed hsl(var(--primary) / 45%);
+  outline-offset: -1px;
+  border-radius: 6px;
+  transition: outline-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.app-editor-wrapper .vben-tiptap-content > .web-bleed:hover,
+.app-editor-wrapper .vben-tiptap-content > :has(> .web-bleed:only-child):hover {
+  outline-color: hsl(var(--primary) / 85%);
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 15%);
+}
+
+.app-editor-wrapper .vben-tiptap-content > .web-bleed::before,
+.app-editor-wrapper .vben-tiptap-content > :has(> .web-bleed:only-child)::before {
+  content: "↔ 全宽通栏 (web-bleed)";
+  position: absolute;
+  top: -10px;
+  right: 12px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: sans-serif;
+  padding: 1px 8px;
+  border-radius: 9999px;
+  background-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+  pointer-events: none;
+  opacity: 0.75;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 25;
+}
+
+.app-editor-wrapper .vben-tiptap-content > .web-bleed:hover::before,
+.app-editor-wrapper .vben-tiptap-content > :has(> .web-bleed:only-child):hover::before {
+  opacity: 1;
+  transform: translateY(-1px);
 }
 
 /* 移动端与大屏排版自适应规范 */
@@ -8021,8 +8528,18 @@ defineExpose({
 
 /* ---------------------------------------------------------------------------
  * CMS 多栏布局（Columns）标准与交互样式规范
+ *
+ * 输出契约（与 columns.js / content-styles.js 单一来源，勿三处漂移）：
+ * - 内联基线 = 「一排 x 个」：容器不带 display，列宽/浮动/对侧内衬距/间距全内联
+ *   （--row1 块流堆叠 / --row2 浮动两列），无 CSS 环境（公众号图文）原样保真；
+ * - class 适配：--row1/--row2 只在宽屏把基线改为 N 栏一排（!important 清掉内联
+ *   浮动/宽度/内衬距；flex 权重由列内联 flex 承载，间隙读 --cms-columns-gap）；
+ * - 旧版内容（--stack/--keep + 内联 flex）：见兼容段，行为不变。
  * --------------------------------------------------------------------------- */
-.cms-columns {
+
+/* 旧版内容兼容：内联 flex 基线 + --stack/--keep 标记 */
+.cms-columns--stack,
+.cms-columns--keep {
   display: flex;
   flex-wrap: wrap;
   gap: 16px;
@@ -8031,7 +8548,8 @@ defineExpose({
   width: 100%;
 }
 
-.cms-column {
+.cms-columns--stack > .cms-column,
+.cms-columns--keep > .cms-column {
   flex: 1 1 0%;
   min-width: 0;
   box-sizing: border-box;
@@ -8087,6 +8605,75 @@ defineExpose({
   outline-offset: -2px;
   background-color: hsl(var(--primary) / 5%);
   border-radius: 10px;
+}
+
+/* 新版多栏（--row1/--row2）：仅在桌面/宽屏自适应模式下将基线适配为 N 栏一排。
+ * 公众号视口 (677px) 与 手机视口 (375px) 严格还原真实设备内联基线：
+ * - perRow=1：垂直堆叠（一排 1 个，宽度 100%）
+ * - perRow=2：浮动并排（一排 2 个，宽度 50% 或按比例浮动）
+ * 不应用桌面端 flex 强制并排，保持极致兼容与所见即所得。 */
+@media (min-width: 769px) {
+  .app-editor-wrapper:not(.viewport--375px):not(.viewport--677px) .cms-columns--row1,
+  .app-editor-wrapper:not(.viewport--375px):not(.viewport--677px) .cms-columns--row2 {
+    display: flex;
+    flex-direction: row;
+    gap: var(--cms-columns-gap, 16px);
+  }
+
+  .app-editor-wrapper:not(.viewport--375px):not(.viewport--677px) .cms-columns--row1 > .cms-column,
+  .app-editor-wrapper:not(.viewport--375px):not(.viewport--677px) .cms-columns--row2 > .cms-column {
+    float: none !important;
+    width: auto !important;
+    margin: 0 !important;
+    padding: 8px 10px !important;
+  }
+}
+
+/* 微信公众号视口 (677px) 与 手机视口 (375px) 仿真专用内联渲染增强 */
+.app-editor-wrapper.viewport--677px .cms-columns,
+.app-editor-wrapper.viewport--375px .cms-columns {
+  display: block;
+}
+
+.app-editor-wrapper.viewport--677px .cms-columns::after,
+.app-editor-wrapper.viewport--375px .cms-columns::after {
+  content: "";
+  display: table;
+  clear: both;
+}
+
+.app-editor-wrapper.viewport--677px .cms-columns > .cms-column,
+.app-editor-wrapper.viewport--375px .cms-columns > .cms-column {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+/* 预览弹窗中的设备仿真：宽屏模式应用桌面 flex 展开，公众号与手机模式保留纯净内联排版 */
+.preview-device--full .cms-columns--row1,
+.preview-device--full .cms-columns--row2 {
+  display: flex;
+  flex-direction: row;
+  gap: var(--cms-columns-gap, 16px);
+}
+
+.preview-device--full .cms-columns--row1 > .cms-column,
+.preview-device--full .cms-columns--row2 > .cms-column {
+  float: none !important;
+  width: auto !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.preview-device--wechat .cms-columns,
+.preview-device--mobile .cms-columns {
+  display: block;
+}
+
+.preview-device--wechat .cms-columns::after,
+.preview-device--mobile .cms-columns::after {
+  content: "";
+  display: table;
+  clear: both;
 }
 
 /* 编辑器表格选中指示（与多栏同语言）
@@ -8188,14 +8775,13 @@ defineExpose({
   cursor: pointer;
 }
 
-/* 移动端 768px 自适应响应式（支持默认堆叠与保持并排两档模式） */
+/* 移动端 768px 自适应响应式（旧版 --stack/--keep 两档模式；
+ * 新版 --row1/--row2 不在此列——窄屏直接回落内联基线，一排 x 个） */
 @media (max-width: 768px) {
-  .cms-columns:not(.cms-columns--keep),
   .cms-columns--stack {
     flex-direction: column !important;
     gap: 12px !important;
   }
-  .cms-columns:not(.cms-columns--keep) > .cms-column,
   .cms-columns--stack > .cms-column {
     flex: 1 1 100% !important;
     width: 100% !important;
@@ -8205,20 +8791,22 @@ defineExpose({
   }
 }
 
-/* 仿真小屏视口（如 375px） */
-.app-editor-wrapper.viewport--375px .cms-columns:not(.cms-columns--keep),
-.app-editor-wrapper.viewport--375px .cms-columns--stack {
+/* 仿真小屏视口（如 375px）：旧版内容堆叠/保持两档；
+ * 新版内容不写规则，直接露出内联基线（一排 x 个） */
+.app-editor-wrapper.viewport--375px .cms-columns--stack,
+.app-editor-wrapper.viewport--677px .cms-columns--stack {
   flex-direction: column !important;
   gap: 12px !important;
 }
 
-.app-editor-wrapper.viewport--375px .cms-columns:not(.cms-columns--keep) > .cms-column,
-.app-editor-wrapper.viewport--375px .cms-columns--stack > .cms-column {
+.app-editor-wrapper.viewport--375px .cms-columns--stack > .cms-column,
+.app-editor-wrapper.viewport--677px .cms-columns--stack > .cms-column {
   flex: 1 1 100% !important;
   width: 100% !important;
 }
 
-.app-editor-wrapper.viewport--375px .cms-columns--keep {
+.app-editor-wrapper.viewport--375px .cms-columns--keep,
+.app-editor-wrapper.viewport--677px .cms-columns--keep {
   flex-direction: row !important;
 }
 
