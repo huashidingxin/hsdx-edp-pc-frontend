@@ -67,10 +67,11 @@ describe('app-editor AI 样式与交互能力', () => {
     expect(wrapper.element.classList.contains('custom-class')).toBe(true);
   });
 
-  it('AiChatBar 折叠态展示胶囊按钮与 AI 助手标识，点击展开且支持预设灵感填充', async () => {
+  it('AiChatBar 移除预设提示词与按钮，支持选区删除与未选中任何内容时正常发送', async () => {
+    const fetchAiMock = vi.fn().mockResolvedValue('<p>已润色</p>');
     const wrapper = mount(AiChatBar, {
       props: {
-        fetchAi: vi.fn(),
+        fetchAi: fetchAiMock,
         resolveScope: () => ({ label: 'H2 标题', text: '标题文本', html: '<h2>标题文本</h2>' }),
       },
     });
@@ -88,18 +89,79 @@ describe('app-editor AI 样式与交互能力', () => {
     const box = wrapper.find('.app-editor-ai-box');
     expect(box.exists()).toBe(true);
 
-    // 预设灵感按钮展示
-    const presetBtns = wrapper.findAll('.app-editor-ai-box button').filter((b) =>
-      b.text().includes('润色排版'),
-    );
-    expect(presetBtns.length).toBeGreaterThan(0);
+    // 1. 验证移除预设提示词与预设按钮：不应存在包含预设文本的按钮
+    const presetKeywords = ['润色排版', '扩写深入', '翻译精炼', '总结要点'];
+    const allButtonsText = wrapper.findAll('.app-editor-ai-box button').map((b) => b.text());
+    for (const kw of presetKeywords) {
+      expect(allButtonsText.some((t) => t.includes(kw))).toBe(false);
+    }
 
-    // 点击预设自动填入输入框
-    await presetBtns[0].trigger('click');
+    // 2. 选中的内容作用域展示定位与删除按钮
+    const clearBtn = wrapper.find('button[title*="删除选中的内容范围"]');
+    expect(clearBtn.exists()).toBe(true);
+    expect(clearBtn.text()).toContain('✕');
+
+    // 点击删除选中的内容范围
+    await clearBtn.trigger('click');
     await nextTick();
 
+    // 变为未选中任何内容（全文）
+    expect(wrapper.text()).toContain('未选中任何内容 (全文)');
+    expect(wrapper.vm.nodeInfo).toBeNull();
+
+    // 3. 未选中任何内容时，输入内容可正常发送
     const textarea = wrapper.find('textarea');
-    expect(textarea.element.value).toContain('优化排版');
+    await textarea.setValue('请帮我写一段引言');
+    expect(wrapper.vm.canSend).toBe(true);
+
+    const sendBtn = wrapper.find('button[title*="发送"]');
+    expect(sendBtn.attributes('disabled')).toBeUndefined();
+    await sendBtn.trigger('click');
+    await nextTick();
+
+    expect(fetchAiMock).toHaveBeenCalled();
+    const callArg = fetchAiMock.mock.calls[0][0];
+    expect(callArg.scope).toBe('full');
+    expect(callArg.instruction).toContain('请帮我写一段引言');
+  });
+
+  it('AiChatBar 附加的设计稿图片支持点击放大预览与角落独立删除按钮', async () => {
+    const wrapper = mount(AiChatBar, {
+      props: {
+        fetchAi: vi.fn(),
+      },
+    });
+
+    // 点击展开
+    await wrapper.find('.app-editor-ai-fab').trigger('click');
+    await nextTick();
+
+    // 注入图片
+    const testImgUrl =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    wrapper.vm.images.push({ url: testImgUrl });
+    await nextTick();
+
+    // 缩略图容器与图片元素
+    const imgContainer = wrapper.find('.group.relative.inline-flex');
+    expect(imgContainer.exists()).toBe(true);
+    const img = imgContainer.find('img');
+    expect(img.exists()).toBe(true);
+    expect(img.attributes('src')).toBe(testImgUrl);
+
+    // 点击缩略图触发大图灯箱预览
+    await imgContainer.trigger('click');
+    await nextTick();
+    expect(wrapper.vm.lightboxUrl).toBe(testImgUrl);
+
+    // 独立删除按钮（不覆盖主体）
+    const deleteBtn = imgContainer.find('button[title="移除此图"]');
+    expect(deleteBtn.exists()).toBe(true);
+
+    // 点击删除按钮移除图片
+    await deleteBtn.trigger('click');
+    await nextTick();
+    expect(wrapper.vm.images.length).toBe(0);
   });
 
   it('AiChatBar 流式生成态展示动态状态与停止按钮', async () => {
@@ -142,11 +204,68 @@ describe('app-editor AI 样式与交互能力', () => {
 });
 
 describe('app-editor 全屏模式工具栏与排版结构', () => {
-  it('全屏模式下 app-editor-wrapper 不带 overflow-y-auto，确保底部 Dock 工具栏不跟随滚动', async () => {
+  it(
+    '全屏模式下 app-editor-wrapper 不带 overflow-y-auto，且底部状态条常驻显示页面设置',
+    async () => {
+      const { default: AppEditor } = await import('../app-editor/index.vue');
+      const wrapper = mount(AppEditor, {
+        props: {
+          modelValue: '<p>段落内容</p>',
+        },
+        global: {
+          stubs: {
+            EditorToolbar: true,
+            MediaLibraryModal: true,
+            ExternalAssetsModal: true,
+            VbenTiptap: VbenTiptapStub,
+            BubbleMenu: true,
+            FloatingMenu: true,
+          },
+        },
+      });
+
+      const editorContainer = wrapper.find('.app-editor-tiptap');
+      const editorWrapper = wrapper.find('.app-editor-wrapper');
+
+      // 1. 验证最底部状态条常驻显示「页面设置:」及切换按钮
+      const statusbar = wrapper.find('.app-editor-statusbar');
+      expect(statusbar.exists()).toBe(true);
+      expect(statusbar.text()).toContain('字符数:');
+      expect(statusbar.text()).toContain('页面设置:');
+      expect(statusbar.text()).toContain('公众号 (677px)');
+      expect(statusbar.text()).toContain('手机 (375px)');
+
+      // 点击状态条中的手机视口按钮
+      const mobileBtn = statusbar.findAll('button').find((b) => b.text().includes('手机'));
+      expect(mobileBtn).toBeTruthy();
+      await mobileBtn.trigger('click');
+      await nextTick();
+      expect(wrapper.vm.editorCanvasWidth).toBe('375px');
+
+      // 2. 初始状态非全屏
+      expect(editorContainer.classes()).not.toContain('app-editor--fullscreen');
+      expect(editorWrapper.classes()).not.toContain('overflow-y-auto');
+
+      // 3. 通过组件实例切换全屏
+      wrapper.vm.toggleFullscreen();
+      await nextTick();
+
+      expect(editorContainer.classes()).toContain('app-editor--fullscreen');
+      // 关键修复点：全屏下 wrapper 不应有 overflow-y-auto 类
+      expect(editorWrapper.classes()).not.toContain('overflow-y-auto');
+
+      // 验证全屏下外层容器 flex 纵向布局结构存在
+      expect(editorWrapper.classes()).toContain('flex');
+      expect(editorWrapper.classes()).toContain('flex-col');
+    },
+    20000,
+  );
+
+  it('AI 作用域与节点选择彻底解耦，无选区时为全文，支持任意起止位置选区', async () => {
     const { default: AppEditor } = await import('../app-editor/index.vue');
     const wrapper = mount(AppEditor, {
       props: {
-        modelValue: '<p>段落内容</p>',
+        modelValue: '<p>京华企业在追求现代化技术装备和先进工艺的同时</p>',
       },
       global: {
         stubs: {
@@ -154,27 +273,129 @@ describe('app-editor 全屏模式工具栏与排版结构', () => {
           MediaLibraryModal: true,
           ExternalAssetsModal: true,
           VbenTiptap: VbenTiptapStub,
+          BubbleMenu: true,
+          FloatingMenu: true,
         },
       },
     });
 
-    const editorContainer = wrapper.find('.app-editor-tiptap');
-    const editorWrapper = wrapper.find('.app-editor-wrapper');
+    // 模拟光标无选区状态（光标闪烁，selection.empty = true）
+    const dummyEditor = {
+      isDestroyed: false,
+      registerPlugin: vi.fn(),
+      unregisterPlugin: vi.fn(),
+      state: {
+        doc: {
+          textBetween: (from, to) => '现代化技术装备',
+          content: { size: 100 },
+        },
+        selection: {
+          from: 5,
+          to: 5,
+          empty: true,
+        },
+        schema: {},
+      },
+    };
+    wrapper.vm.editorInstance = dummyEditor;
 
-    // 初始状态非全屏
-    expect(editorContainer.classes()).not.toContain('app-editor--fullscreen');
-    expect(editorWrapper.classes()).not.toContain('overflow-y-auto');
+    // 光标未拉选区时：作用域为 null（显示未选中任何内容 / 全文），与节点检查器解耦
+    expect(wrapper.vm.resolveAiScopeTarget()).toBeNull();
 
-    // 通过组件实例切换全屏
-    wrapper.vm.toggleFullscreen();
-    await nextTick();
+    // 划选任意起止位置文本（from: 5, to: 12）
+    dummyEditor.state.selection = {
+      from: 5,
+      to: 12,
+      empty: false,
+      content: () => ({ content: [] }),
+    };
 
-    expect(editorContainer.classes()).toContain('app-editor--fullscreen');
-    // 关键修复点：全屏下 wrapper 不应有 overflow-y-auto 类
-    expect(editorWrapper.classes()).not.toContain('overflow-y-auto');
+    const target = wrapper.vm.resolveAiScopeTarget();
+    expect(target).not.toBeNull();
+    expect(target.kind).toBe('range');
+    expect(target.from).toBe(5);
+    expect(target.to).toBe(12);
+    expect(target.label).toContain('选区');
+    expect(target.label).toContain('现代化技术装备');
+    expect(target.container).toBeDefined();
+  });
 
-    // 验证全屏下外层容器 flex 纵向布局结构存在
-    expect(editorWrapper.classes()).toContain('flex');
-    expect(editorWrapper.classes()).toContain('flex-col');
+  it('computeTokenDiff 准确执行中英文词级差分比对', async () => {
+    const { computeTokenDiff } = await import('../app-editor/ai-diff-plugin');
+    const ops = computeTokenDiff('现代化技术装备', '现代化高端装备');
+    expect(ops.some((op) => op.type === 'equal' && op.text.includes('现代化'))).toBe(true);
+    expect(ops.some((op) => op.type === 'delete' && op.text.includes('技术'))).toBe(true);
+    expect(ops.some((op) => op.type === 'insert' && op.text.includes('高端'))).toBe(true);
+  });
+
+  it('方案 A：onAiSuggestionReady 针对划选范围生成内联比对，并支持接受与恢复原文', async () => {
+    const { default: AppEditor } = await import('../app-editor/index.vue');
+    const wrapper = mount(AppEditor, {
+      props: {
+        modelValue: '<p>现代化技术装备和先进工艺</p>',
+      },
+      global: {
+        stubs: {
+          EditorToolbar: true,
+          MediaLibraryModal: true,
+          ExternalAssetsModal: true,
+          VbenTiptap: VbenTiptapStub,
+          BubbleMenu: true,
+          FloatingMenu: true,
+        },
+      },
+    });
+
+    const chainRunMock = vi.fn();
+    const mockChain = {
+      focus: () => mockChain,
+      deleteRange: () => mockChain,
+      insertContentAt: () => mockChain,
+      run: chainRunMock,
+    };
+    const dummyEditor = {
+      isDestroyed: false,
+      registerPlugin: vi.fn(),
+      unregisterPlugin: vi.fn(),
+      chain: () => mockChain,
+      getHTML: () => '<p>现代化技术装备和先进工艺</p>',
+      getText: () => '现代化技术装备和先进工艺',
+      view: {
+        dispatch: vi.fn(),
+        coordsAtPos: () => ({ top: 100, bottom: 120, left: 200, right: 300 }),
+      },
+      state: {
+        doc: {
+          textBetween: () => '现代化技术装备',
+          content: { size: 100 },
+        },
+        tr: {
+          setMeta: vi.fn(),
+        },
+      },
+    };
+    wrapper.vm.editorInstance = dummyEditor;
+
+    // AI 生成新内容
+    wrapper.vm.onAiSuggestionReady({
+      html: '现代化高端装备',
+      scope: {
+        kind: 'range',
+        from: 0,
+        to: 7,
+        text: '现代化技术装备',
+      },
+    });
+
+    // 验证落入内联比对会话
+    expect(wrapper.vm.aiSession).not.toBeNull();
+    expect(wrapper.vm.aiSession.scopeKind).toBe('range');
+    expect(wrapper.vm.aiSession.hunks[0].delCount).toBeGreaterThan(0);
+    expect(wrapper.vm.aiSession.hunks[0].insCount).toBeGreaterThan(0);
+    expect(chainRunMock).toHaveBeenCalled();
+
+    // 接受修改
+    wrapper.vm.acceptAiCurrent();
+    expect(wrapper.vm.aiSession).toBeNull();
   });
 });

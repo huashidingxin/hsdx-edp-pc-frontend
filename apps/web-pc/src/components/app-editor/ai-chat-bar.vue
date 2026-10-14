@@ -2,10 +2,10 @@
 /**
  * AI 内联对话条（编辑器底部浮动，tiptap 式单输入框）。
  *
- * - 作用域：默认全文；文档中有选中节点时自动用选中（chip 展示，可点击回跳定位）。
+ * - 作用域：默认全文；文档中有选中节点时自动用选中（chip 展示，支持删除清除，可不选中任何内容）。
  * - 设计稿：输入框内直接粘贴图片（或点图按钮选择），本地转 base64 dataURL
- *   直传大模型，不走上传入库。最多 4 张、单张 8MB；缩略图点击放大查看。
- * - 流式：思考中收拢为细状态条（动画圆点 + 停止键）；完成后把结果
+ *   直传大模型，不走上传入库。最多 4 张、单张 8MB；点击图片缩略图直接放大预览。
+ * - 流式：思考中收拢为细状态条（动画流光 + 停止键）；完成后把结果
  *   emit('suggestion-ready', { html, scope }) 交父组件落盘比对
  *   （父组件负责 diff 高亮 + 逐处接受/全部接受）。
  * - 比对进行中（reviewActive）时禁止新一轮发送，先接受或放弃。
@@ -39,9 +39,29 @@ const props = defineProps({
     type: Number,
     default: 0,
   },
+  model: {
+    type: String,
+    default: '',
+  },
+  recordId: {
+    type: [Number, String],
+    default: '',
+  },
+  fieldName: {
+    type: String,
+    default: 'content',
+  },
+  locale: {
+    type: String,
+    default: 'zh-CN',
+  },
+  uploadImage: {
+    type: Function,
+    default: null,
+  },
 });
 
-const emit = defineEmits(['suggestion-ready', 'locate-scope']);
+const emit = defineEmits(['suggestion-ready', 'locate-scope', 'stream-progress']);
 
 const OUTPUT_CONSTRAINT =
   '要求：只返回可直接放入网页正文的 HTML 片段（如 p/h2/ul/li 等标签），不要用 markdown 代码块包裹，不要解释说明。';
@@ -50,18 +70,16 @@ const MAX_IMAGES = 4;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_STREAM_CHARS = 30_000;
 
-const PRESET_PROMPTS = [
-  { label: '✨ 润色排版', text: '优化排版结构与视觉层次，提升文章可读性' },
-  { label: '📝 修正错漏', text: '检查并修正文中的错别字、标点与病句' },
-  { label: '🎯 提炼要点', text: '提炼核心要点，整理为清晰有层次的列表' },
-  { label: '📖 扩写充实', text: '围绕当前核心观点适当扩写充实论述，丰富细节' },
-];
-
 const aiConfigured = computed(() => typeof props.fetchAi === 'function');
 
-/** 有选中用选中，无选中默认全文 */
-const effectiveScope = computed(() => (nodeInfo.value ? 'node' : 'full'));
+/** 用户是否主动清除了当前选中的节点作用域 */
+const manualCleared = ref(false);
+let lastClearedPos = null;
+
 const nodeInfo = ref(null);
+/** 有选中用选中，无选中默认全文/不限定范围 */
+const effectiveScope = computed(() => (nodeInfo.value ? 'node' : 'full'));
+
 const images = ref([]); // [{ url }]
 const uploadingCount = ref(0);
 const input = ref('');
@@ -95,13 +113,31 @@ function collapse() {
   }
 }
 
+function clearScope() {
+  lastClearedPos = nodeInfo.value?.pos ?? (nodeInfo.value?.from ?? -1);
+  nodeInfo.value = null;
+  manualCleared.value = true;
+}
+
 function refreshNode() {
   if (typeof props.resolveScope !== 'function') {
     nodeInfo.value = null;
     return;
   }
   try {
-    nodeInfo.value = props.resolveScope();
+    const scope = props.resolveScope();
+    const curPos = scope?.pos ?? (scope?.from ?? null);
+    // 用户主动删除了该节点/选区的作用域时，在位置未发生变化前保持不选中
+    if (manualCleared.value && scope && curPos === lastClearedPos) {
+      nodeInfo.value = null;
+      return;
+    }
+    // 选区位置发生了变更，重新恢复并同步
+    if (scope && curPos !== lastClearedPos) {
+      manualCleared.value = false;
+      lastClearedPos = null;
+    }
+    nodeInfo.value = scope;
   } catch {
     nodeInfo.value = null;
   }
@@ -130,40 +166,20 @@ function autoGrow() {
   el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
 }
 
-function applyPreset(preset) {
-  if (!input.value.trim()) {
-    input.value = preset.text;
-  } else {
-    input.value = `${input.value.trim()}，${preset.text}`;
-  }
-  nextTick(() => {
-    autoGrow();
-    inputRef.value?.focus();
-  });
-}
-
+// 支持不选中任何内容发送，只要输入了提示词即可
 const canSend = computed(() => {
   if (!aiConfigured.value || running.value || props.reviewActive) return false;
   if (!input.value.trim()) return false;
   if (uploadingCount.value > 0) return false;
-  const target =
-    effectiveScope.value === 'full'
-      ? safeFull()
-      : nodeInfo.value;
-  if (!target || !String(target.text || '').trim()) return false;
   return true;
 });
 
 const sendHint = computed(() => {
-  if (!aiConfigured.value) return '未配置 AI 服务（fetch-ai）';
   if (props.reviewActive) return '比对进行中，请先接受或放弃';
   if (running.value) return '生成中';
   if (!input.value.trim()) return '请先填写修改要求';
   if (uploadingCount.value > 0) return '图片读取中';
-  if (effectiveScope.value === 'full') {
-    const full = safeFull();
-    if (!full || !String(full.text || '').trim()) return '全文为空';
-  }
+  if (!aiConfigured.value) return '未配置 AI 服务（fetch-ai）';
   return '发送（Enter）';
 });
 
@@ -174,6 +190,45 @@ function safeFull() {
   } catch {
     return null;
   }
+}
+
+function compressImageToDataUrl(file, maxDimension = 1280, quality = 0.82) {
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+      const objUrl = URL.createObjectURL(file);
+      img.onload = () => {
+        try {
+          URL.revokeObjectURL(objUrl);
+          let { width, height } = img;
+          if (width > maxDimension || height > maxDimension) {
+            if (width > height) {
+              height = Math.round((height * maxDimension) / width);
+              width = maxDimension;
+            } else {
+              width = Math.round((width * maxDimension) / height);
+              height = maxDimension;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        } catch {
+          resolve('');
+        }
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(objUrl);
+        resolve('');
+      };
+      img.src = objUrl;
+    } catch {
+      resolve('');
+    }
+  });
 }
 
 function readAsDataURL(file) {
@@ -204,15 +259,32 @@ async function addImageFiles(files) {
     }
     uploadingCount.value += 1;
     try {
-      const url = await readAsDataURL(file);
-      if (url) {
-        images.value.push({ url });
-      } else {
-        message.warning('图片读取失败，已跳过');
+      const localUrl = URL.createObjectURL(file);
+      let remoteUrl = '';
+      if (typeof props.uploadImage === 'function') {
+        try {
+          remoteUrl = await props.uploadImage(file);
+        } catch (uploadErr) {
+          console.warn('[app-editor] 图片上传服务器失败，回退本地 DataURL:', uploadErr);
+        }
+      }
+      let dataUrl = await compressImageToDataUrl(file);
+      if (!dataUrl) {
+        dataUrl = await readAsDataURL(file);
+      }
+      images.value.push({
+        url: remoteUrl || dataUrl,
+        remoteUrl: remoteUrl || '',
+        dataUrl: dataUrl || '',
+        localUrl: localUrl || dataUrl,
+        name: file.name,
+      });
+      if (remoteUrl) {
+        message.success(`图片已上传至媒体库`);
       }
     } catch (error) {
-      console.error('[app-editor] AI 设计稿读取失败:', error);
-      message.warning('图片读取失败，已跳过');
+      console.error('[app-editor] AI 图片处理失败:', error);
+      message.warning('图片读取/上传失败，请重试');
     } finally {
       uploadingCount.value -= 1;
     }
@@ -256,15 +328,38 @@ async function handleSend() {
   }
   const isFull = effectiveScope.value === 'full';
   const target = isFull ? safeFull() : nodeInfo.value;
-  if (!target || !String(target.text || '').trim()) {
-    message.info(isFull ? '全文为空' : '选中内容为空');
-    return;
-  }
-  const scopeSnapshot = isFull
-    ? { kind: 'full' }
-    : { kind: 'node', pos: target.pos, type: target.node?.type?.name };
+  const fullDoc = safeFull();
+  const targetText = target?.text || fullDoc?.text || '';
+  const targetHtml = target?.html || fullDoc?.html || '';
+  const scopeSnapshot = isFull || !target
+    ? { kind: 'full', html: fullDoc?.html || '', text: fullDoc?.text || '' }
+    : target.kind === 'range'
+    ? {
+        kind: 'range',
+        from: target.from,
+        to: target.to,
+        text: target.text,
+        html: target.html,
+        container: target.container || null,
+        selection: target.selection || { text: target.text, html: target.html, from: target.from, to: target.to },
+      }
+    : {
+        kind: 'node',
+        pos: target.pos,
+        type: target.node?.type?.name,
+        container: target.container || null,
+        html: target.html,
+        text: target.text,
+      };
   const instruction = `${input.value.trim()}\n${OUTPUT_CONSTRAINT}`;
-  const imageUrls = images.value.map((it) => it.url).filter(Boolean);
+  const imageUrls = images.value
+    .map((it) => ({
+      url: it.remoteUrl || it.url,
+      remoteUrl: it.remoteUrl || '',
+      dataUrl: it.dataUrl || '',
+      name: it.name || 'image.png',
+    }))
+    .filter(Boolean);
 
   running.value = true;
   streamLen.value = 0;
@@ -272,12 +367,21 @@ async function handleSend() {
   aborter = new AbortController();
   try {
     const result = await props.fetchAi({
+      model: props.model || undefined,
+      id: props.recordId,
+      field: props.fieldName,
+      locale: props.locale,
       instruction,
       preset: 'chat',
-      text: target.text,
-      html: target.html,
-      scope: isFull ? 'full' : 'node',
-      label: target.label,
+      text: targetText,
+      html: targetHtml,
+      block_html: target?.container?.html || (isFull ? fullDoc?.html : targetHtml) || '',
+      selection_text: target?.kind === 'range' ? targetText : '',
+      scope: target ? (isFull ? 'full' : (target.kind || 'node')) : 'full',
+      label: target?.label || '未选中内容',
+      selection: target?.kind === 'range' ? (target.selection || { text: target.text, html: target.html, from: target.from, to: target.to }) : null,
+      container: target?.container || null,
+      fullHtml: fullDoc?.html || '',
       images: imageUrls,
       signal: aborter.signal,
       onChunk: (chunk) => {
@@ -286,6 +390,7 @@ async function handleSend() {
         const slice = String(chunk).slice(0, MAX_STREAM_CHARS - acc.length);
         acc += slice;
         streamLen.value = acc.length;
+        emit('stream-progress', { acc, chunk: slice, scope: scopeSnapshot });
       },
     });
     if (typeof result === 'string' && result) {
@@ -317,6 +422,21 @@ function handleStop() {
     /* 忽略 */
   }
 }
+
+defineExpose({
+  expanded,
+  expand,
+  collapse,
+  clearScope,
+  nodeInfo,
+  images,
+  lightboxUrl,
+  input,
+  canSend,
+  addImageFiles,
+  handleSend,
+  handleStop,
+});
 </script>
 
 <template>
@@ -347,7 +467,7 @@ function handleStop() {
     <!-- 展开态：全能对话输入框盒子 -->
     <div
       v-else
-      class="app-editor-ai-box pointer-events-auto w-full rounded-2xl border border-primary/35 bg-card/95 shadow-2xl backdrop-blur-xl transition-all focus-within:border-primary/60 focus-within:shadow-[0_12px_36px_-6px_rgba(99,102,241,0.25)]"
+      class="app-editor-ai-box pointer-events-auto w-full rounded-2xl border border-primary/35 bg-card shadow-2xl transition-all focus-within:border-primary/60 focus-within:shadow-[0_12px_36px_-6px_rgba(99,102,241,0.25)]"
     >
       <!-- 思考与流式生成中：细条动态状态 -->
       <div
@@ -385,66 +505,83 @@ function handleStop() {
       </div>
 
       <template v-else>
-        <!-- 头部上下文栏与快捷提示词 -->
+        <!-- 头部上下文栏：作用域支持删除，可不选中任何内容 -->
         <div class="flex flex-wrap items-center justify-between gap-2 border-b border-border/40 px-3.5 pb-2 pt-2.5">
-          <div class="flex flex-wrap items-center gap-1.5 min-w-0">
-            <!-- 作用域标签 -->
-            <button
+          <div class="flex flex-wrap items-center gap-2 min-w-0">
+            <!-- 选中了具体内容时：显示标签并支持点击删除/清除 -->
+            <div
               v-if="nodeInfo"
-              class="inline-flex max-w-[200px] items-center gap-1 truncate rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/20 transition-colors"
-              :title="`${nodeInfo.label}（点击在文档中定位）`"
-              type="button"
-              @click="emit('locate-scope')"
+              class="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 pl-2.5 pr-1.5 py-0.5 text-[11px] font-medium text-primary transition-colors"
             >
-              <span class="inline-block size-1.5 rounded-full bg-primary animate-pulse shrink-0"></span>
-              <span class="truncate">{{ nodeInfo.label }}</span>
-            </button>
+              <button
+                class="flex items-center gap-1 hover:underline cursor-pointer truncate max-w-[200px]"
+                :title="`${nodeInfo.label}（点击在文档中定位）`"
+                type="button"
+                @click="emit('locate-scope')"
+              >
+                <span class="inline-block size-1.5 rounded-full bg-primary animate-pulse shrink-0"></span>
+                <span class="truncate">{{ nodeInfo.label }}</span>
+              </button>
+              <button
+                class="flex size-3.5 items-center justify-center rounded-full text-primary/70 hover:bg-primary/25 hover:text-primary transition-colors cursor-pointer shrink-0 ml-0.5"
+                title="删除选中的内容范围（不限定选区）"
+                type="button"
+                @click.stop="clearScope"
+              >
+                ✕
+              </button>
+            </div>
+
+            <!-- 未选中任何内容时：显示未选中标识 -->
             <span
               v-else
               class="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/40 px-2.5 py-0.5 text-[11px] text-muted-foreground"
-              title="默认修改全文；选中具体段落或图片可只针对局部调整"
+              title="当前未选中特定内容，可在全文范围内修改或创作新内容"
             >
               <svg class="size-3 opacity-60" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                 <path d="M14 2v6h6" />
               </svg>
-              <span>全文范围</span>
+              <span>未选中任何内容 (全文)</span>
             </span>
 
-            <!-- 已附加的设计稿图片列表 -->
-            <div v-if="images.length > 0" class="flex items-center gap-1 ml-1">
-              <span
+            <!-- 已附加的设计稿图片列表：支持点击图片本身放大预览，删除按钮独立在角落 -->
+            <div v-if="images.length > 0" class="flex items-center gap-2 ml-1">
+              <div
                 v-for="(img, idx) in images"
                 :key="img.url"
-                class="group relative inline-block size-7 cursor-zoom-in overflow-hidden rounded-md border border-border shadow-2xs transition-transform hover:scale-105"
-                title="点击放大查看"
-                @click="lightboxUrl = img.url"
+                class="group relative inline-flex items-center justify-center size-8 cursor-pointer rounded-md border border-border/80 shadow-xs hover:border-primary/60 transition-all bg-muted/20"
+                title="点击预览大图"
+                @click="lightboxUrl = img.localUrl || img.dataUrl || img.url"
               >
-                <img :src="img.url" class="size-full object-cover" alt="设计稿" />
+                <img
+                  :src="img.localUrl || img.dataUrl || img.url"
+                  class="size-full object-cover rounded-md"
+                  alt="设计稿参考图"
+                />
+                <!-- 悬浮微光放大提示 -->
+                <div
+                  class="absolute inset-0 flex items-center justify-center rounded-md bg-black/25 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+                >
+                  <svg class="size-3.5 text-white drop-shadow" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                    <circle cx="11" cy="11" r="7" />
+                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                    <line x1="11" y1="8" x2="11" y2="14" />
+                    <line x1="8" y1="11" x2="14" y2="11" />
+                  </svg>
+                </div>
+                <!-- 独立的右上角删除小按钮：不覆盖图片主体，点击仅删除 -->
                 <button
-                  class="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 transition-opacity group-hover:opacity-100 text-white text-[10px]"
+                  class="absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full bg-neutral-800 hover:bg-destructive text-white text-[10px] font-bold shadow-sm transition-all opacity-80 hover:opacity-100 cursor-pointer z-10"
                   title="移除此图"
                   type="button"
                   @click.stop="removeImage(idx)"
                 >
                   ✕
                 </button>
-              </span>
+              </div>
             </div>
-            <span v-if="uploadingCount > 0" class="text-[11px] text-muted-foreground animate-pulse">图片读取中…</span>
-          </div>
-
-          <!-- 空输入时的快速预设灵感按钮 -->
-          <div v-if="!hasText" class="hidden sm:flex items-center gap-1">
-            <button
-              v-for="p in PRESET_PROMPTS"
-              :key="p.label"
-              class="rounded-full border border-border/60 bg-muted/30 px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-primary"
-              type="button"
-              @click="applyPreset(p)"
-            >
-              {{ p.label }}
-            </button>
+            <span v-if="uploadingCount > 0" class="text-[11px] text-muted-foreground animate-pulse">图片处理中…</span>
           </div>
         </div>
 
@@ -492,7 +629,7 @@ function handleStop() {
             ref="inputRef"
             v-model="input"
             class="min-h-[38px] max-h-[130px] flex-1 resize-none self-center bg-transparent px-1 py-1 text-[13px] leading-relaxed outline-none placeholder:text-muted-foreground/60"
-            placeholder="描述你想如何调整或排版这段内容…（Enter 发送，Shift+Enter 换行）"
+            placeholder="描述你想如何调整或排版这段内容…（Enter 发送，Shift+Enter 换行，支持直接粘贴截图）"
             rows="1"
             spellcheck="false"
             @input="autoGrow"
@@ -562,7 +699,8 @@ function handleStop() {
 }
 
 .app-editor-ai-box {
-  box-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.16), 0 0 0 1px hsl(var(--primary) / 15%);
+  background-color: hsl(var(--card)) !important;
+  box-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.22), 0 0 0 1px hsl(var(--primary) / 20%);
 }
 
 .app-editor-ai-shimmer-bar {

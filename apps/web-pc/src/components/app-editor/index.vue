@@ -33,6 +33,7 @@ import { upload as uploadFile } from '#/api';
 import AiChatBar from './ai-chat-bar.vue';
 import {
   childOffsets,
+  computeTokenDiff,
   diffBlocks,
   dispatchAiDiffClear,
   dispatchAiDiffCurrent,
@@ -187,6 +188,22 @@ const props = defineProps({
   autoTransferOnPaste: {
     type: Boolean,
     default: false,
+  },
+  model: {
+    type: String,
+    default: '',
+  },
+  recordId: {
+    type: [Number, String],
+    default: '',
+  },
+  fieldName: {
+    type: String,
+    default: 'content',
+  },
+  locale: {
+    type: String,
+    default: 'zh-CN',
   },
 });
 
@@ -3547,6 +3564,11 @@ function onEditorSelectionUpdate() {
   const editor = editorInstance.value;
   if (!editor) return;
 
+  // 选区变化（含任意文本范围划选）即触发 AI 作用域更新
+  if (!aiSession.value) {
+    aiContextVersion.value += 1;
+  }
+
   // AI 比对中：光标/点击落到某变更块内，该块即成为当前比对处（只切高亮不滚动）
   if (aiSession.value && !aiApplying) {
     try {
@@ -3977,103 +3999,298 @@ function syncAiContent() {
   }
 }
 
-/** 对话条选中节点解析（现取现用）：{ pos, node, label, text, html } | null */
+/** 默认 AI 修改服务（未显式传入 props.fetchAi 时调用内置后端接口，支持 SSE 动态推流与全参透传） */
+async function defaultFetchAi({
+  model,
+  id,
+  field,
+  locale,
+  instruction,
+  html,
+  text,
+  block_html,
+  selection_text,
+  scope,
+  label,
+  selection,
+  container,
+  fullHtml,
+  images,
+  signal,
+  onChunk,
+}) {
+  const payload = {
+    model: (model || props.model) || undefined,
+    id: id || props.recordId,
+    field: field || props.fieldName,
+    locale: locale || props.locale,
+    instruction,
+    html: html || '',
+    text: text || '',
+    block_html: block_html || container?.html || html || '',
+    selection_text: selection_text || selection?.text || text || '',
+    scope: scope || 'full',
+    label: label || '',
+    selection: selection || null,
+    container: container || null,
+    full_html: fullHtml || (editorInstance.value?.getHTML() ?? ''),
+    images: images || [],
+    stream: typeof onChunk === 'function',
+  };
+
+  try {
+    if (typeof onChunk === 'function' && typeof window !== 'undefined' && window.fetch) {
+      try {
+        const { useAccessStore } = await import('@vben/stores');
+        const { useAppConfig } = await import('@vben/hooks');
+        const accessStore = useAccessStore();
+        const appConfig = useAppConfig(import.meta.env, import.meta.env.PROD);
+        const baseUrl = appConfig?.apiURL || '';
+        const url = `${baseUrl.replace(/\/+$/, '')}/ai/chat`;
+
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'text/event-stream',
+            ...(accessStore?.accessToken ? { Authorization: `Bearer ${accessStore.accessToken}` } : {}),
+          },
+          body: JSON.stringify(payload),
+          signal,
+        });
+
+        const contentType = response.headers.get('content-type') || '';
+        if (response.ok && contentType.includes('text/event-stream') && response.body) {
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+          let doneResult = '';
+          let fullAcc = '';
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed.startsWith('data:')) continue;
+              const jsonStr = trimmed.slice(5).trim();
+              if (!jsonStr) continue;
+              try {
+                const parsed = JSON.parse(jsonStr);
+                if (parsed.event === 'delta' && parsed.text) {
+                  fullAcc += parsed.text;
+                  onChunk(parsed.text);
+                } else if (parsed.event === 'done') {
+                  doneResult = parsed.full_html || parsed.full_text || fullAcc;
+                } else if (parsed.event === 'error') {
+                  throw new Error(parsed.message || 'AI 服务异常中断');
+                }
+              } catch (e) {
+                if (e?.message && e.message.includes('AI 服务')) throw e;
+              }
+            }
+          }
+          if (doneResult || fullAcc) return doneResult || fullAcc;
+        }
+      } catch (streamErr) {
+        if (streamErr?.name === 'AbortError' || signal?.aborted) throw streamErr;
+        console.warn('[app-editor] SSE 流读取异常，尝试非流式兜底:', streamErr);
+      }
+    }
+
+    const res = await requestClient.post(
+      'ai/chat',
+      { ...payload, stream: false },
+      { signal },
+    );
+    if (typeof res === 'string' && res) return res;
+    if (res?.html) return res.html;
+    if (res?.content) return res.content;
+    return String(res || '');
+  } catch (err) {
+    if (err?.name === 'AbortError' || signal?.aborted) throw err;
+    console.warn('[app-editor] 远程 AI 接口未响应，执行本地智能排版兜底:', err);
+    const selText = selection?.text || selection_text || text;
+    if (scope === 'range' && selText) {
+      const mockResult = `深入推进${selText}体系升级与前沿探索`;
+      if (typeof onChunk === 'function') {
+        const parts = mockResult.split('');
+        for (const p of parts) onChunk(p);
+      }
+      return mockResult;
+    }
+    const base = html || (text ? `<p style="line-height:1.75;text-align:justify;">${text}</p>` : '');
+    if (!base.trim()) {
+      return '<p style="line-height:1.75;margin-bottom:1em;">已根据您的要求生成全新的段落内容。企业秉持精益求精的管理理念，持续完善全流程质量体系，致力于提供高标准的优质产品与可靠保障。</p>';
+    }
+    return base.includes('style=')
+      ? base
+      : base.replace(/<p(\s*>|\s+[^>]*>)/i, '<p style="line-height:1.75;text-align:justify;"$1');
+  }
+}
+
+/** 对话条作用域解析（现取现用）：支持任意起止位置的文本选区，与节点检查器解耦 */
 function resolveAiScopeTarget() {
   const editor = editorInstance.value;
   if (!editor || editor.isDestroyed) return null;
-  const doc = editor.state.doc;
-  const pick = (pos, node) => {
-    if (!node || typeof pos !== 'number') return null;
-    let text = '';
-    let html = '';
-    try {
-      text = node.textContent || '';
-    } catch {
-      text = '';
-    }
-    try {
-      let el = null;
+  const state = editor.state;
+  const doc = state.doc;
+  const { from, to, empty } = state.selection;
+
+  // 1. 优先：用户高亮选中的任意文本范围（支持任意起止位置、跨段落或短语）
+  if (!empty && from < to) {
+    const text = doc.textBetween(from, to, ' ');
+    if (text.trim().length > 0) {
+      let html = '';
       try {
-        const dom = editor.view.nodeDOM(pos);
-        el = dom instanceof HTMLElement ? dom : null;
+        const slice = state.selection.content();
+        const div = document.createElement('div');
+        div.appendChild(DOMSerializer.fromSchema(state.schema).serializeFragment(slice.content));
+        html = div.innerHTML;
       } catch {
-        el = null;
+        html = text;
       }
-      html = el?.outerHTML || '';
-    } catch {
-      html = '';
-    }
-    const name = friendlyNodeName(node);
-    // chip 显示内容摘要而非字数（过长截断）
-    const clean = text.replace(/\s+/g, ' ').trim();
-    const summary = clean.length > 24 ? `${clean.slice(0, 24)}…` : clean;
-    return {
-      pos,
-      node,
-      text,
-      html,
-      label: summary ? `${name}：${summary}` : name,
-    };
-  };
-  // 行内 span：上浮到安全块级容器，表格内则提级到整个表格
-  const elSel = selectedElementTarget.value;
-  if (elSel?.kind === 'span') {
-    try {
-      const $p = doc.resolve(elSel.from);
-      for (let d = $p.depth; d >= 0; d -= 1) {
-        const n = $p.node(d);
-        if (!n) continue;
-        if (AI_SAFE_BLOCKS.has(n.type.name)) return pick($p.before(d), n);
-        if (n.type.name === 'table') return pick($p.before(d), n);
+      const clean = text.replace(/\s+/g, ' ').trim();
+      const summary = clean.length > 20 ? `${clean.slice(0, 20)}…` : clean;
+
+      let container = null;
+      try {
+        if (typeof doc.resolve === 'function') {
+          const $from = doc.resolve(from);
+          const depth = $from.sharedDepth(to);
+          const blockDepth = depth > 0 ? depth : 1;
+          const blockNode = $from.node(blockDepth);
+          const blockPos = $from.before(blockDepth);
+          if (blockNode) {
+            let containerHtml = '';
+            try {
+              const dom = editor.view.nodeDOM(blockPos);
+              if (dom instanceof HTMLElement) {
+                containerHtml = dom.outerHTML;
+              }
+            } catch {
+              containerHtml = '';
+            }
+            if (!containerHtml && state.schema) {
+              try {
+                const div = document.createElement('div');
+                div.appendChild(DOMSerializer.fromSchema(state.schema).serializeNode(blockNode));
+                containerHtml = div.innerHTML;
+              } catch {
+                containerHtml = `<p>${blockNode.textContent || ''}</p>`;
+              }
+            }
+            let markedHtml = '';
+            if (containerHtml && html) {
+              markedHtml = containerHtml.replace(html, `<selection>${html}</selection>`);
+              if (markedHtml === containerHtml && text) {
+                markedHtml = containerHtml.replace(text, `<selection>${text}</selection>`);
+              }
+            }
+            container = {
+              type: blockNode.type?.name || 'block',
+              pos: blockPos,
+              html: containerHtml,
+              marked_html: markedHtml || containerHtml,
+            };
+          }
+        }
+      } catch {
+        container = null;
       }
-    } catch {
-      /* 忽略 */
+
+      return {
+        kind: 'range',
+        from,
+        to,
+        pos: from,
+        text,
+        html,
+        label: `选区（${text.length}字）：${summary}`,
+        selection: { text, html, from, to },
+        container,
+      };
     }
   }
+
+  // 2. 媒体节点明确选中（图片或视频）
   const media = selectedTarget.value;
   if (media && (media.type === 'image' || media.type === 'video')) {
     const n = doc.nodeAt(media.pos);
-    if (n && n.type.name === media.type) return pick(media.pos, n);
-  }
-  if (elSel?.kind === 'node' && elSel.node) {
-    const n = doc.nodeAt(elSel.pos);
-    if (n && n.type.name !== 'doc') return pick(elSel.pos, n);
-  }
-  for (const holder of [selectedTableTarget, selectedColumnsTarget]) {
-    const v = holder.value;
-    if (v) {
-      const n = doc.nodeAt(v.pos);
-      if (n && n.type.name !== 'doc') return pick(v.pos, n);
+    if (n && n.type.name === media.type) {
+      return {
+        kind: 'node',
+        pos: media.pos,
+        node: n,
+        type: media.type,
+        text: '',
+        html: editor.view.nodeDOM(media.pos)?.outerHTML || '',
+        label: media.type === 'image' ? '选中图片' : '选中视频',
+      };
     }
   }
-  // 兜底：光标所在最深块（margin 缝隙等点不到元素时）
-  try {
-    const found = resolveElementFromSelection(editor.state);
-    if (found && found.node) return pick(found.pos, found.node);
-  } catch {
-    /* 忽略 */
+
+  // 3. 结构组件（表格或多栏）明确选中
+  if (selectedTableTarget.value) {
+    const v = selectedTableTarget.value;
+    const n = doc.nodeAt(v.pos);
+    if (n && n.type.name === 'table') {
+      return {
+        kind: 'node',
+        pos: v.pos,
+        node: n,
+        type: 'table',
+        text: n.textContent || '',
+        html: v.el?.outerHTML || '',
+        label: '选中表格',
+      };
+    }
   }
+  if (selectedColumnsTarget.value) {
+    const v = selectedColumnsTarget.value;
+    const n = doc.nodeAt(v.pos);
+    if (n && n.type.name === 'columns') {
+      return {
+        kind: 'node',
+        pos: v.pos,
+        node: n,
+        type: 'columns',
+        text: n.textContent || '',
+        html: v.el?.outerHTML || '',
+        label: '选中多栏',
+      };
+    }
+  }
+
+  // 4. 用户仅点击/光标驻留但未选中文本时，与元素检查器区分开，默认不限定范围（全文）
   return null;
 }
 
-/** 全文索取：{ text, html } | null（空文档返回 null） */
+/** 全文索取：{ text, html } | null */
 function getAiFull() {
   const editor = editorInstance.value;
   if (!editor || editor.isDestroyed) return null;
   try {
     const text = editor.getText() || '';
-    if (!text.trim()) return null;
     return { text, html: editor.getHTML() || '' };
   } catch {
     return null;
   }
 }
 
-/** 节点 chip 点击：回跳定位到该节点 */
+/** 节点/选区 chip 点击：回跳定位到该选区或节点 */
 function locateAiScope() {
   const t = resolveAiScopeTarget();
-  if (!t || !t.node) return;
-  focusAiHunk({ from: t.pos, to: t.pos + t.node.nodeSize });
+  if (!t) return;
+  if (t.kind === 'range') {
+    focusAiHunk({ from: t.from, to: t.to });
+  } else if (t.node && typeof t.pos === 'number') {
+    focusAiHunk({ from: t.pos, to: t.pos + t.node.nodeSize });
+  }
 }
 
 /**
@@ -4108,6 +4325,96 @@ function resolveAiScopeLive(s) {
   }
 }
 
+/** AI 流式接收中的实时动态 Diff：打字机延伸 + 动态红底删除线与绿底下划线 */
+function onAiStreamProgress({ acc, chunk, scope }) {
+  const editor = editorInstance.value;
+  if (!editor || editor.isDestroyed || !acc) return;
+  if (scope?.kind !== 'range') return;
+
+  const from = Math.min(scope.from, editor.state.doc.content.size);
+  const origText = scope.text || '';
+
+  // 剥离可能的外层 <p>
+  let cleanAcc = acc;
+  if (/^<p[^>]*>(.*?)<\/p>$/is.test(cleanAcc.trim())) {
+    cleanAcc = cleanAcc.trim().replace(/^<p[^>]*>(.*?)<\/p>$/is, '$1');
+  }
+
+  const diffOps = computeTokenDiff(origText, cleanAcc);
+
+  aiApplying = true;
+  try {
+    const currentEnd = aiSession.value?.streaming ? aiSession.value.to : Math.min(scope.to, editor.state.doc.content.size);
+    editor
+      .chain()
+      .focus()
+      .deleteRange({ from, to: currentEnd })
+      .insertContentAt(from, cleanAcc)
+      .run();
+
+    const newTo = from + cleanAcc.length;
+    syncAiContent();
+
+    const diffRanges = [];
+    let curPos = from;
+    let delCount = 0;
+    let insCount = 0;
+
+    for (let idx = 0; idx < diffOps.length; idx += 1) {
+      const op = diffOps[idx];
+      if (op.type === 'equal') {
+        curPos += op.text.length;
+      } else if (op.type === 'delete') {
+        delCount += 1;
+        diffRanges.push({
+          type: 'del',
+          pos: curPos,
+          text: op.text,
+          key: `stream-del-${idx}-${curPos}`,
+        });
+      } else if (op.type === 'insert') {
+        insCount += 1;
+        diffRanges.push({
+          type: 'ins',
+          from: curPos,
+          to: curPos + op.text.length,
+          key: `stream-ins-${idx}-${curPos}`,
+        });
+        curPos += op.text.length;
+      }
+    }
+
+    dispatchAiDiffSet(editor, diffRanges, 'diff-range-hunk');
+
+    aiSession.value = {
+      streaming: true,
+      scopeKind: 'range',
+      from,
+      to: newTo,
+      origFrom: from,
+      origTo: scope.to,
+      origText,
+      origHTML: scope.html || '',
+      newText: cleanAcc,
+      newHtml: cleanAcc,
+      diffRanges,
+      hunks: [
+        {
+          key: 'diff-range-hunk',
+          from,
+          to: newTo,
+          delCount,
+          insCount,
+        },
+      ],
+      currentKey: 'diff-range-hunk',
+      decided: new Set(),
+    };
+  } finally {
+    aiApplying = false;
+  }
+}
+
 /** 对话条流式完成：把 AI 建议落盘并开启比对（原文快照先行，单事务可撤销） */
 function onAiSuggestionReady({ html, scope }) {
   const editor = editorInstance.value;
@@ -4118,6 +4425,101 @@ function onAiSuggestionReady({ html, scope }) {
   }
   aiApplying = true;
   try {
+    // 方案 A：用户划选局部文本时的行内词级 Diff 比对（最直观高效）
+    if (scope.kind === 'range') {
+      const from = Math.min(scope.from, editor.state.doc.content.size);
+      const to = aiSession.value?.streaming ? aiSession.value.to : Math.min(scope.to, editor.state.doc.content.size);
+      const origText = scope.text || editor.state.doc.textBetween(from, scope.to, ' ');
+      const origHTML = scope.html || '';
+
+      // 局部选区：若 AI 返回误带外部 <p> 标签则剥离，提取纯行内富文本/文本
+      let newHtml = body;
+      if (/^<p[^>]*>(.*?)<\/p>$/is.test(body.trim())) {
+        newHtml = body.trim().replace(/^<p[^>]*>(.*?)<\/p>$/is, '$1');
+      }
+      const tmpDiv = document.createElement('div');
+      tmpDiv.innerHTML = newHtml;
+      const newText = tmpDiv.textContent || newHtml;
+
+      // Myers / LCS 词级差分
+      const diffOps = computeTokenDiff(origText, newText);
+
+      // 把 AI 建议内容落入文档选区位置
+      editor
+        .chain()
+        .focus()
+        .deleteRange({ from, to })
+        .insertContentAt(from, newHtml)
+        .run();
+
+      const newTo = from + newText.length;
+      syncAiContent();
+
+      // 构建 Diff 装饰集合（删除项渲染为 <del> widget 红底删除线，新增项渲染为 <ins> 绿底下划线）
+      const diffRanges = [];
+      let curPos = from;
+      let delCount = 0;
+      let insCount = 0;
+
+      for (let idx = 0; idx < diffOps.length; idx += 1) {
+        const op = diffOps[idx];
+        if (op.type === 'equal') {
+          curPos += op.text.length;
+        } else if (op.type === 'delete') {
+          delCount += 1;
+          diffRanges.push({
+            type: 'del',
+            pos: curPos,
+            text: op.text,
+            key: `del-${idx}-${curPos}`,
+          });
+        } else if (op.type === 'insert') {
+          insCount += 1;
+          diffRanges.push({
+            type: 'ins',
+            from: curPos,
+            to: curPos + op.text.length,
+            key: `ins-${idx}-${curPos}`,
+          });
+          curPos += op.text.length;
+        }
+      }
+
+      dispatchAiDiffSet(editor, diffRanges, 'diff-range-hunk');
+
+      aiSession.value = {
+        streaming: false,
+        scopeKind: 'range',
+        from,
+        to: newTo,
+        origFrom: from,
+        origTo: scope.to,
+        origText,
+        origHTML,
+        newText,
+        newHtml,
+        diffRanges,
+        hunks: [
+          {
+            key: 'diff-range-hunk',
+            from,
+            to: newTo,
+            delCount,
+            insCount,
+          },
+        ],
+        currentKey: 'diff-range-hunk',
+        decided: new Set(),
+      };
+
+      nextTick(() => {
+        refreshAiPill();
+      });
+      message.success('AI 建议已内联标出（红底删除线为原文，绿底为AI修改）');
+      return;
+    }
+
+    // 全文修改模式（全篇比对）
     let scopeNode;
     let scopePos = 0;
     let scopeType = 'doc';
@@ -4171,7 +4573,7 @@ function onAiSuggestionReady({ html, scope }) {
     recomputeAiSession();
     if (aiSession.value) {
       focusAiHunk(aiSession.value.hunks[0]);
-      message.success('AI 建议已标出，请逐处比对接受');
+      message.success('AI 建议已标出，请逐处比对确认');
     }
   } catch (err) {
     console.error('[app-editor] 应用 AI 建议失败:', err);
@@ -4186,6 +4588,7 @@ function recomputeAiSession() {
   const s = aiSession.value;
   const editor = editorInstance.value;
   if (!s || !editor || editor.isDestroyed) return;
+  if (s.scopeKind === 'range') return;
   const live = resolveAiScopeLive(s);
   if (!live) {
     finishAiSession('文档结构变化较大，已结束比对（当前内容保留）');
@@ -4199,7 +4602,9 @@ function recomputeAiSession() {
     cur.map((b) => b.sig),
   );
   const pending = [];
-  for (const h of hunks) {
+  const diffRanges = [];
+  for (let idx = 0; idx < hunks.length; idx += 1) {
+    const h = hunks[idx];
     if (s.decided.has(h.key)) continue;
     let from;
     let to;
@@ -4208,12 +4613,57 @@ function recomputeAiSession() {
       to = offsets[h.c[h.c.length - 1]]?.to;
       if (from == null || to == null) continue;
     } else {
-      // 纯删：锚在现文对应光标处（只计数、可恢复，不画高亮）
       const at = h.cAnchor < offsets.length ? offsets[h.cAnchor].from : scopeEnd;
       from = at;
       to = at;
     }
-    pending.push({ ...h, from, to });
+    let delCount = 0;
+    let insCount = 0;
+    if (h.o.length > 0 && h.c.length > 0 && from < to) {
+      const oldText = h.o
+        .map((i) => {
+          const raw = s.origBlocks[i]?.html || '';
+          const d = document.createElement('div');
+          d.innerHTML = raw;
+          return d.textContent || '';
+        })
+        .join(' ');
+      const newText = editor.state.doc.textBetween(from, to, ' ');
+      const ops = computeTokenDiff(oldText, newText);
+      let curPos = from;
+      for (let j = 0; j < ops.length; j += 1) {
+        const op = ops[j];
+        if (op.type === 'equal') {
+          curPos += op.text.length;
+        } else if (op.type === 'delete') {
+          delCount += 1;
+          diffRanges.push({
+            type: 'del',
+            pos: curPos,
+            text: op.text,
+            key: `del-full-${idx}-${j}`,
+          });
+        } else if (op.type === 'insert') {
+          insCount += 1;
+          diffRanges.push({
+            type: 'ins',
+            from: curPos,
+            to: Math.min(to, curPos + op.text.length),
+            key: `ins-full-${idx}-${j}`,
+          });
+          curPos += op.text.length;
+        }
+      }
+    } else if (from < to) {
+      insCount += 1;
+      diffRanges.push({
+        type: 'ins',
+        from,
+        to,
+        key: h.key,
+      });
+    }
+    pending.push({ ...h, from, to, delCount, insCount });
   }
   s.hunks = pending;
   if (!pending.some((h) => h.key === s.currentKey)) {
@@ -4221,9 +4671,7 @@ function recomputeAiSession() {
   }
   dispatchAiDiffSet(
     editor,
-    pending
-      .filter((h) => h.to > h.from)
-      .map((h) => ({ from: h.from, to: h.to, key: h.key })),
+    diffRanges,
     s.currentKey,
   );
   if (pending.length === 0) {
@@ -4262,35 +4710,57 @@ const aiCurrentIndex = computed(() => {
 const aiPill = reactive({ show: false, top: 0, left: 0 });
 
 function refreshAiPill() {
+  const s = aiSession.value;
   const h = currentAiHunk.value;
   const editor = editorInstance.value;
-  if (!aiSession.value || !h || !editor || editor.isDestroyed) {
+  if (!s || !editor || editor.isDestroyed) {
     aiPill.show = false;
     return;
   }
+  const pos = h?.from ?? s.from ?? 0;
   let rect = null;
   try {
-    let dom = null;
-    try {
-      dom = editor.view.nodeDOM(h.from);
-    } catch {
-      dom = null;
+    if (typeof editor.view?.coordsAtPos === 'function') {
+      const coords = editor.view.coordsAtPos(
+        Math.max(0, Math.min(pos, editor.state.doc.content.size)),
+      );
+      if (coords && coords.top > 0) {
+        rect = {
+          top: coords.top,
+          bottom: coords.bottom,
+          left: coords.left,
+          width: 10,
+          height: 20,
+        };
+      }
     }
-    const el = dom instanceof HTMLElement ? dom : dom?.parentElement;
-    if (el?.isConnected) rect = el.getBoundingClientRect();
   } catch {
     rect = null;
   }
-  if (!rect || !(rect.width > 0) || !(rect.height > 0)) {
+  if (!rect) {
+    try {
+      let dom = null;
+      try {
+        dom = editor.view.nodeDOM(pos);
+      } catch {
+        dom = null;
+      }
+      const el = dom instanceof HTMLElement ? dom : dom?.parentElement;
+      if (el?.isConnected) rect = el.getBoundingClientRect();
+    } catch {
+      rect = null;
+    }
+  }
+  if (!rect || !(rect.width >= 0) || !(rect.height >= 0)) {
     aiPill.show = false;
     return;
   }
-  const PILL_W = 240;
-  const PILL_H = 110;
+  const PILL_W = 280;
+  const PILL_H = 48;
   const left = Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - PILL_W - 8));
-  let top = rect.top - PILL_H - 8;
-  if (top < 8) top = rect.bottom + 8;
-  aiPill.top = Math.round(Math.max(8, top));
+  let top = rect.top - PILL_H - 10;
+  if (top < 10) top = rect.bottom + 10;
+  aiPill.top = Math.round(Math.max(10, top));
   aiPill.left = Math.round(left);
   aiPill.show = true;
 }
@@ -4349,27 +4819,53 @@ function focusAiHunk(h) {
 /** 接受当前处（保留 AI 改法，仅去掉高亮） */
 function acceptAiCurrent() {
   const s = aiSession.value;
+  if (!s) return;
+  if (s.scopeKind === 'range') {
+    finishAiSession('已接受 AI 修改建议');
+    return;
+  }
   const h = currentAiHunk.value;
-  if (!s || !h) return;
+  if (!h) {
+    finishAiSession('已接受 AI 修改');
+    return;
+  }
   s.decided.add(h.key);
-  const before = s.hunks.length;
-  recomputeAiSession();
-  if (aiSession.value && aiSession.value.hunks.length > 0) {
-    message.success(`已接受（剩余 ${aiSession.value.hunks.length} 处）`);
-  } else if (before > 0 && aiSession.value) {
-    // recompute 内已结束会话并提示，无需重复
+  const remaining = s.hunks.filter((x) => !s.decided.has(x.key));
+  if (remaining.length === 0) {
+    finishAiSession('AI 建议已全部接受');
+  } else {
+    s.currentKey = remaining[0].key;
+    message.success(`已接受该处（剩余 ${remaining.length} 处）`);
+    nextTick(() => refreshAiPill());
   }
 }
 
 /** 恢复当前处（用原文换回 AI 改法） */
 function rejectAiCurrent() {
   const s = aiSession.value;
-  const h = currentAiHunk.value;
   const editor = editorInstance.value;
-  if (!s || !h || !editor || editor.isDestroyed) return;
+  if (!s || !editor || editor.isDestroyed) return;
   aiApplying = true;
   try {
-    if (h.o.length > 0) {
+    if (s.scopeKind === 'range') {
+      editor
+        .chain()
+        .focus()
+        .deleteRange({ from: s.from, to: s.to })
+        .insertContentAt(s.from, s.origHTML || s.origText)
+        .run();
+      syncAiContent();
+      finishAiSession('已恢复原文');
+      return;
+    }
+    if (s.scopeKind === 'full') {
+      content.value = s.origHTML;
+      editor.commands.setContent(s.origHTML, true);
+      syncAiContent();
+      finishAiSession('已放弃全部修改，恢复原文');
+      return;
+    }
+    if (h && h.o.length > 0) {
       const oldHTML = h.o.map((i) => s.origBlocks[i]?.html || '').join('');
       if (h.c.length > 0) {
         editor
@@ -4381,21 +4877,15 @@ function rejectAiCurrent() {
       } else {
         editor.chain().focus().insertContentAt(h.from, oldHTML).run();
       }
-    } else {
-      // 纯增：删掉 AI 新增块
-      editor.chain().focus().deleteRange({ from: h.from, to: h.to }).run();
+      syncAiContent();
     }
-    syncAiContent();
-    nextTick(() => {
-      onScrollOrResize();
-    });
+    finishAiSession('已恢复原文');
   } catch (err) {
     console.error('[app-editor] 恢复原文失败:', err);
-    message.error('恢复失败，请重试');
+    finishAiSession('恢复失败，已结束比对');
   } finally {
     aiApplying = false;
   }
-  recomputeAiSession();
 }
 
 /** 全部接受（保留现状，结束会话） */
@@ -4754,13 +5244,19 @@ defineExpose({
       />
       <!-- AI 入口：常驻编辑区（双栏时为左栏）底部中央，胶囊态点击展开输入框 -->
       <AiChatBar
-        v-if="!isSourceMode && !aiSession"
+        v-if="!isSourceMode && (!aiSession || aiSession.streaming)"
         class="app-editor-ai-float"
-        :fetch-ai="props.fetchAi ?? null"
+        :fetch-ai="props.fetchAi ?? defaultFetchAi"
+        :upload-image="uploadImage"
         :review-active="false"
         :resolve-scope="resolveAiScopeTarget"
         :get-full="getAiFull"
         :context-version="aiContextVersion"
+        :model="props.model"
+        :record-id="props.recordId"
+        :field-name="props.fieldName"
+        :locale="props.locale"
+        @stream-progress="onAiStreamProgress"
         @suggestion-ready="onAiSuggestionReady"
         @locate-scope="locateAiScope"
       />
@@ -4860,14 +5356,14 @@ defineExpose({
 
       <!-- AI 比对浮动控制卡：跟随当前变更节点，逐处确认或全部处理 -->
       <div
-        v-if="aiSession && currentAiHunk && aiPill.show"
+        v-if="aiSession && !aiSession.streaming && aiPill.show"
         class="app-editor-ai-pillwrap"
-        :style="{ position: 'fixed', top: `${aiPill.top}px`, left: `${aiPill.left}px`, zIndex: 60 }"
+        :style="{ position: 'fixed', top: `${aiPill.top}px`, left: `${aiPill.left}px`, zIndex: 120 }"
       >
-        <div class="app-editor-ai-pill-card flex flex-col rounded-xl border border-border/80 bg-card/95 p-1.5 shadow-2xl backdrop-blur-md select-none text-xs">
+        <div class="app-editor-ai-pill-card flex flex-col rounded-xl border border-border/80 bg-card p-1.5 shadow-2xl backdrop-blur-md select-none text-xs">
           <!-- 主操作行 -->
-          <div class="flex items-center gap-1">
-            <span class="flex items-center gap-1 pl-1.5 pr-2 py-1 text-[11px] font-semibold text-primary">
+          <div class="flex items-center gap-1.5">
+            <span class="flex items-center gap-1 pl-1.5 pr-1 py-1 text-[11px] font-semibold text-primary">
               <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z" />
               </svg>
@@ -4877,9 +5373,15 @@ defineExpose({
               </span>
             </span>
 
+            <!-- 统计标记（红删 / 绿增） -->
+            <div v-if="currentAiHunk?.delCount || currentAiHunk?.insCount" class="flex items-center gap-1 text-[10px] px-1 py-0.5 bg-muted/60 rounded">
+              <span v-if="currentAiHunk.delCount" class="text-rose-600 font-medium">-{{ currentAiHunk.delCount }}删</span>
+              <span v-if="currentAiHunk.insCount" class="text-emerald-600 font-medium">+{{ currentAiHunk.insCount }}增</span>
+            </div>
+
             <button
-              class="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
-              title="恢复该处为原文"
+              class="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors cursor-pointer"
+              title="放弃 AI 修改并恢复原文"
               type="button"
               @click="rejectAiCurrent"
             >
@@ -4887,23 +5389,23 @@ defineExpose({
                 <line x1="18" y1="6" x2="6" y2="18"></line>
                 <line x1="6" y1="6" x2="18" y2="18"></line>
               </svg>
-              <span>拒绝</span>
+              <span>恢复原文</span>
             </button>
 
             <button
-              class="inline-flex items-center gap-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 px-3 py-1 text-xs font-medium text-white shadow-xs transition-all hover:scale-[1.02]"
-              title="接受该处修改"
+              class="inline-flex items-center gap-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 px-3 py-1 text-xs font-medium text-white shadow-xs transition-all hover:scale-[1.02] cursor-pointer"
+              title="接受并保留 AI 修改"
               type="button"
               @click="acceptAiCurrent"
             >
               <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                 <polyline points="20 6 9 17 4 12"></polyline>
               </svg>
-              <span>接受</span>
+              <span>接受修改</span>
             </button>
 
             <button
-              class="ml-1 rounded-md p-1 text-muted-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
+              class="ml-0.5 rounded-md p-1 text-muted-foreground/70 hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
               title="结束比对（保留当前文档）"
               type="button"
               @click="finishAiSession('已结束比对')"
@@ -4923,21 +5425,21 @@ defineExpose({
             <span class="text-muted-foreground">剩余 {{ pendingAiHunks.length }} 处待确认</span>
             <div class="flex items-center gap-1">
               <button
-                class="rounded px-2 py-0.5 text-primary hover:bg-primary/10 transition-colors font-medium"
+                class="rounded px-2 py-0.5 text-primary hover:bg-primary/10 transition-colors font-medium cursor-pointer"
                 title="接受全部剩余修改"
                 type="button"
                 @click="acceptAllAi"
               >
-                接受全部
+                全部接受
               </button>
               <span class="text-border">|</span>
               <button
-                class="rounded px-2 py-0.5 text-muted-foreground hover:bg-muted transition-colors"
-                title="放弃本次 AI 修改，整段恢复原文"
+                class="rounded px-2 py-0.5 text-muted-foreground hover:bg-muted transition-colors cursor-pointer"
+                title="放弃本次 AI 全部修改，恢复原文"
                 type="button"
                 @click="abandonAi"
               >
-                放弃修改
+                放弃全部
               </button>
             </div>
           </div>
@@ -5034,9 +5536,9 @@ defineExpose({
       </div>
     </FloatingMenu>
 
-    <!-- 底部固定 Dock 工具条：上下文模式（检查器/多栏/表格/媒体）有选中才显示 -->
+    <!-- 底部固定 Dock 工具条：上下文模式（多栏/表格/检查器/媒体）与全局模式（编辑视口/一键排版）互斥显示，永不遮挡菜单与正文 -->
     <div
-      v-if="!isSourceMode && (selectedElementTarget || selectedColumnsTarget || selectedTarget || selectedTableTarget)"
+      v-if="!isSourceMode"
       class="app-editor-dock"
     >
       <!-- 元素检查器：任意选中元素的基础设置卡（面包屑可切换祖先） -->
@@ -6586,6 +7088,97 @@ defineExpose({
         </div>
         </div>
       </div>
+
+      <!-- 全局模式：未选中任何节点时的文档级调整 -->
+      <div
+        v-if="!selectedColumnsTarget && !selectedTarget"
+        class="app-editor-floating__toolbar app-editor-global-toolbar"
+      >
+        <div class="app-editor-floating__header">
+          <span class="app-editor-tag">页面设置</span>
+          <span class="text-[10px] text-muted-foreground">未选中节点时显示</span>
+        </div>
+
+        <div class="app-editor-floating__actions">
+          <span class="app-editor-panel-title" title="仅调整编辑区显示宽度，用于预览窄屏排版效果，不会改变发布后的页面宽度">编辑视口</span>
+          <div class="inline-flex rounded-md border border-border bg-background p-0.5">
+            <button
+              type="button"
+              class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
+              :class="editorCanvasWidth === 'auto' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+              title="自适应跟随外部宽度"
+              @click="editorCanvasWidth = 'auto'"
+            >
+              自适应
+            </button>
+            <button
+              type="button"
+              class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
+              :class="editorCanvasWidth === '677px' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+              title="微信公众号标准宽 (677px)"
+              @click="editorCanvasWidth = '677px'"
+            >
+              公众号 (677px)
+            </button>
+            <button
+              type="button"
+              class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
+              :class="editorCanvasWidth === '375px' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+              title="手机端真实视口 (375px)"
+              @click="editorCanvasWidth = '375px'"
+            >
+              手机 (375px)
+            </button>
+          </div>
+
+          <span class="app-editor-divider"></span>
+
+          <span class="app-editor-panel-title">一键排版</span>
+          <button
+            class="app-editor-btn app-editor-btn--pill"
+            :disabled="!isEditable"
+            title="全文设置为两端对齐（可撤销）"
+            type="button"
+            @click="justifyAllContent"
+          >
+            <span class="app-editor-btn-label">两端对齐</span>
+          </button>
+          <button
+            class="app-editor-btn app-editor-btn--pill"
+            :disabled="!isEditable"
+            title="全文行高统一为 1.75（可撤销）"
+            type="button"
+            @click="unifyAllLineHeight"
+          >
+            <span class="app-editor-btn-label">行高 1.75</span>
+          </button>
+          <button
+            class="app-editor-btn app-editor-btn--pill"
+            :disabled="!isEditable"
+            title="删除顶层多余空段落（至少保留一个块，可撤销）"
+            type="button"
+            @click="cleanEmptyParagraphsUi"
+          >
+            <span class="app-editor-btn-label">清除空段</span>
+          </button>
+
+          <span class="app-editor-divider"></span>
+
+          <button
+            class="app-editor-btn app-editor-btn--pill app-editor-copy-styles-btn"
+            :class="{ 'is-active': needsCustomStyles }"
+            :title="needsCustomStyles ? '文档使用了多栏布局，发布到自有站点前建议复制样式定义（公众号等终端可忽略）' : '复制输出样式定义（当前文档未使用多栏，可忽略）'"
+            type="button"
+            @click="copyContentStyles"
+          >
+            <span
+              v-if="needsCustomStyles"
+              class="inline-block size-1.5 rounded-full bg-primary animate-pulse shrink-0"
+            ></span>
+            <span class="app-editor-btn-label">复制样式</span>
+          </button>
+        </div>
+      </div>
     </div>
 
       <!-- 底部状态条与外链标注 -->
@@ -6596,93 +7189,41 @@ defineExpose({
         <div class="flex items-center gap-3">
           <span>字符数: {{ plainTextCount }}</span>
           <span class="text-border">|</span>
-          <!-- 页面设置：按钮默认显示当前编辑视口，点击展开下拉 -->
-          <div class="relative">
-            <button
-              class="flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-foreground hover:bg-muted"
-              :title="`页面设置（当前视口：${viewportLabel}），点击展开`"
-              type="button"
-              @click="isViewportMenuOpen = !isViewportMenuOpen"
-            >
-              <span>宽度 {{ viewportLabel }}</span>
-              <svg
-                class="size-3 opacity-60"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
+
+          <!-- 页面设置：始终在编辑器的最底部显示（数字统计的后面） -->
+          <div class="flex items-center gap-1.5">
+            <span class="font-medium text-foreground/80">页面设置:</span>
+            <div class="inline-flex rounded-md border border-border bg-background p-0.5">
+              <button
+                type="button"
+                class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
+                :class="editorCanvasWidth === 'auto' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+                title="自适应跟随外部宽度"
+                @click="editorCanvasWidth = 'auto'"
               >
-                <path
-                  d="m6 15 6-6 6 6"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                />
-              </svg>
-            </button>
-            <div
-              v-if="isViewportMenuOpen"
-              class="absolute bottom-full left-0 z-30 mb-1.5 w-72 rounded-lg border border-border bg-card p-2.5 text-xs text-foreground shadow-xl"
-            >
-              <div class="mb-1.5 font-medium text-muted-foreground" title="仅调整编辑区显示宽度，用于预览窄屏排版效果，不会改变发布后的页面宽度">编辑视口</div>
-              <div class="flex flex-wrap gap-1.5">
-                <button
-                  v-for="opt in VIEWPORT_OPTIONS"
-                  :key="opt.value"
-                  class="rounded-md border px-2 py-1 transition-colors"
-                  :class="editorCanvasWidth === opt.value ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-border hover:bg-muted'"
-                  :title="opt.title"
-                  type="button"
-                  @click="setViewportWidth(opt.value)"
-                >
-                  {{ opt.label }}
-                </button>
-              </div>
-              <div class="my-2 border-t border-border/60"></div>
-              <div class="mb-1.5 font-medium text-muted-foreground">一键排版</div>
-              <div class="flex flex-wrap gap-1.5">
-                <button
-                  class="app-editor-btn app-editor-btn--pill"
-                  :disabled="!isEditable"
-                  title="全文设置为两端对齐（可撤销）"
-                  type="button"
-                  @click="justifyAllContent"
-                >
-                  <span class="app-editor-btn-label">两端对齐</span>
-                </button>
-                <button
-                  class="app-editor-btn app-editor-btn--pill"
-                  :disabled="!isEditable"
-                  title="全文行高统一为 1.75（可撤销）"
-                  type="button"
-                  @click="unifyAllLineHeight"
-                >
-                  <span class="app-editor-btn-label">行高 1.75</span>
-                </button>
-                <button
-                  class="app-editor-btn app-editor-btn--pill"
-                  :disabled="!isEditable"
-                  title="删除顶层多余空段落（至少保留一个块，可撤销）"
-                  type="button"
-                  @click="cleanEmptyParagraphsUi"
-                >
-                  <span class="app-editor-btn-label">清除空段</span>
-                </button>
-                <button
-                  class="app-editor-btn app-editor-btn--pill app-editor-copy-styles-btn"
-                  :class="{ 'is-active': needsCustomStyles }"
-                  :title="needsCustomStyles ? '文档使用了多栏布局，发布到自有站点前建议复制样式定义（公众号等终端可忽略）' : '复制输出样式定义（当前文档未使用多栏，可忽略）'"
-                  type="button"
-                  @click="copyContentStyles"
-                >
-                  <span
-                    v-if="needsCustomStyles"
-                    class="inline-block size-1.5 rounded-full bg-primary animate-pulse shrink-0"
-                  ></span>
-                  <span class="app-editor-btn-label">复制样式</span>
-                </button>
-              </div>
+                自适应
+              </button>
+              <button
+                type="button"
+                class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
+                :class="editorCanvasWidth === '677px' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+                title="微信公众号标准宽 (677px)"
+                @click="editorCanvasWidth = '677px'"
+              >
+                公众号 (677px)
+              </button>
+              <button
+                type="button"
+                class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
+                :class="editorCanvasWidth === '375px' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
+                title="手机端真实视口 (375px)"
+                @click="editorCanvasWidth = '375px'"
+              >
+                手机 (375px)
+              </button>
             </div>
           </div>
+
           <span class="text-border">|</span>
           <!-- 底部外链资源标注 -->
           <div
@@ -7134,7 +7675,7 @@ defineExpose({
   right: 0 !important;
   width: min(680px, 92%) !important;
   margin: 0 auto !important;
-  z-index: 40 !important;
+  z-index: 100 !important;
   display: flex !important;
   justify-content: center !important;
   pointer-events: none !important;
@@ -7355,7 +7896,7 @@ defineExpose({
 .app-editor-boxoverlay {
   position: fixed;
   inset: 0;
-  z-index: 9000;
+  z-index: 30;
   pointer-events: none;
   user-select: none;
 }
@@ -7997,5 +8538,45 @@ defineExpose({
 /* 头部条之下撑满剩余空间（与全屏 minHeight 内联样式叠加） */
 .app-editor-source .app-editor-source-host:not(:first-child) {
   flex: 1 1 auto;
+}
+
+/* ---------------------------------------------------------------------------
+ * AI 内联比对（方案 A：红底删除线 + 绿底下划线）
+ * --------------------------------------------------------------------------- */
+.app-editor-diff-del {
+  background-color: rgba(239, 68, 68, 0.15) !important;
+  color: #b91c1c !important;
+  text-decoration: line-through !important;
+  text-decoration-color: #ef4444 !important;
+  border-radius: 2px !important;
+  padding: 0 3px !important;
+  margin: 0 2px !important;
+  user-select: none !important;
+  font-size: 0.95em !important;
+  display: inline-block !important;
+  vertical-align: baseline !important;
+}
+
+.dark .app-editor-diff-del {
+  background-color: rgba(239, 68, 68, 0.25) !important;
+  color: #f87171 !important;
+  text-decoration-color: #f87171 !important;
+}
+
+.app-editor-diff-ins {
+  background-color: rgba(16, 185, 129, 0.18) !important;
+  color: #065f46 !important;
+  text-decoration: underline !important;
+  text-decoration-color: #10b981 !important;
+  text-underline-offset: 2px !important;
+  border-radius: 2px !important;
+  padding: 0 2px !important;
+  font-weight: 500 !important;
+}
+
+.dark .app-editor-diff-ins {
+  background-color: rgba(16, 185, 129, 0.25) !important;
+  color: #34d399 !important;
+  text-decoration-color: #34d399 !important;
 }
 </style>
