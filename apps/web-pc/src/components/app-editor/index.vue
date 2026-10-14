@@ -5745,7 +5745,8 @@ defineExpose({
       </div>
     </FloatingMenu>
 
-    <!-- 底部固定 Dock 工具条：上下文模式（多栏/表格/检查器/媒体）与全局模式（编辑视口/一键排版）互斥显示，永不遮挡菜单与正文 -->
+    <!-- 底部固定 Dock 工具条：上下文模式（多栏/表格/检查器/媒体）与全局模式（一键排版）互斥显示，永不遮挡菜单与正文。
+         编辑视口与复制样式表统一收在底部状态条，此处不再重复提供。 -->
     <div
       v-if="!isSourceMode"
       class="app-editor-dock"
@@ -7400,45 +7401,11 @@ defineExpose({
         class="app-editor-floating__toolbar app-editor-global-toolbar"
       >
         <div class="app-editor-floating__header">
-          <span class="app-editor-tag">页面设置</span>
+          <span class="app-editor-tag">一键排版</span>
           <span class="text-[10px] text-muted-foreground">未选中节点时显示</span>
         </div>
 
         <div class="app-editor-floating__actions">
-          <span class="app-editor-panel-title font-semibold text-xs" title="仅调整编辑区显示宽度，用于预览窄屏排版效果，不会改变发布后的页面宽度">编辑视口</span>
-          <div class="inline-flex rounded-lg border border-border bg-background p-0.5 shadow-xs">
-            <button
-              type="button"
-              class="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium transition-all"
-              :class="editorCanvasWidth === 'auto' ? 'bg-primary text-primary-foreground shadow-xs font-semibold' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'"
-              title="自适应跟随外部宽度（桌面大屏效果）"
-              @click="editorCanvasWidth = 'auto'"
-            >
-              <span>🖥️ 自适应</span>
-            </button>
-            <button
-              type="button"
-              class="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium transition-all"
-              :class="editorCanvasWidth === '677px' ? 'bg-primary text-primary-foreground shadow-xs font-semibold' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'"
-              title="微信公众号标准宽 (677px，内联样式严格保真)"
-              @click="editorCanvasWidth = '677px'"
-            >
-              <span>📰 公众号 (677px)</span>
-            </button>
-            <button
-              type="button"
-              class="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium transition-all"
-              :class="editorCanvasWidth === '375px' ? 'bg-primary text-primary-foreground shadow-xs font-semibold' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'"
-              title="手机端真实视口 (375px，内联样式严格保真)"
-              @click="editorCanvasWidth = '375px'"
-            >
-              <span>📱 手机 (375px)</span>
-            </button>
-          </div>
-
-          <span class="app-editor-divider"></span>
-
-          <span class="app-editor-panel-title">一键排版</span>
           <button
             class="app-editor-btn app-editor-btn--pill"
             :disabled="!isEditable"
@@ -7465,22 +7432,6 @@ defineExpose({
             @click="cleanEmptyParagraphsUi"
           >
             <span class="app-editor-btn-label">清除空段</span>
-          </button>
-
-          <span class="app-editor-divider"></span>
-
-          <button
-            class="app-editor-btn app-editor-btn--pill app-editor-copy-styles-btn"
-            :class="{ 'is-active': needsCustomStyles }"
-            :title="needsCustomStyles ? '文档使用了多栏布局，发布到自有站点前建议复制样式定义（公众号等终端可忽略）' : '复制输出样式定义（当前文档未使用多栏，可忽略）'"
-            type="button"
-            @click="copyContentStyles"
-          >
-            <span
-              v-if="needsCustomStyles"
-              class="inline-block size-1.5 rounded-full bg-primary animate-pulse shrink-0"
-            ></span>
-            <span class="app-editor-btn-label">复制样式表</span>
           </button>
         </div>
       </div>
@@ -7573,7 +7524,7 @@ defineExpose({
           <!-- 复制样式表：常驻底部状态栏，随时可用 -->
           <button
             class="app-editor-btn app-editor-btn--pill app-editor-copy-styles-btn flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium border border-border bg-background hover:bg-muted text-foreground transition-all cursor-pointer shadow-2xs"
-            :class="{ 'border-primary text-primary font-semibold ring-1 ring-primary/30': needsCustomStyles }"
+            :class="{ 'is-active border-primary text-primary font-semibold ring-1 ring-primary/30': needsCustomStyles }"
             :title="needsCustomStyles ? '文档使用了多栏或全宽通栏排版，发布到自有站点建议复制输出样式定义（公众号等终端可忽略）' : '复制输出样式定义（包含多栏与全宽 web-article 样式表）'"
             type="button"
             @click="copyContentStyles"

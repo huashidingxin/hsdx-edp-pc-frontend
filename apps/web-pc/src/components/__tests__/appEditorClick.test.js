@@ -192,7 +192,7 @@ describe('app-editor 多栏点击选中', () => {
     expect(bodyQuery('.app-editor-columns-toolbar')).not.toBeNull();
     expect(bodyQuery('.app-editor-image-toolbar')).toBeNull();
 
-    // 4. 点空白处回到全局模式：上下文卡消失，全局卡（页面设置）出现
+    // 4. 点空白处回到全局模式：上下文卡消失，全局卡（一键排版）出现
     const preface = wrapper.find('.vben-tiptap-content > p');
     await preface.trigger('click');
     await settle();
