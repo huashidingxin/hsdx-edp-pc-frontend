@@ -4092,6 +4092,8 @@ const SPLIT_TAG_SNIPPET = {
   video: '<video',
   table: '<table',
   section: '<section',
+  figure: '<figure',
+  figcaption: '<figcaption',
   details: '<details',
   mention: '<a',
 };
@@ -4240,6 +4242,8 @@ function splitTagOf(node) {
     video: 'video',
     table: 'table',
     section: 'section',
+    figure: 'figure',
+    figcaption: 'figcaption',
     details: 'details',
     mention: 'a',
   };
@@ -4367,6 +4371,8 @@ const AI_SAFE_BLOCKS = new Set([
   'taskItem',
   'codeBlock',
   'section',
+  'figure',
+  'figcaption',
   'column',
   'detailsContent',
 ]);

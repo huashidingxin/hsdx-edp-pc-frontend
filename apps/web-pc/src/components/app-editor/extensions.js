@@ -38,7 +38,13 @@ import {
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import StarterKit from '@tiptap/starter-kit';
 
-import { PasteSanitizer, RichTextStyle, Section } from './paste-preserve';
+import {
+  Figcaption,
+  Figure,
+  PasteSanitizer,
+  RichTextStyle,
+  Section,
+} from './paste-preserve';
 import { aiDiffPlugin } from './ai-diff-plugin';
 import { Column, Columns, createColumnsResizerPlugin } from './columns';
 import { findPlugin } from './find-plugin';
@@ -75,6 +81,9 @@ const PRESERVE_TYPES = [
   'column',
   // 秀米/135 素材骨架容器
   'section',
+  // 原生配图容器与图注
+  'figure',
+  'figcaption',
   // 行内标记上的装饰样式（如 <strong style="color:...">）
   'bold',
   'italic',
@@ -532,6 +541,8 @@ export function createEditorExtensions(options = {}) {
     Subscript,
     Superscript,
     Section,
+    Figure,
+    Figcaption,
     Columns,
     Column,
     // 待办清单（TaskItem 必须配套注册）
@@ -591,7 +602,7 @@ export function createEditorExtensions(options = {}) {
       },
     }),
     TextAlign.configure({
-      types: ['heading', 'paragraph', 'section', 'column'],
+      types: ['heading', 'paragraph', 'section', 'column', 'figure', 'figcaption'],
     }),
     RichTextStyle,
     Color,

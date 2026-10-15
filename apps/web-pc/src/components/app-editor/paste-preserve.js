@@ -49,10 +49,77 @@ export const Section = Node.create({
           return null;
         },
       },
+      {
+        tag: 'span',
+        getAttrs: (element) => {
+          // 仅当 span 实际上被用作布局容器（内含图片/视频/SVG等媒体块元素，或带有 flex/grid 容器样式且有子元素）时，
+          // 才将其升级为容器节点以保留其定位与装饰样式；普通纯文本 span 必须放行给 RichTextStyle 行内标记解析。
+          const hasMediaOrBlockChild = element.querySelector(
+            'img, video, svg, section, div, p, h1, h2, h3, h4, h5, h6, table, ul, ol, figure',
+          );
+          if (hasMediaOrBlockChild) return null;
+          const style = element.getAttribute('style') || '';
+          if (
+            /(?:^|;|\s)display\s*:\s*(?:inline-)?(?:flex|grid|block)/i.test(style) &&
+            element.firstElementChild
+          ) {
+            return null;
+          }
+          return false;
+        },
+      },
     ];
   },
   renderHTML({ HTMLAttributes }) {
     return ['section', HTMLAttributes, 0];
+  },
+});
+
+/**
+ * 原生配图容器节点（<figure>），语义化包裹图片、音视频等内容及图注，
+ * 保留其 class 与 inline style。
+ */
+export const Figure = Node.create({
+  name: 'figure',
+  group: 'block',
+  content: '(block | figcaption)+',
+  defining: true,
+  parseHTML() {
+    return [{ tag: 'figure' }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['figure', HTMLAttributes, 0];
+  },
+});
+
+/**
+ * 原生图注节点（<figcaption>），承接 figure 内的说明文字。
+ * 不入 group: 'block'，仅允许作为 figure 的子节点存在；
+ * 解析时若内含块级包装（p/div）则平铺提取其子节点为行内，确保不丢失内容。
+ */
+export const Figcaption = Node.create({
+  name: 'figcaption',
+  content: 'inline*',
+  defining: true,
+  parseHTML() {
+    return [
+      {
+        tag: 'figcaption',
+        getAttrs: (element) => {
+          const blocks = element.querySelectorAll('p, div');
+          blocks.forEach((b) => {
+            while (b.firstChild) {
+              b.parentNode.insertBefore(b.firstChild, b);
+            }
+            b.remove();
+          });
+          return null;
+        },
+      },
+    ];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['figcaption', HTMLAttributes, 0];
   },
 });
 
@@ -202,7 +269,7 @@ export function normalizeResponsiveStyle(rawStyle, tagName = '') {
 
   // (b) 将容器级固宽 677px 及大尺寸 width (>= 400px) 重写为流式自适应 width: 100%; max-width: 100%
   const tag = (tagName || '').toLowerCase();
-  const isContainer = ['section', 'div', 'article', 'main', 'p', 'table', 'tbody', 'thead'].includes(tag);
+  const isContainer = ['section', 'div', 'article', 'main', 'p', 'table', 'tbody', 'thead', 'figure'].includes(tag);
   if (isContainer) {
     s = s.replace(/(?<![a-zA-Z-])width\s*:\s*677px\b\s*(!important)?/gi, 'width: 100%; max-width: 100%$1');
     s = s.replace(/(?<![a-zA-Z-])width\s*:\s*([4-9]\d{2}|\d{4,})px\b\s*(!important)?/gi, (match, px, imp) => {

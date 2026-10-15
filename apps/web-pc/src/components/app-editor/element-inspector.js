@@ -351,6 +351,8 @@ export function floatToStyledAncestor(doc, pos, node) {
     // 叶子文本块（paragraph/heading）若自身带有 flex 分栏、背景、边框、内边距等实质性样式，
     // 则说明它自身即为分栏布局的一栏或独立样式块，直接留守，不上浮
     if (isLeafText && hasSignificantLeafStyles(node.attrs?.style)) return { pos, node };
+    // 图注节点自身即为独立文本块，不上浮到配图容器
+    if (node.type.name === 'figcaption') return { pos, node };
     const $pos = doc.resolve(pos);
     for (let up = $pos.depth; up >= 0; up -= 1) {
       const parent = $pos.node(up);
@@ -366,14 +368,15 @@ export function floatToStyledAncestor(doc, pos, node) {
       ) {
         continue;
       }
-      // column / tableCell / tableHeader 是隔离格子容器，上浮到此为止：
+      // column / tableCell / tableHeader / figure 是隔离格子或语义容器，上浮到此为止：
       // column 是 isolating=true，格子内的段落点击不应越界选中外层 section，
       // 否则"删除段落"会变成"删除含 columns 的外层 section"（误操作）。
       // 若 column/格子 自身带装饰样式，之前 !isLeafText 分支已在入口直接返回。
       if (
         parent.type.name === 'column' ||
         parent.type.name === 'tableCell' ||
-        parent.type.name === 'tableHeader'
+        parent.type.name === 'tableHeader' ||
+        parent.type.name === 'figure'
       ) {
         break;
       }
@@ -412,6 +415,8 @@ const FRIENDLY_NAMES = {
   columns: '多栏布局',
   column: '分栏列',
   section: '版块',
+  figure: '配图容器',
+  figcaption: '图注说明',
   details: '折叠块',
   detailsSummary: '折叠标题',
   detailsContent: '折叠内容',

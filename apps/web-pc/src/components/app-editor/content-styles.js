@@ -198,4 +198,17 @@ a.edp-mention {
   border-bottom: 1px solid #bfdbfe;
   padding: 0 2px;
 }
+
+/* 原生配图容器与图注 */
+figure {
+  margin: 16px auto;
+  max-width: 100%;
+}
+
+figcaption {
+  margin-top: 8px;
+  font-size: 14px;
+  color: #666;
+  text-align: center;
+}
 `;
