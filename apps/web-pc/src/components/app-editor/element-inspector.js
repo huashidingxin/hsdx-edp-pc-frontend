@@ -65,6 +65,7 @@ export const MANAGED_STYLE_KEYS = [
   'display',
   'box-shadow',
   'opacity',
+  'object-fit',
 ];
 
 /**
@@ -81,6 +82,16 @@ export const DISPLAY_OPTIONS = [
   { label: '行内块', value: 'inline-block' },
   { label: '行内', value: 'inline' },
   { label: '隐藏', value: 'none' },
+];
+
+/** 图片/媒体 object-fit 策略候选 */
+export const OBJECT_FIT_OPTIONS = [
+  { label: '默认', value: '', desc: '浏览器默认适应模式' },
+  { label: '铺满裁剪', value: 'cover', desc: '保持宽高比，填满整个区域并居中裁剪超出部分 (cover)' },
+  { label: '完整显示', value: 'contain', desc: '保持宽高比，缩放以完整容纳在区域内 (contain)' },
+  { label: '拉伸填充', value: 'fill', desc: '拉伸填满整个区域，不保持原有比例 (fill)' },
+  { label: '等比缩小', value: 'scale-down', desc: '保持宽高比，取 contain 与原图中的较小尺寸 (scale-down)' },
+  { label: '原始尺寸', value: 'none', desc: '不缩放，保持图片原有原始像素尺寸 (none)' },
 ];
 
 export function parseStyleDecls(style) {
@@ -301,9 +312,25 @@ export function floatToStyledAncestor(doc, pos, node) {
       if (!parent || parent.type.name === 'doc') break;
       // 自身起点跳过（叶子文本不锚定；非叶子已在入口判定过）
       if ($pos.before(up) === pos) continue;
-      // 结构容器透明穿过（专属卡片负责它们）
-      if (parent.type.name === 'columns' || parent.type.name === 'table' || parent.type.name === 'tableRow') {
+      // 结构容器：columns / table / tableRow 透明穿过（专属卡片负责，
+      // 上方的 section 装饰样式仍可被上浮命中）。
+      if (
+        parent.type.name === 'columns' ||
+        parent.type.name === 'table' ||
+        parent.type.name === 'tableRow'
+      ) {
         continue;
+      }
+      // column / tableCell / tableHeader 是隔离格子容器，上浮到此为止：
+      // column 是 isolating=true，格子内的段落点击不应越界选中外层 section，
+      // 否则"删除段落"会变成"删除含 columns 的外层 section"（误操作）。
+      // 若 column/格子 自身带装饰样式，之前 !isLeafText 分支已在入口直接返回。
+      if (
+        parent.type.name === 'column' ||
+        parent.type.name === 'tableCell' ||
+        parent.type.name === 'tableHeader'
+      ) {
+        break;
       }
       if (!parent.attrs || !('style' in parent.attrs)) continue;
       if (hasFloatTriggerStyles(parent.attrs.style)) {
@@ -373,7 +400,13 @@ export function isAlignableNode(node) {
 
 function domOf(view, pos) {
   try {
-    return view.nodeDOM(pos) || null;
+    const dom = view.nodeDOM(pos);
+    if (dom instanceof HTMLElement) return dom;
+    const res = view.domAtPos(pos + 1);
+    if (res?.node) {
+      return res.node instanceof HTMLElement ? res.node : res.node.parentElement;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -659,10 +692,18 @@ export function buildCrumbChain(doc, pos, node, origin = null) {
 // 块操作（同父级内合法变换，单事务可撤销）
 // ---------------------------------------------------------------------------
 
-function resolveLiveNode(editor, pos) {
+function resolveLiveNodeAndPos(editor, pos) {
   try {
     const node = editor.state.doc.nodeAt(pos);
-    return node || null;
+    if (node && node.type.name !== 'doc') return { node, pos };
+    const $pos = editor.state.doc.resolve(pos);
+    for (let d = $pos.depth; d > 0; d -= 1) {
+      const n = $pos.node(d);
+      if (n && n.type.name !== 'doc' && (n.isBlock || n.isAtom)) {
+        return { node: n, pos: $pos.before(d) };
+      }
+    }
+    return null;
   } catch {
     return null;
   }
@@ -706,17 +747,18 @@ function canDeleteAt(parent, index) {
  * @returns {{ ok: boolean, newPos?: number, reason?: string }}
  */
 export function moveElement(editor, pos, direction = -1) {
-  if (!editor) return { ok: false };
-  const node = resolveLiveNode(editor, pos);
-  if (!node) return { ok: false, reason: '目标已不存在，请重新点击' };
+  if (!editor) return { ok: false, reason: '编辑器未就绪' };
+  const target = resolveLiveNodeAndPos(editor, pos);
+  if (!target) return { ok: false, reason: '目标已不存在，请重新点击' };
+  const { node, pos: livePos } = target;
   let parent = null;
   let index = -1;
   try {
-    const $pos = editor.state.doc.resolve(pos);
+    const $pos = editor.state.doc.resolve(livePos);
     parent = $pos.parent;
     index = $pos.index();
   } catch {
-    return { ok: false };
+    return { ok: false, reason: '解析目标位置失败' };
   }
   const targetIndex = direction < 0 ? index - 1 : index + 1;
   if (targetIndex < 0 || targetIndex >= parent.childCount) {
@@ -727,45 +769,46 @@ export function moveElement(editor, pos, direction = -1) {
     const size = node.nodeSize;
     if (direction < 0) {
       const prevNode = parent.child(index - 1);
-      const prevPos = pos - prevNode.nodeSize;
-      tr.delete(pos, pos + size);
+      const prevPos = livePos - prevNode.nodeSize;
+      tr.delete(livePos, livePos + size);
       tr.insert(prevPos, node);
       tr.setSelection(TextSelection.near(tr.doc.resolve(prevPos + 1)));
       editor.view.dispatch(tr);
       return { ok: true, newPos: prevPos };
     }
     const nextNode = parent.child(index + 1);
-    const targetPos = pos + nextNode.nodeSize;
-    tr.delete(pos, pos + size);
+    const targetPos = livePos + nextNode.nodeSize;
+    tr.delete(livePos, livePos + size);
     tr.insert(targetPos, node);
     tr.setSelection(TextSelection.near(tr.doc.resolve(targetPos + 1)));
     editor.view.dispatch(tr);
     return { ok: true, newPos: targetPos };
-  } catch {
-    return { ok: false };
+  } catch (err) {
+    return { ok: false, reason: err?.message || '移动失败' };
   }
 }
 
 /** 复制：在当前位置之后追加同节点（父内容校验通过才执行） */
 export function duplicateElement(editor, pos) {
-  if (!editor) return { ok: false };
-  const node = resolveLiveNode(editor, pos);
-  if (!node) return { ok: false, reason: '目标已不存在，请重新点击' };
+  if (!editor) return { ok: false, reason: '编辑器未就绪' };
+  const target = resolveLiveNodeAndPos(editor, pos);
+  if (!target) return { ok: false, reason: '目标已不存在，请重新点击' };
+  const { node, pos: livePos } = target;
   try {
-    const $pos = editor.state.doc.resolve(pos);
+    const $pos = editor.state.doc.resolve(livePos);
     const parent = $pos.parent;
     const index = $pos.index();
     if (!canInsertAt(parent, index, node)) {
       return { ok: false, reason: '当前位置不支持复制' };
     }
     const tr = editor.state.tr;
-    const insertPos = pos + node.nodeSize;
+    const insertPos = livePos + node.nodeSize;
     tr.insert(insertPos, node);
     tr.setSelection(TextSelection.near(tr.doc.resolve(insertPos + 1)));
     editor.view.dispatch(tr);
     return { ok: true, newPos: insertPos };
-  } catch {
-    return { ok: false, reason: '当前位置不支持复制' };
+  } catch (err) {
+    return { ok: false, reason: err?.message || '当前位置不支持复制' };
   }
 }
 
@@ -773,21 +816,22 @@ export function duplicateElement(editor, pos) {
  * 删除：父内容删除后仍合法才执行（自动保护 column/单元格等单子节点容器）。
  */
 export function deleteElement(editor, pos) {
-  if (!editor) return { ok: false };
-  const node = resolveLiveNode(editor, pos);
-  if (!node) return { ok: false, reason: '目标已不存在，请重新点击' };
+  if (!editor) return { ok: false, reason: '编辑器未就绪' };
+  const target = resolveLiveNodeAndPos(editor, pos);
+  if (!target) return { ok: false, reason: '目标已不存在，请重新点击' };
+  const { node, pos: livePos } = target;
   try {
-    const $pos = editor.state.doc.resolve(pos);
+    const $pos = editor.state.doc.resolve(livePos);
     const parent = $pos.parent;
     const index = $pos.index();
     if (!canDeleteAt(parent, index)) {
       return { ok: false, reason: '至少保留一个块，不能删除' };
     }
-    const tr = editor.state.tr.delete(pos, pos + node.nodeSize);
+    const tr = editor.state.tr.delete(livePos, livePos + node.nodeSize);
     editor.view.dispatch(tr);
     return { ok: true };
-  } catch {
-    return { ok: false };
+  } catch (err) {
+    return { ok: false, reason: err?.message || '删除失败' };
   }
 }
 
@@ -795,13 +839,14 @@ export function deleteElement(editor, pos) {
  * 前后插空行：仅当父级容得下段落时执行。
  */
 export function insertParagraphBeside(editor, pos, direction = 1) {
-  if (!editor) return { ok: false };
-  const node = resolveLiveNode(editor, pos);
-  if (!node) return { ok: false, reason: '目标已不存在，请重新点击' };
+  if (!editor) return { ok: false, reason: '编辑器未就绪' };
+  const target = resolveLiveNodeAndPos(editor, pos);
+  if (!target) return { ok: false, reason: '目标已不存在，请重新点击' };
+  const { node, pos: livePos } = target;
   try {
     const schema = editor.schema;
     const p = schema.nodes.paragraph.create();
-    const $pos = editor.state.doc.resolve(pos);
+    const $pos = editor.state.doc.resolve(livePos);
     const parent = $pos.parent;
     const index = $pos.index();
     const off = direction < 0 ? childOffset(parent, index) : childOffset(parent, index) + node.nodeSize;
@@ -809,13 +854,13 @@ export function insertParagraphBeside(editor, pos, direction = 1) {
     if (!parent.type.validContent(next)) {
       return { ok: false, reason: '当前位置不支持插入空行' };
     }
-    const insertPos = direction < 0 ? pos : pos + node.nodeSize;
+    const insertPos = direction < 0 ? livePos : livePos + node.nodeSize;
     const tr = editor.state.tr.insert(insertPos, p);
     tr.setSelection(TextSelection.near(tr.doc.resolve(insertPos + 1)));
     editor.view.dispatch(tr);
     editor.view.focus();
     return { ok: true };
-  } catch {
-    return { ok: false, reason: '当前位置不支持插入空行' };
+  } catch (err) {
+    return { ok: false, reason: err?.message || '当前位置不支持插入空行' };
   }
 }

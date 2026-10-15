@@ -61,6 +61,8 @@ export const contentStylesCss = `
 .web-article > * {
   grid-column: content;
   min-width: 0;
+  position: relative;
+  isolation: isolate;
 }
 
 .web-article > .web-bleed,
@@ -72,6 +74,7 @@ export const contentStylesCss = `
 .web-article > div.web-bleed:not(.cms-columns) {
   display: grid;
   grid-template-columns: var(--web-article-template);
+  align-content: start;
 }
 
 .web-article > section.web-bleed > *,

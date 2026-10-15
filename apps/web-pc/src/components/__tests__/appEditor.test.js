@@ -264,13 +264,15 @@ describe('app-editor 扩展与保真解析验证', () => {
     expect(usesCustomStyleBlocks('<section class="banner web-bleed">内容</section>')).toBe(true);
     expect(usesCustomStyleBlocks('<p>纯文本</p>')).toBe(false);
 
-    // 输出样式表包含 web-article 与 web-bleed 网格定义
+    // 输出样式表包含 web-article 与 web-bleed 网格定义及层叠隔离
     expect(contentStylesCss).toContain('.web-article');
     expect(contentStylesCss).toContain('.web-bleed');
     expect(contentStylesCss).toContain('--web-article-width: 1200px');
     expect(contentStylesCss).toContain('--web-article-gutter: 24px');
     expect(contentStylesCss).toContain('section.web-bleed');
     expect(contentStylesCss).toContain('div.web-bleed:not(.cms-columns)');
+    expect(contentStylesCss).toContain('align-content: start');
+    expect(contentStylesCss).toContain('isolation: isolate');
     expect(contentStylesCss).toContain('img.web-bleed');
 
     // Slash 命令表中包含全宽命令
@@ -278,6 +280,36 @@ describe('app-editor 扩展与保真解析验证', () => {
     expect(bleedCmd).toBeDefined();
     expect(bleedCmd.title).toContain('全宽通栏');
 
+    editor.destroy();
+  });
+
+  it('产品721通栏版块与负margin抽拉图片结构解析与保真输出', () => {
+    const extensions = createEditorExtensions();
+    const rawHtml = [
+      '<section class="web-bleed" style="text-align: center; margin: 172px 0px 0px; height: 499px; box-sizing: border-box; padding: 79px 24px 0px; background-image: linear-gradient(rgba(187, 0, 0, 0.48), rgba(187, 0, 0, 0.48)), url(&quot;https://cdn-edp.hsdxchina.com/101/image/5fb147776fbe605012ef5fb1f7d8bcabca4df12b.png&quot;); background-size: cover; background-position: center center;">',
+      '<div style="text-align: center;">',
+      '<h2 style="text-align: center; margin: 0px; font-size: 48px; font-weight: 700; color: rgb(255, 255, 255); letter-spacing: 2.4px; line-height: 1.4;"><strong>产品特点</strong></h2>',
+      '<p style="text-align: center; margin: 4px 0px 0px; font-size: 20px; font-weight: 300; color: rgb(255, 255, 255); letter-spacing: 0.5px;">Product Features</p>',
+      '</div>',
+      '</section>',
+      '<section style="margin: -264px 0px 0px;">',
+      '<p style="margin: 0px;"></p>',
+      '<img class="edp-editor__image" referrerpolicy="no-referrer" src="https://cdn-edp.hsdxchina.com/101/image/8e9cd468078e4adbac3c84b25e0cf702a95b1ed2.png" alt="" style="display: block; width: 100%; max-width: 100%; height: auto; margin: 0px; border-radius: 0px;">',
+      '</section>',
+    ].join('');
+
+    const editor = new Editor({
+      extensions,
+      content: rawHtml,
+    });
+
+    const outputHtml = editor.getHTML();
+    expect(outputHtml).toContain('web-bleed');
+    expect(outputHtml).toContain('height: 499px');
+    expect(outputHtml).toContain('产品特点');
+    expect(outputHtml).toContain('Product Features');
+    expect(outputHtml).toContain('margin: -264px 0px 0px');
+    expect(outputHtml).toContain('8e9cd468078e4adbac3c84b25e0cf702a95b1ed2.png');
     editor.destroy();
   });
 
@@ -1117,16 +1149,20 @@ describe('app-editor 装饰上浮验证', () => {
     editor.destroy();
   });
 
-  it('最近者胜：单元格背景优先于外层 section', async () => {
+  it('格子隔离：单元格内段落点击止于格子，不越界选外层 section', async () => {
+    // tableCell 是隔离格子容器（break），内部段落上浮到此为止。
+    // 修改前：tableCell 背景色会让段落上浮到 tableCell，但这导致"删除段落"
+    // 会删整个单元格（误操作），因此改为止于 tableCell 边界（返回段落自身）。
     const editor = makeFloatEditor(
       '<section style="margin: 40px;"><table><tbody><tr><td style="background-color: #fef08a;"><p>格文</p></td></tr></tbody></table></section>',
     );
     const found = await resolveAtText(editor, '格文');
-    expect(found?.node.type.name).toBe('tableCell');
+    // 上浮在 tableCell 处 break，没有上浮目标，返回段落自身
+    expect(found?.node.type.name).toBe('paragraph');
     editor.destroy();
   });
 
-  it('上报结构：section>多栏>列>带边距段落，点击正文选中 section', async () => {
+  it('column 隔离：section>多栏>列>段落，点击段落止于列内（不越界选 section）', async () => {
     const { resolveInspectorTarget } = await import('../app-editor/element-inspector.js');
     const { findImageNodeAndPos, findVideoNodeAndPos, findColumnsNodeAndPos, findTableNodeAndPos } =
       await import('../app-editor/dom-lookup.js');
@@ -1153,12 +1189,13 @@ describe('app-editor 装饰上浮验证', () => {
     const found = resolveInspectorTarget(view, target, {
       findImageNodeAndPos, findVideoNodeAndPos, findColumnsNodeAndPos, findTableNodeAndPos,
     });
-    // 段落自带 margin 也不锚定；columns 容器结构透明穿过；落到 section
-    expect(found?.node.type.name).toBe('section');
+    // column 是隔离边界（break），上浮止于 column 内，不越界到外层 section；
+    // 段落自身无触发样式 → 返回段落。要选 section，请点击 section 留白或面包屑。
+    expect(found?.node.type.name).toBe('paragraph');
     editor.destroy();
   });
 
-  it('结构容器透明：columns 自带 margin 也不拦截上浮', async () => {
+  it('column 隔离：columns 自带 margin 不拦截，但 column break 使段落止于列内', async () => {
     const { resolveInspectorTarget } = await import('../app-editor/element-inspector.js');
     const { findImageNodeAndPos, findVideoNodeAndPos, findColumnsNodeAndPos, findTableNodeAndPos } =
       await import('../app-editor/dom-lookup.js');
@@ -1179,8 +1216,8 @@ describe('app-editor 装饰上浮验证', () => {
     const found = resolveInspectorTarget(view, target, {
       findImageNodeAndPos, findVideoNodeAndPos, findColumnsNodeAndPos, findTableNodeAndPos,
     });
-    // 穿过 column（flex 透明）与 columns（结构透明），落到 section
-    expect(found?.node.type.name).toBe('section');
+    // column 处 break，不继续找外层 section；段落自身无触发样式 → 返回段落
+    expect(found?.node.type.name).toBe('paragraph');
     editor.destroy();
   });
 
@@ -1229,6 +1266,44 @@ describe('app-editor 装饰上浮验证', () => {
     const twice = floatToStyledAncestor(editor.state.doc, once.pos, once.node);
     expect(twice.pos).toBe(once.pos);
     expect(twice.node).toBe(once.node);
+    editor.destroy();
+  });
+
+  it('column 带 padding（两栏布局）透明穿过：不误选整列导致删除报错', async () => {
+    // 复现 Bug 1：两栏 column style 含 padding-left/right，
+    // 修复前 floatToStyledAncestor 会把内部空段落上浮到 column，
+    // deleteElement 随后删除 column 并报"至少保留一个块"。
+    const { resolveInspectorTarget } = await import('../app-editor/element-inspector.js');
+    const { findImageNodeAndPos, findVideoNodeAndPos, findColumnsNodeAndPos, findTableNodeAndPos } =
+      await import('../app-editor/dom-lookup.js');
+    const editor = new Editor({
+      extensions: createEditorExtensions(),
+      content: [
+        '<div class="cms-columns cms-columns--keep" style="display:flex;gap:16px;box-sizing:border-box;width:100%;">',
+        '<div class="cms-column" style="box-sizing:border-box;min-width:0;flex:1 1 0%;padding-right:8px;">',
+        '<p></p>',
+        '</div>',
+        '<div class="cms-column" style="box-sizing:border-box;min-width:0;flex:1 1 0%;padding-left:8px;">',
+        '<p>右栏文字</p>',
+        '</div>',
+        '</div>',
+      ].join(''),
+    });
+    const view = editor.view;
+    let pEl = null;
+    view.dom.querySelectorAll('.cms-column').forEach((col) => {
+      if (col.style.paddingRight) {
+        const p = col.querySelector('p');
+        if (p) pEl = p;
+      }
+    });
+    expect(pEl).toBeTruthy();
+    const found = resolveInspectorTarget(view, pEl, {
+      findImageNodeAndPos, findVideoNodeAndPos, findColumnsNodeAndPos, findTableNodeAndPos,
+    });
+    // column 始终透明穿过，结果绝不是 column / columns（否则删除会误删整列）
+    expect(found?.node.type.name).not.toBe('column');
+    expect(found?.node.type.name).not.toBe('columns');
     editor.destroy();
   });
 });
@@ -1323,5 +1398,154 @@ describe('app-editor 盒模型 overlay 计算', () => {
     // 空矩形返回 null（调用方隐藏）
     expect(computeBoxOverlay({ left: 0, top: 0, width: 0, height: 0 }, '')).toBeNull();
     expect(computeBoxOverlay(null, '')).toBeNull();
+  });
+});
+
+describe('app-editor 图片 object-fit 与空块删除容错验证', () => {
+  it('MANAGED_STYLE_KEYS 包含 object-fit，且 OBJECT_FIT_OPTIONS 候选齐备', async () => {
+    const { MANAGED_STYLE_KEYS, OBJECT_FIT_OPTIONS, mergeStyleDecls } = await import(
+      '../app-editor/element-inspector.js'
+    );
+    expect(MANAGED_STYLE_KEYS).toContain('object-fit');
+    expect(OBJECT_FIT_OPTIONS.some((o) => o.value === 'cover')).toBe(true);
+    expect(OBJECT_FIT_OPTIONS.some((o) => o.value === 'contain')).toBe(true);
+    expect(OBJECT_FIT_OPTIONS.some((o) => o.value === 'fill')).toBe(true);
+    expect(OBJECT_FIT_OPTIONS.some((o) => o.value === 'scale-down')).toBe(true);
+    expect(OBJECT_FIT_OPTIONS.some((o) => o.value === 'none')).toBe(true);
+
+    const merged = mergeStyleDecls('width: 100%; height: 200px;', [['object-fit', 'cover']]);
+    expect(merged).toContain('object-fit: cover');
+    expect(merged).toContain('height: 200px');
+
+    const cleared = mergeStyleDecls(merged, [['object-fit', null]]);
+    expect(cleared).not.toContain('object-fit');
+    expect(cleared).toContain('height: 200px');
+  });
+
+  it('图片节点与内联 style 支持 object-fit 策略设置并保真输出', () => {
+    const extensions = createEditorExtensions();
+    const editor = new Editor({
+      extensions,
+      content:
+        '<p>说明</p><img src="https://example.com/banner.jpg" style="width: 100%; height: 320px; object-fit: cover;" />',
+    });
+
+    const html = editor.getHTML();
+    expect(html).toContain('object-fit: cover');
+    expect(html).toContain('height: 320px');
+
+    editor.destroy();
+  });
+
+  it('空段落删除：多块文档中空段落可正常删除', async () => {
+    const { resolveInspectorTarget, deleteElement } = await import(
+      '../app-editor/element-inspector.js'
+    );
+    const { findImageNodeAndPos, findVideoNodeAndPos, findColumnsNodeAndPos, findTableNodeAndPos } =
+      await import('../app-editor/dom-lookup.js');
+    const finders = { findImageNodeAndPos, findVideoNodeAndPos, findColumnsNodeAndPos, findTableNodeAndPos };
+
+    const editor = new Editor({
+      extensions: createEditorExtensions(),
+      content: '<p>第一段</p><p></p><p>第三段</p>',
+    });
+
+    const pList = editor.view.dom.querySelectorAll('p');
+    expect(pList.length).toBe(3);
+    const emptyP = pList[1];
+    const hit = resolveInspectorTarget(editor.view, emptyP, finders);
+    expect(hit?.node.type.name).toBe('paragraph');
+
+    const res = deleteElement(editor, hit.pos);
+    expect(res.ok).toBe(true);
+    expect(editor.getHTML()).not.toContain('<p></p>');
+    expect(editor.getHTML()).toContain('<p>第一段</p>');
+    expect(editor.getHTML()).toContain('<p>第三段</p>');
+
+    editor.destroy();
+  });
+
+  it('空段落删除：单块容器拒绝删除并返回明确原因', async () => {
+    const { deleteElement } = await import('../app-editor/element-inspector.js');
+
+    // 1. 全文仅有一个空段落
+    const editorSingle = new Editor({
+      extensions: createEditorExtensions(),
+      content: '<p></p>',
+    });
+    const resSingle = deleteElement(editorSingle, 0);
+    expect(resSingle.ok).toBe(false);
+    expect(resSingle.reason).toBe('至少保留一个块，不能删除');
+    editorSingle.destroy();
+
+    // 2. 多栏列内仅有一个块
+    const editorCol = new Editor({
+      extensions: createEditorExtensions(),
+      content:
+        '<div class="cms-columns"><div class="cms-column"><p>左列</p></div><div class="cms-column"><p></p></div></div>',
+    });
+    // 定位到右列空段落
+    let rightColEmptyPPos = null;
+    editorCol.state.doc.descendants((node, pos) => {
+      if (rightColEmptyPPos !== null) return false;
+      if (node.type.name === 'paragraph' && node.content.size === 0) {
+        rightColEmptyPPos = pos;
+      }
+      return true;
+    });
+    expect(rightColEmptyPPos).not.toBeNull();
+    const resCol = deleteElement(editorCol, rightColEmptyPPos);
+    expect(resCol.ok).toBe(false);
+    expect(resCol.reason).toBe('至少保留一个块，不能删除');
+    editorCol.destroy();
+  });
+
+  it('位置内部偏移容错：pos 处于块内部 offset 时仍能准确删除该块', async () => {
+    const { deleteElement } = await import('../app-editor/element-inspector.js');
+    const editor = new Editor({
+      extensions: createEditorExtensions(),
+      content: '<p>第一段</p><p>第二段</p>',
+    });
+
+    // pos 2 处于第一段内部文本字符位置
+    const res = deleteElement(editor, 2);
+    expect(res.ok).toBe(true);
+    expect(editor.getHTML()).not.toContain('第一段');
+    expect(editor.getHTML()).toContain('第二段');
+
+    editor.destroy();
+  });
+});
+
+
+describe('app-editor column+image round-trip', () => {
+  it('column 内仅有 image（无 p）时，setContent 不自动补 p 标签', () => {
+    // 复现：源码窗口删掉 column 内空 p 后点应用，期望 image 作为唯一 block 保留
+    const editor = new Editor({
+      extensions: createEditorExtensions(),
+      content: [
+        '<div class="cms-columns cms-columns--keep" style="display:flex;gap:16px;box-sizing:border-box;width:100%;">',
+        '<div class="cms-column" style="box-sizing:border-box;min-width:0;flex:1 1 0%;padding-right:8px;">',
+        '<img src="https://example.com/img.jpg" width="200" height="150">',
+        '</div>',
+        '<div class="cms-column" style="box-sizing:border-box;min-width:0;flex:1 1 0%;padding-left:8px;">',
+        '<p>右栏文字</p>',
+        '</div>',
+        '</div>',
+      ].join(''),
+    });
+    const html = editor.getHTML();
+    // 第一列只有 image，不应出现额外 <p></p>
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const firstCol = doc.querySelector('.cms-column');
+    const children = Array.from(firstCol?.childNodes || []).filter(
+      (n) => n.nodeType === 1,
+    );
+    const hasExtraP = children.some((n) => n.tagName === 'P');
+    expect(hasExtraP).toBe(false);
+    expect(children.length).toBe(1);
+    expect(children[0]?.tagName).toBe('IMG');
+    editor.destroy();
   });
 });

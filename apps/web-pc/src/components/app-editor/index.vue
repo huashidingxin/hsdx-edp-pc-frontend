@@ -72,6 +72,7 @@ import {
   MANAGED_STYLE_KEYS,
   mergeStyleDecls,
   moveElement,
+  OBJECT_FIT_OPTIONS,
   parseStyleDecls,
   resolveElementFromSelection,
   resolveInspectorTarget,
@@ -1429,6 +1430,7 @@ const elementBorderWidth = ref('1px');
 const elementDisplay = ref('');
 const elementShadow = ref('');
 const elementOpacityInput = ref('100');
+const elementObjectFit = ref('');
 
 const INSPECTOR_SHADOW_PRESETS = [
   { label: '无', value: null },
@@ -1541,6 +1543,7 @@ function loadElementForm(node) {
     const opNum = Number(opacityRaw);
     elementOpacityInput.value = !Number.isNaN(opNum) ? String(Math.round(opNum * 100)) : '100';
   }
+  elementObjectFit.value = String(map.get('object-fit') || '').trim().toLowerCase();
 }
 
 function refreshElementCrumbs() {
@@ -2101,6 +2104,14 @@ function commitElementOpacity() {
   commitElementStyle([['opacity', clamped >= 100 ? null : String(clamped / 100)]]);
 }
 
+function setElementObjectFit(value) {
+  elementObjectFit.value = value || '';
+  commitElementStyle([['object-fit', value || null]]);
+  if (selectedTarget.value?.type === 'image') {
+    mediaObjectFit.value = value || '';
+  }
+}
+
 function resetElementStyles() {
   const ok = commitElementStyle([], [...MANAGED_STYLE_KEYS]);
   if (ok) {
@@ -2128,7 +2139,12 @@ function tryNodeAt(editor, pos) {
 function tryNodeDOM(editor, pos) {
   try {
     const dom = editor.view.nodeDOM(pos);
-    return dom instanceof HTMLElement ? dom : null;
+    if (dom instanceof HTMLElement) return dom;
+    const res = editor.view.domAtPos(pos + 1);
+    if (res?.node) {
+      return res.node instanceof HTMLElement ? res.node : res.node.parentElement;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -2191,14 +2207,26 @@ function duplicateSelectedElement() {
 }
 
 function deleteSelectedElement() {
-  runElementOp((editor, pos) => {
-    const r = deleteElement(editor, pos);
-    if (r.ok) {
-      clearElementSelection();
-      message.success('已删除选中块');
-    }
-    return { ok: false };
-  });
+  const sel = selectedElementTarget.value;
+  const editor = editorInstance.value;
+  if (!sel || !editor) return;
+  if (sel.kind === 'span') {
+    message.info('行内样式文本不支持块操作');
+    return;
+  }
+  const pos = resolveElementPos();
+  if (pos === null) {
+    clearElementSelection();
+    message.warning('目标已不存在，请重新选择');
+    return;
+  }
+  const r = deleteElement(editor, pos);
+  if (r.ok) {
+    clearElementSelection();
+    message.success('已删除选中块');
+  } else {
+    message.warning(r.reason || '删除失败');
+  }
 }
 
 function insertParagraphBesideSelected(direction) {
@@ -2902,6 +2930,7 @@ const mediaWidthUnit = ref('%');
 const mediaWidthInput = ref('100');
 const mediaHeightMode = ref('auto');
 const mediaHeightInput = ref('');
+const mediaObjectFit = ref('');
 
 function baseWidth() {
   const contentEl = getContentContainerEl();
@@ -2981,16 +3010,19 @@ const displayPercent = computed(() => {
   return sliderValue.value;
 });
 
-/** 尺寸胶囊文案：% 显示百分比，px 显示像素值 */
+/** 尺寸胶囊文案：% 显示百分比，px 显示像素值，若有 object-fit 则附带提示 */
 const sizePillLabel = computed(() => {
+  let sizeStr = '';
   if (previewPercent.value !== null && mediaWidthUnit.value === '%') {
-    return `${previewPercent.value}%`;
-  }
-  if (mediaWidthUnit.value === 'px') {
+    sizeStr = `${previewPercent.value}%`;
+  } else if (mediaWidthUnit.value === 'px') {
     const v = String(mediaWidthInput.value || '').trim();
-    return v ? `${v}px` : displayPercent.value + '%';
+    sizeStr = v ? `${v}px` : displayPercent.value + '%';
+  } else {
+    sizeStr = `${displayPercent.value}%`;
   }
-  return `${displayPercent.value}%`;
+  const fitObj = OBJECT_FIT_OPTIONS.find((f) => f.value && f.value === mediaObjectFit.value);
+  return fitObj ? `${sizeStr} · ${fitObj.label.split(' ')[0]}` : sizeStr;
 });
 
 /** 当前单位下的快速预设 */
@@ -2998,7 +3030,7 @@ const sizePresets = computed(() =>
   mediaWidthUnit.value === 'px' ? PRESET_SIZES_PX : PRESET_SIZES,
 );
 
-/** 从节点 attrs.style 解析宽高，回显到双单位表单 */
+/** 从节点 attrs.style 解析宽高与适应模式，回显到双单位表单 */
 function loadMediaSize() {
   const node = selectedTarget.value?.node;
   const style = node?.attrs?.style || '';
@@ -3017,6 +3049,11 @@ function loadMediaSize() {
   } else {
     mediaHeightMode.value = 'auto';
     mediaHeightInput.value = '';
+  }
+  const fitMatch = style.match(/object-fit\s*:\s*([a-z-]+)/i);
+  mediaObjectFit.value = fitMatch ? fitMatch[1].toLowerCase() : '';
+  if (selectedElementTarget.value?.node === node) {
+    elementObjectFit.value = mediaObjectFit.value;
   }
   sliderValue.value = getCurrentImagePercent();
 }
@@ -3084,6 +3121,35 @@ function applyPresetSize(value) {
   commitMediaSize();
 }
 
+function setMediaObjectFit(fit) {
+  mediaObjectFit.value = fit || '';
+  if (!selectedTarget.value || !['image', 'video'].includes(selectedTarget.value.type)) return;
+  const editor = editorInstance.value;
+  if (!editor) return;
+  const pos = requireFreshMediaPos();
+  if (pos === null) return;
+  const node = editor.state.doc.nodeAt(pos);
+  if (!node || (node.type.name !== 'image' && node.type.name !== 'video')) return;
+
+  const updates = [];
+  const removes = [];
+  if (fit) {
+    updates.push(['object-fit', fit]);
+  } else {
+    removes.push('object-fit');
+  }
+  const newStyle = setStyleDecls(node.attrs.style, updates, removes);
+  const tr = editor.state.tr.setNodeMarkup(pos, null, {
+    ...node.attrs,
+    style: newStyle,
+  });
+  editor.view.dispatch(tr);
+  selectedTarget.value.node = editor.state.doc.nodeAt(pos);
+  if (selectedElementTarget.value?.pos === pos) {
+    elementObjectFit.value = fit || '';
+  }
+}
+
 function resetMediaSizeToOriginal() {
   if (!selectedTarget.value || !['image', 'video'].includes(selectedTarget.value.type)) return;
   const editor = editorInstance.value;
@@ -3099,8 +3165,12 @@ function resetMediaSizeToOriginal() {
   sliderValue.value = 100;
   mediaHeightMode.value = 'auto';
   mediaHeightInput.value = '';
+  mediaObjectFit.value = '';
+  if (selectedElementTarget.value?.pos === pos) {
+    elementObjectFit.value = '';
+  }
 
-  const newStyle = setStyleDecls(node.attrs.style, [], ['width', 'height', 'max-width']);
+  const newStyle = setStyleDecls(node.attrs.style, [], ['width', 'height', 'max-width', 'object-fit']);
 
   const tr = editor.state.tr.setNodeMarkup(pos, null, {
     ...node.attrs,
@@ -3412,11 +3482,16 @@ function duplicateCurrentBlock() {
   const pos = requireFreshMediaPos();
   if (pos === null) return;
   const { node } = selectedTarget.value;
-  const insertPos = pos + node.nodeSize;
-  const tr = editor.state.tr.insert(insertPos, node);
-  editor.view.dispatch(tr);
-  editor.view.focus();
-  message.success('已复制当前块');
+  try {
+    const insertPos = pos + node.nodeSize;
+    const tr = editor.state.tr.insert(insertPos, node);
+    editor.view.dispatch(tr);
+    editor.view.focus();
+    message.success('已复制当前块');
+  } catch (err) {
+    console.error('[duplicateCurrentBlock]', err);
+    message.warning('复制失败：' + (err?.message || '当前位置不支持复制'));
+  }
 }
 
 /**
@@ -6164,6 +6239,29 @@ defineExpose({
             </div>
           </div>
 
+          <!-- 图片专属：适应填充方式 (object-fit) -->
+          <template v-if="selectedElementTarget?.node?.type?.name === 'image'">
+            <span class="app-editor-divider"></span>
+            <div class="app-editor-inspector__group">
+              <span class="app-editor-panel-title">图片适应</span>
+              <div class="flex items-center gap-1">
+                <div class="app-editor-presets">
+                  <button
+                    v-for="fit in OBJECT_FIT_OPTIONS"
+                    :key="fit.value"
+                    class="app-editor-preset-btn"
+                    :class="{ 'is-active': (elementObjectFit || '') === (fit.value || '') }"
+                    :title="fit.desc"
+                    type="button"
+                    @click="setElementObjectFit(fit.value)"
+                  >
+                    {{ fit.label.split(' ')[0] }}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </template>
+
           <span class="app-editor-divider"></span>
 
           <!-- 块操作 -->
@@ -7114,6 +7212,24 @@ defineExpose({
                   @change="onSliderChange"
                 />
                 <span class="text-xs font-mono font-semibold text-primary w-9 text-right">{{ displayPercent }}%</span>
+              </div>
+            </div>
+
+            <!-- 第三行：图片适应方式 (object-fit) -->
+            <div class="flex items-center gap-2 flex-wrap text-xs pt-1.5 border-t border-border/40">
+              <span class="text-xs text-muted-foreground font-medium shrink-0">适应模式</span>
+              <div class="inline-flex rounded-md border border-border bg-background p-0.5 shadow-2xs flex-wrap gap-0.5">
+                <button
+                  v-for="fit in OBJECT_FIT_OPTIONS"
+                  :key="fit.value"
+                  type="button"
+                  class="rounded px-2 py-0.5 text-xs font-medium transition-all"
+                  :class="(mediaObjectFit || '') === (fit.value || '') ? 'bg-primary text-primary-foreground shadow-xs font-semibold' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'"
+                  :title="fit.desc"
+                  @click="setMediaObjectFit(fit.value)"
+                >
+                  {{ fit.label }}
+                </button>
               </div>
             </div>
           </div>
@@ -8356,6 +8472,13 @@ defineExpose({
 }
 
 .web-article > *,
+.app-editor-wrapper .vben-tiptap-content > *,
+.preview-device--full .vben-tiptap-content > * {
+  position: relative;
+  isolation: isolate;
+}
+
+.web-article > *,
 .app-editor-wrapper:not(.viewport--677px):not(.viewport--375px) .vben-tiptap-content > *,
 .preview-device--full .vben-tiptap-content > * {
   grid-column: content;
@@ -8381,6 +8504,7 @@ defineExpose({
 .preview-device--full .vben-tiptap-content > div.web-bleed:not(.cms-columns) {
   display: grid;
   grid-template-columns: var(--web-article-template);
+  align-content: start;
 }
 
 .web-article > section.web-bleed > *,
