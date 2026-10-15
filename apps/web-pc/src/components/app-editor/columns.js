@@ -129,6 +129,14 @@ export function buildColumnsContainerStyle(gap = "16px", perRow = 1) {
   }`;
 }
 
+/** 首/末列内收（外边距）修饰类：仅作用于 .web-bleed 全宽块，使首列/末列
+ *  外缘对齐内容列、另一侧继续出血；两列并排时即「内容列 + 单侧出血」效果。 */
+export const INSET_START_CLASS = 'cms-columns--inset-start';
+export const INSET_END_CLASS = 'cms-columns--inset-end';
+
+/** 多栏各列等高铺满修饰类：以最高的列为基准，各列内容高度自动铺满 */
+export const EQUAL_HEIGHT_CLASS = 'cms-columns--equal-height';
+
 /** 新版多栏容器 class（perRow 语义标记，站点/导出样式据此适配宽屏） */
 export function normalizeColumnsClass(perRow) {
   return `cms-columns cms-columns--row${perRow === 2 ? 2 : 1}`;
@@ -242,8 +250,19 @@ function rebuildColumnsBlock(tr, columnsPos, columnsNode, overrides = {}, weight
 
   const rawClass = attrs.class || columnsNode.attrs?.class || '';
   const hadBleed = rawClass.split(/\s+/).includes('web-bleed');
+  const hadInsetStart = rawClass.split(/\s+/).includes(INSET_START_CLASS);
+  const hadInsetEnd = rawClass.split(/\s+/).includes(INSET_END_CLASS);
+  const hadEqualHeight = rawClass.split(/\s+/).includes(EQUAL_HEIGHT_CLASS);
   const baseClass = normalizeColumnsClass(perRow);
-  const finalClass = hadBleed ? `${baseClass} web-bleed` : baseClass;
+  const finalClass = [
+    baseClass,
+    hadBleed ? 'web-bleed' : '',
+    hadInsetStart ? INSET_START_CLASS : '',
+    hadInsetEnd ? INSET_END_CLASS : '',
+    hadEqualHeight ? EQUAL_HEIGHT_CLASS : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   tr.setNodeMarkup(columnsPos, null, {
     ...attrs,
@@ -608,6 +627,65 @@ export const Columns = Node.create({
           const nextClassList = hasBleed
             ? classList.filter((c) => c !== 'web-bleed')
             : [...classList, 'web-bleed'];
+          const nextClass = nextClassList.join(' ');
+
+          if (dispatch) {
+            tr.setNodeMarkup(columnsPos, null, {
+              ...columnsNode.attrs,
+              class: nextClass,
+            });
+            tr.scrollIntoView();
+          }
+
+          return true;
+        },
+
+      /**
+       * 切换首列/末列内收（外边距）标记：仅对 .web-bleed 全宽块有意义，
+       * 使首列（start）或末列（end）外缘对齐内容列、另一侧继续出血。
+       */
+      toggleColumnsInset:
+        (side = 'start', targetPos = null) =>
+        ({ tr, dispatch, state }) => {
+          const info = resolveColumnsNodeAndPos(state, targetPos);
+          if (!info) return false;
+          const { columnsNode, columnsPos } = info;
+          const cls =
+            side === 'end' ? INSET_END_CLASS : INSET_START_CLASS;
+          const currentClass = columnsNode.attrs?.class || '';
+          const classList = currentClass.split(/\s+/).filter(Boolean);
+          const has = classList.includes(cls);
+          const nextClassList = has
+            ? classList.filter((c) => c !== cls)
+            : [...classList, cls];
+          const nextClass = nextClassList.join(' ');
+
+          if (dispatch) {
+            tr.setNodeMarkup(columnsPos, null, {
+              ...columnsNode.attrs,
+              class: nextClass,
+            });
+            tr.scrollIntoView();
+          }
+
+          return true;
+        },
+
+      /**
+       * 切换多栏等高铺满标记（.cms-columns--equal-height）：以最高的栏为基准，其他各栏内容自动铺满全高
+       */
+      toggleColumnsEqualHeight:
+        (targetPos = null) =>
+        ({ tr, dispatch, state }) => {
+          const info = resolveColumnsNodeAndPos(state, targetPos);
+          if (!info) return false;
+          const { columnsNode, columnsPos } = info;
+          const currentClass = columnsNode.attrs?.class || '';
+          const classList = currentClass.split(/\s+/).filter(Boolean);
+          const has = classList.includes(EQUAL_HEIGHT_CLASS);
+          const nextClassList = has
+            ? classList.filter((c) => c !== EQUAL_HEIGHT_CLASS)
+            : [...classList, EQUAL_HEIGHT_CLASS];
           const nextClass = nextClassList.join(' ');
 
           if (dispatch) {

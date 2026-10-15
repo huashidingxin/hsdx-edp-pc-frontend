@@ -1617,29 +1617,38 @@ let hoverRaf = 0;
 function resolveHoverElement() {
   const sel = selectedElementTarget.value;
   const editor = editorInstance.value;
-  if (!sel || !editor) return null;
-  if (sel.kind === 'span') {
-    let spanEl = sel.el && sel.el.isConnected ? sel.el : null;
-    if (!spanEl) {
-      spanEl = spanSelectionEl(editor, sel.from, sel.to);
-      if (spanEl) sel.el = spanEl;
+  if (sel && editor) {
+    if (sel.kind === 'span') {
+      let spanEl = sel.el && sel.el.isConnected ? sel.el : null;
+      if (!spanEl) {
+        spanEl = spanSelectionEl(editor, sel.from, sel.to);
+        if (spanEl) sel.el = spanEl;
+      }
+      return spanEl;
     }
-    return spanEl;
-  }
-  let el = sel.el && sel.el.isConnected ? sel.el : null;
-  if (!el) {
-    try {
-      const dom = editor.view.nodeDOM(sel.pos);
-      el = dom instanceof HTMLElement ? dom : null;
-    } catch {
-      el = null;
+    let el = sel.el && sel.el.isConnected ? sel.el : null;
+    if (!el) {
+      try {
+        const dom = editor.view.nodeDOM(sel.pos);
+        el = dom instanceof HTMLElement ? dom : null;
+      } catch {
+        el = null;
+      }
     }
+    if (el && el.isConnected) return el;
   }
-  return el && el.isConnected ? el : null;
+  if (selectedTarget.value?.el && selectedTarget.value.el.isConnected) {
+    return selectedTarget.value.el;
+  }
+  if (selectedColumnsTarget.value?.el && selectedColumnsTarget.value.el.isConnected) {
+    return selectedColumnsTarget.value.el;
+  }
+  return null;
 }
 
 function onHoverMove(event) {
-  if (!selectedElementTarget.value) {
+  const hasTarget = selectedElementTarget.value || selectedTarget.value || selectedColumnsTarget.value;
+  if (!hasTarget) {
     if (isHoveringSelected.value) isHoveringSelected.value = false;
     return;
   }
@@ -1648,7 +1657,8 @@ function onHoverMove(event) {
   const y = event.clientY;
   hoverRaf = requestAnimationFrame(() => {
     hoverRaf = 0;
-    if (!selectedElementTarget.value) {
+    const currentTarget = selectedElementTarget.value || selectedTarget.value || selectedColumnsTarget.value;
+    if (!currentTarget) {
       isHoveringSelected.value = false;
       return;
     }
@@ -1656,14 +1666,17 @@ function onHoverMove(event) {
     let inside = false;
     if (el) {
       try {
-        const rect = el.getBoundingClientRect();
+        const m = boxOverlay.margin;
+        const rect = (boxOverlay.visible && m && m.width > 0) ? m : el.getBoundingClientRect();
+        const rRight = rect.right !== undefined ? rect.right : (rect.left + rect.width);
+        const rBottom = rect.bottom !== undefined ? rect.bottom : (rect.top + rect.height);
         inside =
           rect.width > 0 &&
           rect.height > 0 &&
           x >= rect.left &&
-          x <= rect.right &&
+          x <= rRight &&
           y >= rect.top &&
-          y <= rect.bottom;
+          y <= rBottom;
       } catch {
         inside = false;
       }
@@ -1800,7 +1813,11 @@ function refreshBoxOverlay() {
         const right = Math.max(0, window.innerWidth - vr.right);
         const bottom = Math.max(0, window.innerHeight - vr.bottom);
         const left = Math.max(0, vr.left);
-        boxOverlay.clip = `inset(${top}px ${right}px ${bottom}px ${left}px)`;
+        if (top + bottom < window.innerHeight && left + right < window.innerWidth) {
+          boxOverlay.clip = `inset(${top}px ${right}px ${bottom}px ${left}px)`;
+        } else {
+          boxOverlay.clip = 'none';
+        }
       }
     } catch {
       boxOverlay.clip = 'none';
@@ -1809,7 +1826,8 @@ function refreshBoxOverlay() {
   boxOverlay.visible = true;
 }
 
-function applyElementSelection(found, el) {  selectedElementTarget.value = {
+function applyElementSelection(found, el) {
+  selectedElementTarget.value = {
     kind: 'node',
     el: el || null,
     pos: found.pos,
@@ -2252,6 +2270,66 @@ function toggleColumnsBleed() {
   selectedColumnsTarget.value.node = editorInstance.value.state.doc.nodeAt(pos);
   message.success(
     hasBleed ? '多栏已恢复为普通正文内容宽' : '多栏已设置为全宽通栏 (已添加 .web-bleed)',
+  );
+}
+
+const isColumnsInsetStart = computed(() => {
+  const node = selectedColumnsTarget.value?.node;
+  if (!node) return false;
+  return (node.attrs?.class || '').split(/\s+/).includes('cms-columns--inset-start');
+});
+
+const isColumnsInsetEnd = computed(() => {
+  const node = selectedColumnsTarget.value?.node;
+  if (!node) return false;
+  return (node.attrs?.class || '').split(/\s+/).includes('cms-columns--inset-end');
+});
+
+function toggleColumnsInset(side) {
+  if (!selectedColumnsTarget.value || !editorInstance.value) return;
+  const { pos, node } = selectedColumnsTarget.value;
+  const cls = side === 'end' ? 'cms-columns--inset-end' : 'cms-columns--inset-start';
+  const currentClass = node.attrs?.class || '';
+  const classList = currentClass.split(/\s+/).filter(Boolean);
+  const has = classList.includes(cls);
+  const nextClass = (has ? classList.filter((c) => c !== cls) : [...classList, cls]).join(' ');
+
+  const tr = editorInstance.value.state.tr;
+  tr.setNodeMarkup(pos, null, { ...node.attrs, class: nextClass || null });
+  editorInstance.value.view.dispatch(tr);
+  selectedColumnsTarget.value.node = editorInstance.value.state.doc.nodeAt(pos);
+  message.success(
+    has
+      ? side === 'end'
+        ? '末列已恢复出血（贴视口右缘）'
+        : '首列已恢复出血（贴视口左缘）'
+      : side === 'end'
+        ? '末列已内收（右缘对齐内容列）'
+        : '首列已内收（左缘对齐内容列）',
+  );
+}
+
+const isColumnsEqualHeight = computed(() => {
+  const node = selectedColumnsTarget.value?.node;
+  if (!node) return false;
+  return (node.attrs?.class || '').split(/\s+/).includes('cms-columns--equal-height');
+});
+
+function toggleColumnsEqualHeight() {
+  if (!selectedColumnsTarget.value || !editorInstance.value) return;
+  const { pos, node } = selectedColumnsTarget.value;
+  const cls = 'cms-columns--equal-height';
+  const currentClass = node.attrs?.class || '';
+  const classList = currentClass.split(/\s+/).filter(Boolean);
+  const has = classList.includes(cls);
+  const nextClass = (has ? classList.filter((c) => c !== cls) : [...classList, cls]).join(' ');
+
+  const tr = editorInstance.value.state.tr;
+  tr.setNodeMarkup(pos, null, { ...node.attrs, class: nextClass || null });
+  editorInstance.value.view.dispatch(tr);
+  selectedColumnsTarget.value.node = editorInstance.value.state.doc.nodeAt(pos);
+  message.success(
+    has ? '已关闭多栏等高铺满' : '已开启多栏等高铺满（各栏以最高者为准自动铺满）',
   );
 }
 
@@ -3004,7 +3082,41 @@ function commitImagePercent(percent) {
 function applyPresetSize(value) {
   mediaWidthInput.value = String(value);
   commitMediaSize();
-  activePanel.value = null;
+}
+
+function resetMediaSizeToOriginal() {
+  if (!selectedTarget.value || !['image', 'video'].includes(selectedTarget.value.type)) return;
+  const editor = editorInstance.value;
+  if (!editor) return;
+  const pos = requireFreshMediaPos();
+  if (pos === null) return;
+
+  const node = editor.state.doc.nodeAt(pos);
+  if (!node) return;
+
+  mediaWidthUnit.value = '%';
+  mediaWidthInput.value = '100';
+  sliderValue.value = 100;
+  mediaHeightMode.value = 'auto';
+  mediaHeightInput.value = '';
+
+  const newStyle = setStyleDecls(node.attrs.style, [], ['width', 'height', 'max-width']);
+
+  const tr = editor.state.tr.setNodeMarkup(pos, null, {
+    ...node.attrs,
+    style: newStyle,
+    width: null,
+    height: null,
+  });
+  editor.view.dispatch(tr);
+
+  selectedTarget.value.node = editor.state.doc.nodeAt(pos);
+  previewWidth.value = null;
+  previewPercent.value = null;
+  message.success('已恢复原始尺寸与比例');
+  nextTick(() => {
+    updateHandlePosition();
+  });
 }
 
 function applyPreset(percent) {
@@ -4132,6 +4244,11 @@ function locateSelectedInSource() {
 // ---------------------------------------------------------------------------
 // AI 内联修改（编辑区中央悬浮入口 + 文档内 diff + 逐处接受/全部接受）
 // ---------------------------------------------------------------------------
+// AI 助手与内联对比能力（当前按需求临时隐藏）
+// ---------------------------------------------------------------------------
+
+/** 是否启用 AI 交互组件（设置为 false 可临时隐藏所有 AI 悬浮条与提示卡） */
+const SHOW_AI = false;
 
 /** 比对会话（null=无会话）：{ scopeKind, scopePos, scopeType, scopeEl,
  *  origBlocks:[{html,sig}], origHTML, hunks:[{key,o,c,cAnchor,from,to}],
@@ -5449,9 +5566,9 @@ defineExpose({
         class="rounded-b-xl overflow-hidden"
         @change="onChange"
       />
-      <!-- AI 入口：常驻编辑区（双栏时为左栏）底部中央，胶囊态点击展开输入框 -->
+      <!-- AI 入口：常驻编辑区（双栏时为左栏）底部中央，胶囊态点击展开输入框（临时隐藏） -->
       <AiChatBar
-        v-if="!aiSession || aiSession.streaming"
+        v-if="SHOW_AI && (!aiSession || aiSession.streaming)"
         class="app-editor-ai-float"
         :fetch-ai="props.fetchAi ?? defaultFetchAi"
         :upload-image="uploadImage"
@@ -5553,9 +5670,9 @@ defineExpose({
       </div>
       </div>
 
-      <!-- AI 比对浮动控制卡：跟随当前变更节点，逐处确认或全部处理 -->
+      <!-- AI 比对浮动控制卡：跟随当前变更节点，逐处确认或全部处理（临时隐藏） -->
       <div
-        v-if="aiSession && !aiSession.streaming && aiPill.show"
+        v-if="SHOW_AI && aiSession && !aiSession.streaming && aiPill.show"
         class="app-editor-ai-pillwrap"
         :style="{ position: 'fixed', top: `${aiPill.top}px`, left: `${aiPill.left}px`, zIndex: 120 }"
       >
@@ -6164,47 +6281,6 @@ defineExpose({
           </div>
 
           <div class="flex items-center gap-2">
-            <!-- 快捷视口切换（支持在编辑多栏时直接切端预览） -->
-            <div class="hidden sm:inline-flex items-center rounded-lg border border-border/80 bg-background/80 p-0.5 text-[10px] shadow-xs">
-              <span class="px-1.5 text-muted-foreground select-none">视口:</span>
-              <button
-                type="button"
-                class="rounded px-1.5 py-0.5 font-medium transition-colors"
-                :class="editorCanvasWidth === '1300px' ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'"
-                title="标准文章宽 (1300px，匹配 web-article 1200px 内容列)"
-                @click="editorCanvasWidth = '1300px'"
-              >
-                🖥️ 1300
-              </button>
-              <button
-                type="button"
-                class="rounded px-1.5 py-0.5 font-medium transition-colors"
-                :class="editorCanvasWidth === 'auto' ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'"
-                title="宽屏自适应跟随窗口"
-                @click="editorCanvasWidth = 'auto'"
-              >
-                自适应
-              </button>
-              <button
-                type="button"
-                class="rounded px-1.5 py-0.5 font-medium transition-colors"
-                :class="editorCanvasWidth === '677px' ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'"
-                title="微信公众号标准宽 677px（纯内联排版）"
-                @click="editorCanvasWidth = '677px'"
-              >
-                📰 公众号
-              </button>
-              <button
-                type="button"
-                class="rounded px-1.5 py-0.5 font-medium transition-colors"
-                :class="editorCanvasWidth === '375px' ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'"
-                title="手机端真实视口 375px（纯内联排版）"
-                @click="editorCanvasWidth = '375px'"
-              >
-                📱 手机
-              </button>
-            </div>
-
             <button
               class="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
               title="关闭多栏工具栏"
@@ -6255,6 +6331,42 @@ defineExpose({
           >
             <span class="text-xs font-medium">↔️ 全宽通栏</span>
             <span v-if="isColumnsBleed" class="text-[10px] text-primary font-semibold">(已开)</span>
+          </button>
+
+          <!-- 首/末列内收（仅全宽通栏时可用）：外缘对齐内容列，另一侧继续出血 -->
+          <button
+            class="app-editor-btn app-editor-btn--pill"
+            :class="{ 'is-active': isColumnsInsetStart }"
+            :disabled="!isColumnsBleed"
+            :title="isColumnsInsetStart ? '首列已内收：左缘对齐内容列、右缘继续出血（需先开全宽通栏）' : '首列内收：左缘对齐内容列、右缘继续出血（需先开全宽通栏）'"
+            type="button"
+            @click="toggleColumnsInset('start')"
+          >
+            <span class="text-xs font-medium">首列内收</span>
+            <span v-if="isColumnsInsetStart" class="text-[10px] text-primary font-semibold">(已开)</span>
+          </button>
+          <button
+            class="app-editor-btn app-editor-btn--pill"
+            :class="{ 'is-active': isColumnsInsetEnd }"
+            :disabled="!isColumnsBleed"
+            :title="isColumnsInsetEnd ? '末列已内收：右缘对齐内容列、左缘继续出血（需先开全宽通栏）' : '末列内收：右缘对齐内容列、左缘继续出血（需先开全宽通栏）'"
+            type="button"
+            @click="toggleColumnsInset('end')"
+          >
+            <span class="text-xs font-medium">末列内收</span>
+            <span v-if="isColumnsInsetEnd" class="text-[10px] text-primary font-semibold">(已开)</span>
+          </button>
+
+          <!-- 等高铺满：以最高的栏为基准，各栏内部内容自动垂直铺满 -->
+          <button
+            class="app-editor-btn app-editor-btn--pill"
+            :class="{ 'is-active': isColumnsEqualHeight }"
+            :title="isColumnsEqualHeight ? '已开启等高铺满，点击恢复自然高度' : '等高铺满：以最高的栏为基准，其他各栏内容自动铺满全高'"
+            type="button"
+            @click="toggleColumnsEqualHeight"
+          >
+            <span class="text-xs font-medium">↕️ 等高铺满</span>
+            <span v-if="isColumnsEqualHeight" class="text-[10px] text-primary font-semibold">(已开)</span>
           </button>
 
           <span class="app-editor-divider"></span>
@@ -6878,106 +6990,133 @@ defineExpose({
         </div>
         <div v-if="activePanel" class="app-editor-floating__panels">
           <div
-          v-if="activePanel === 'size'"
-          class="app-editor-panel"
-          @mousedown.stop
-        >
-          <div class="app-editor-panel-title">宽度（百分比 / 固定像素）</div>
-          <div class="app-editor-slider-row">
-            <input
-              v-model="mediaWidthInput"
-              class="app-editor-inspector__num app-editor-inspector__num--wide"
-              inputmode="decimal"
-              placeholder="宽"
-              title="宽度数值"
-              type="text"
-              @change="commitMediaSize"
-              @keydown.enter.prevent="commitMediaSize"
-            />
-            <div class="inline-flex rounded-md border border-border bg-background p-0.5">
+            v-if="activePanel === 'size'"
+            class="app-editor-panel flex flex-col gap-2.5 pt-2"
+            @mousedown.stop
+          >
+            <!-- 第一行：常用预设比例与快捷恢复 -->
+            <div class="flex items-center gap-2 flex-wrap text-xs">
+              <span class="text-xs text-muted-foreground font-medium shrink-0">预设比例</span>
+              <div class="inline-flex rounded-md border border-border bg-background p-0.5 shadow-2xs">
+                <button
+                  v-for="preset in sizePresets"
+                  :key="preset.value"
+                  type="button"
+                  class="rounded px-2.5 py-0.5 text-xs font-medium transition-all"
+                  :class="String(mediaWidthInput) === String(preset.value) ? 'bg-primary text-primary-foreground shadow-xs font-semibold' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'"
+                  @click="applyPresetSize(preset.value)"
+                >
+                  {{ preset.label }}
+                </button>
+              </div>
+
+              <span class="app-editor-divider"></span>
+
+              <!-- 还原原始尺寸 -->
               <button
                 type="button"
-                class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
-                :class="mediaWidthUnit === '%' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
-                title="按容器百分比"
-                @click="setMediaWidthUnit('%')"
+                class="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                title="清除自定义宽高，恢复图片原始尺寸与比例"
+                @click="resetMediaSizeToOriginal"
               >
-                %
-              </button>
-              <button
-                type="button"
-                class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
-                :class="mediaWidthUnit === 'px' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
-                title="固定像素"
-                @click="setMediaWidthUnit('px')"
-              >
-                px
-              </button>
-            </div>
-          </div>
-          <div class="app-editor-panel-title mt-2">快速预设</div>
-          <div class="app-editor-presets">
-            <button
-              v-for="preset in sizePresets"
-              :key="preset.value"
-              type="button"
-              class="app-editor-preset-btn"
-              :class="{ 'is-active': String(mediaWidthInput) === String(preset.value) }"
-              @click="applyPresetSize(preset.value)"
-            >
-              {{ preset.label }}
-            </button>
-          </div>
-          <div v-if="mediaWidthUnit === '%'" class="app-editor-panel-title mt-2">拖动微调</div>
-          <div v-if="mediaWidthUnit === '%'" class="app-editor-slider-row">
-            <input
-              v-model="sliderValue"
-              class="app-editor-slider"
-              max="100"
-              min="5"
-              step="1"
-              title="拖动调整宽度"
-              type="range"
-              @mousedown.stop
-              @change="onSliderChange"
-            />
-            <span class="app-editor-pct">{{ displayPercent }}%</span>
-          </div>
-          <div class="app-editor-panel-title mt-2">高度</div>
-          <div class="app-editor-slider-row">
-            <div class="inline-flex rounded-md border border-border bg-background p-0.5">
-              <button
-                type="button"
-                class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
-                :class="mediaHeightMode === 'auto' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
-                title="高度自动（保持比例）"
-                @click="setMediaHeightMode('auto')"
-              >
-                自动
-              </button>
-              <button
-                type="button"
-                class="rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors"
-                :class="mediaHeightMode === 'px' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'"
-                title="固定像素高度"
-                @click="setMediaHeightMode('px')"
-              >
-                固定
+                <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                  <path d="M3 3v5h5"/>
+                </svg>
+                <span>还原默认</span>
               </button>
             </div>
-            <input
-              v-model="mediaHeightInput"
-              class="app-editor-inspector__num app-editor-inspector__num--wide"
-              :disabled="mediaHeightMode !== 'px'"
-              inputmode="decimal"
-              placeholder="高 px"
-              title="高度像素值"
-              type="text"
-              @change="commitMediaSize"
-              @keydown.enter.prevent="commitMediaSize"
-            />
+
+            <!-- 第二行：数值微调（宽、高、滑块） -->
+            <div class="flex items-center gap-3 flex-wrap text-xs">
+              <!-- 宽度组 -->
+              <div class="inline-flex items-center gap-1.5 rounded-md border border-border bg-background/80 px-2 py-0.5 shadow-2xs">
+                <span class="text-muted-foreground font-medium">宽</span>
+                <input
+                  v-model="mediaWidthInput"
+                  class="w-14 rounded border border-border/80 bg-background px-1.5 py-0.5 text-center text-xs font-mono focus:border-primary focus:outline-none"
+                  inputmode="decimal"
+                  placeholder="宽"
+                  title="宽度数值"
+                  type="text"
+                  @change="commitMediaSize"
+                  @keydown.enter.prevent="commitMediaSize"
+                />
+                <div class="inline-flex rounded border border-border bg-muted/40 p-0.5">
+                  <button
+                    type="button"
+                    class="rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors"
+                    :class="mediaWidthUnit === '%' ? 'bg-primary text-primary-foreground shadow-2xs' : 'text-muted-foreground hover:text-foreground'"
+                    title="按容器百分比"
+                    @click="setMediaWidthUnit('%')"
+                  >
+                    %
+                  </button>
+                  <button
+                    type="button"
+                    class="rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors"
+                    :class="mediaWidthUnit === 'px' ? 'bg-primary text-primary-foreground shadow-2xs' : 'text-muted-foreground hover:text-foreground'"
+                    title="固定像素"
+                    @click="setMediaWidthUnit('px')"
+                  >
+                    px
+                  </button>
+                </div>
+              </div>
+
+              <!-- 高度组 -->
+              <div class="inline-flex items-center gap-1.5 rounded-md border border-border bg-background/80 px-2 py-0.5 shadow-2xs">
+                <span class="text-muted-foreground font-medium">高</span>
+                <div class="inline-flex rounded border border-border bg-muted/40 p-0.5">
+                  <button
+                    type="button"
+                    class="rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors"
+                    :class="mediaHeightMode === 'auto' ? 'bg-primary text-primary-foreground shadow-2xs' : 'text-muted-foreground hover:text-foreground'"
+                    title="高度自动（保持比例）"
+                    @click="setMediaHeightMode('auto')"
+                  >
+                    自动
+                  </button>
+                  <button
+                    type="button"
+                    class="rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors"
+                    :class="mediaHeightMode === 'px' ? 'bg-primary text-primary-foreground shadow-2xs' : 'text-muted-foreground hover:text-foreground'"
+                    title="固定像素高度"
+                    @click="setMediaHeightMode('px')"
+                  >
+                    固定
+                  </button>
+                </div>
+                <input
+                  v-model="mediaHeightInput"
+                  class="w-14 rounded border border-border/80 bg-background px-1.5 py-0.5 text-center text-xs font-mono focus:border-primary focus:outline-none"
+                  :disabled="mediaHeightMode !== 'px'"
+                  inputmode="decimal"
+                  placeholder="高 px"
+                  title="高度像素值"
+                  type="text"
+                  @change="commitMediaSize"
+                  @keydown.enter.prevent="commitMediaSize"
+                />
+              </div>
+
+              <!-- 滑块微调（仅在 % 模式下显示） -->
+              <div v-if="mediaWidthUnit === '%'" class="inline-flex items-center gap-2 min-w-[160px]">
+                <input
+                  v-model="sliderValue"
+                  class="app-editor-slider flex-1 h-1.5 accent-primary cursor-pointer"
+                  max="100"
+                  min="5"
+                  step="1"
+                  title="拖动调整宽度百分比"
+                  type="range"
+                  @mousedown.stop
+                  @change="onSliderChange"
+                />
+                <span class="text-xs font-mono font-semibold text-primary w-9 text-right">{{ displayPercent }}%</span>
+              </div>
+            </div>
           </div>
-        </div>
 
         <div
           v-if="activePanel === 'align'"
@@ -8146,6 +8285,7 @@ defineExpose({
 }
 
 .app-editor-wrapper.viewport--1300px .vben-tiptap-content {
+  --web-article-inset: 50px;
   max-width: 1300px !important;
   width: 100%;
   margin-left: auto !important;
@@ -8157,6 +8297,7 @@ defineExpose({
 }
 
 .app-editor-wrapper.viewport--960px .vben-tiptap-content {
+  --web-article-inset: 24px;
   max-width: 960px !important;
   width: 100%;
   margin-left: auto !important;
@@ -8204,6 +8345,7 @@ defineExpose({
 .preview-device--full .vben-tiptap-content {
   --web-article-width: 1200px;
   --web-article-gutter: 24px;
+  --web-article-inset: max(var(--web-article-gutter, 24px), calc((100% - var(--web-article-width, 1200px)) / 2));
   --web-article-template:
     [full-start] minmax(var(--web-article-gutter), 1fr)
     [content-start] minmax(0, var(--web-article-width)) [content-end]
@@ -8249,12 +8391,6 @@ defineExpose({
 .preview-device--full .vben-tiptap-content > div.web-bleed:not(.cms-columns) > * {
   grid-column: content;
   min-width: 0;
-}
-
-/* 版式网格内多栏上下边距归零 */
-.web-article .cms-columns,
-.app-editor-wrapper .vben-tiptap-content > .cms-columns {
-  margin-block: 0 !important;
 }
 
 /* 全宽图片与全宽视频：在全宽块内自动铺满整宽 */
@@ -8309,6 +8445,29 @@ defineExpose({
   transform: translateY(-1px);
 }
 
+.app-editor-wrapper .vben-tiptap-content > .cms-columns.web-bleed.cms-columns--inset-start::before,
+.app-editor-wrapper .vben-tiptap-content .cms-columns.web-bleed.cms-columns--inset-start::before {
+  content: "↔ 全宽通栏 (首列已内收)";
+}
+
+.app-editor-wrapper .vben-tiptap-content > .cms-columns.web-bleed.cms-columns--inset-end::before,
+.app-editor-wrapper .vben-tiptap-content .cms-columns.web-bleed.cms-columns--inset-end::before {
+  content: "↔ 全宽通栏 (末列已内收)";
+}
+
+.app-editor-wrapper .vben-tiptap-content > .cms-columns.web-bleed.cms-columns--inset-start.cms-columns--inset-end::before,
+.app-editor-wrapper .vben-tiptap-content .cms-columns.web-bleed.cms-columns--inset-start.cms-columns--inset-end::before {
+  content: "↔ 全宽通栏 (首末列已内收)";
+}
+
+.app-editor-wrapper:not(.viewport--375px):not(.viewport--677px) .cms-columns.web-bleed.cms-columns--inset-start > .cms-column:first-child {
+  box-shadow: inset 2px 0 0 hsl(var(--primary) / 50%);
+}
+
+.app-editor-wrapper:not(.viewport--375px):not(.viewport--677px) .cms-columns.web-bleed.cms-columns--inset-end > .cms-column:last-child {
+  box-shadow: inset -2px 0 0 hsl(var(--primary) / 50%);
+}
+
 /* 移动端与大屏排版自适应规范 */
 .vben-tiptap-content {
   box-sizing: border-box;
@@ -8344,7 +8503,7 @@ defineExpose({
 .app-editor-boxoverlay {
   position: fixed;
   inset: 0;
-  z-index: 30;
+  z-index: 10005;
   pointer-events: none;
   user-select: none;
 }
@@ -8357,15 +8516,15 @@ defineExpose({
 
 .app-editor-boxoverlay__margin {
   /* 环带用 border 绘制（宽度由 boxLayerStyle 内联注入），不整面填充 */
-  border: 0 solid rgb(246 178 107 / 45%);
+  border: 0 solid rgb(246 178 107 / 65%);
 }
 
 .app-editor-boxoverlay__padding {
-  background: rgb(147 196 125 / 55%);
+  background: rgb(147 196 125 / 65%);
 }
 
 .app-editor-boxoverlay__content {
-  background: rgb(111 168 220 / 15%);
+  background: rgb(111 168 220 / 35%);
 }
 
 /* ---------------------------------------------------------------------------
@@ -8568,6 +8727,29 @@ defineExpose({
     margin: 0 !important;
     padding: 8px 10px !important;
   }
+
+  /* 全宽多栏首/末列内收：仅 .web-bleed 全宽块有意义。
+   * 直接作用于多栏容器自身 padding，外边距取「站点 gutter 与内容列留白」的较大值，
+   * 确保首列左缘与末列右缘与正文未全宽内容列像素级精确对齐，另一侧继续出血。 */
+  .app-editor-wrapper:not(.viewport--375px):not(.viewport--677px) .cms-columns.web-bleed.cms-columns--inset-start,
+  .app-editor-wrapper:not(.viewport--375px):not(.viewport--677px) .vben-tiptap-content .cms-columns.web-bleed.cms-columns--inset-start {
+    padding-left: var(--web-article-inset, max(var(--web-article-gutter, 24px), calc((100% - var(--web-article-width, 1200px)) / 2))) !important;
+  }
+
+  .app-editor-wrapper:not(.viewport--375px):not(.viewport--677px) .cms-columns.web-bleed.cms-columns--inset-end,
+  .app-editor-wrapper:not(.viewport--375px):not(.viewport--677px) .vben-tiptap-content .cms-columns.web-bleed.cms-columns--inset-end {
+    padding-right: var(--web-article-inset, max(var(--web-article-gutter, 24px), calc((100% - var(--web-article-width, 1200px)) / 2))) !important;
+  }
+
+  .app-editor-wrapper:not(.viewport--375px):not(.viewport--677px) .cms-columns.web-bleed.cms-columns--inset-start > .cms-column:first-child,
+  .app-editor-wrapper:not(.viewport--375px):not(.viewport--677px) .vben-tiptap-content .cms-columns.web-bleed.cms-columns--inset-start > .cms-column:first-child {
+    margin-left: 0 !important;
+  }
+
+  .app-editor-wrapper:not(.viewport--375px):not(.viewport--677px) .cms-columns.web-bleed.cms-columns--inset-end > .cms-column:last-child,
+  .app-editor-wrapper:not(.viewport--375px):not(.viewport--677px) .vben-tiptap-content .cms-columns.web-bleed.cms-columns--inset-end > .cms-column:last-child {
+    margin-right: 0 !important;
+  }
 }
 
 /* 微信公众号视口 (677px) 与 手机视口 (375px) 仿真专用内联渲染增强 */
@@ -8603,6 +8785,58 @@ defineExpose({
   width: auto !important;
   margin: 0 !important;
   padding: 0 !important;
+}
+
+/* 预览弹窗全宽设备：首/末列内收同样适用（同全屏画布规则） */
+.preview-device--full .cms-columns.web-bleed.cms-columns--inset-start,
+.preview-device--full .vben-tiptap-content .cms-columns.web-bleed.cms-columns--inset-start {
+  padding-left: var(--web-article-inset, max(var(--web-article-gutter, 24px), calc((100% - var(--web-article-width, 1200px)) / 2))) !important;
+}
+
+.preview-device--full .cms-columns.web-bleed.cms-columns--inset-end,
+.preview-device--full .vben-tiptap-content .cms-columns.web-bleed.cms-columns--inset-end {
+  padding-right: var(--web-article-inset, max(var(--web-article-gutter, 24px), calc((100% - var(--web-article-width, 1200px)) / 2))) !important;
+}
+
+.preview-device--full .cms-columns.web-bleed.cms-columns--inset-start > .cms-column:first-child,
+.preview-device--full .vben-tiptap-content .cms-columns.web-bleed.cms-columns--inset-start > .cms-column:first-child {
+  margin-left: 0 !important;
+}
+
+.preview-device--full .cms-columns.web-bleed.cms-columns--inset-end > .cms-column:last-child,
+.preview-device--full .vben-tiptap-content .cms-columns.web-bleed.cms-columns--inset-end > .cms-column:last-child {
+  margin-right: 0 !important;
+}
+
+/* 多栏各列等高铺满模式（cms-columns--equal-height）：以最高栏为基准，各栏内容自动铺满全高 */
+.app-editor-wrapper .cms-columns.cms-columns--equal-height,
+.preview-device--full .cms-columns.cms-columns--equal-height,
+.cms-columns.cms-columns--equal-height {
+  align-items: stretch !important;
+}
+
+.app-editor-wrapper .cms-columns.cms-columns--equal-height > .cms-column,
+.preview-device--full .cms-columns.cms-columns--equal-height > .cms-column,
+.cms-columns.cms-columns--equal-height > .cms-column {
+  display: flex !important;
+  flex-direction: column !important;
+  height: auto !important;
+}
+
+.app-editor-wrapper .cms-columns.cms-columns--equal-height > .cms-column > :only-child,
+.preview-device--full .cms-columns.cms-columns--equal-height > .cms-column > :only-child,
+.cms-columns.cms-columns--equal-height > .cms-column > :only-child {
+  flex: 1 1 auto !important;
+  min-height: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.app-editor-wrapper .cms-columns.cms-columns--equal-height > .cms-column > section,
+.app-editor-wrapper .cms-columns.cms-columns--equal-height > .cms-column > div:not(.app-editor-drop-cursor),
+.cms-columns.cms-columns--equal-height > .cms-column > section,
+.cms-columns.cms-columns--equal-height > .cms-column > div:not(.app-editor-drop-cursor) {
+  flex: 1 1 auto;
+  box-sizing: border-box;
 }
 
 .preview-device--wechat .cms-columns,

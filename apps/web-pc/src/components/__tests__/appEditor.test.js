@@ -211,10 +211,54 @@ describe('app-editor 扩展与保真解析验证', () => {
     expect(html).toContain('web-bleed');
     expect(html).toContain('--cms-columns-gap: 24px');
 
+    // 首/末列内收（外边距）：仅对全宽块有意义，切换后类被记录
+    editor.commands.toggleColumnsInset('start');
+    html = editor.getHTML();
+    expect(html).toContain('cms-columns--inset-start');
+
+    editor.commands.toggleColumnsInset('end');
+    html = editor.getHTML();
+    expect(html).toContain('cms-columns--inset-end');
+
+    // 调整间距时 web-bleed 与首/末列内收必须被原子保留
+    editor.commands.setColumnsGap('32px');
+    html = editor.getHTML();
+    expect(html).toContain('web-bleed');
+    expect(html).toContain('cms-columns--inset-start');
+    expect(html).toContain('cms-columns--inset-end');
+    expect(html).toContain('--cms-columns-gap: 32px');
+
+    // 关闭首/末列内收
+    editor.commands.toggleColumnsInset('start');
+    editor.commands.toggleColumnsInset('end');
+    html = editor.getHTML();
+    expect(html).not.toContain('cms-columns--inset-start');
+    expect(html).not.toContain('cms-columns--inset-end');
+
     // 再次切换退出全宽
     editor.commands.toggleColumnsBleed();
     html = editor.getHTML();
     expect(html).not.toContain('web-bleed');
+
+    // 多栏等高铺满：开启后类被记录，且在调整间距时被原子保留
+    editor.commands.toggleColumnsEqualHeight();
+    html = editor.getHTML();
+    expect(html).toContain('cms-columns--equal-height');
+
+    editor.commands.setColumnsGap('16px');
+    html = editor.getHTML();
+    expect(html).toContain('cms-columns--equal-height');
+
+    editor.commands.toggleColumnsEqualHeight();
+    html = editor.getHTML();
+    expect(html).not.toContain('cms-columns--equal-height');
+
+    // 输出样式表包含首/末列内收规则与容器 padding 及等高铺满规则
+    expect(contentStylesCss).toContain('cms-columns--inset-start');
+    expect(contentStylesCss).toContain('cms-columns--inset-end');
+    expect(contentStylesCss).toContain('cms-columns--equal-height');
+    expect(contentStylesCss).toContain('padding-left: var(--web-article-inset');
+    expect(contentStylesCss).toContain('padding-right: var(--web-article-inset');
 
     // 纯 HTML 中仅含 web-bleed 也被识别为依赖样式表
     expect(usesCustomStyleBlocks('<section class="banner web-bleed">内容</section>')).toBe(true);

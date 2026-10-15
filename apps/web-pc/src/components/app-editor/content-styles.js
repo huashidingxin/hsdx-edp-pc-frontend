@@ -49,6 +49,7 @@ export const contentStylesCss = `
 .web-article {
   --web-article-width: 1200px;
   --web-article-gutter: 24px;
+  --web-article-inset: max(var(--web-article-gutter, 24px), calc((100% - var(--web-article-width, 1200px)) / 2));
   --web-article-template:
     [full-start] minmax(var(--web-article-gutter), 1fr)
     [content-start] minmax(0, var(--web-article-width)) [content-end]
@@ -77,10 +78,6 @@ export const contentStylesCss = `
 .web-article > div.web-bleed:not(.cms-columns) > * {
   grid-column: content;
   min-width: 0;
-}
-
-.web-article .cms-columns {
-  margin-block: 0 !important;
 }
 
 .web-article img.web-bleed,
@@ -143,6 +140,44 @@ export const contentStylesCss = `
     margin: 0 !important;
     padding: 0 !important;
   }
+
+  /* 全宽多栏首/末列内收：仅 .web-bleed 全宽块有意义。
+   * 直接作用于多栏容器自身的 padding，外边距取「站点 gutter 与内容列留白」的较大值，
+   * 确保首列左缘与末列右缘与正文未全宽内容列像素级精确对齐，另一侧继续出血。 */
+  .web-article > .cms-columns.web-bleed.cms-columns--inset-start,
+  .web-article .cms-columns.web-bleed.cms-columns--inset-start,
+  .web-article > div.web-bleed.cms-columns--inset-start {
+    padding-left: var(--web-article-inset, max(var(--web-article-gutter, 24px), calc((100% - var(--web-article-width, 1200px)) / 2))) !important;
+  }
+
+  .web-article > .cms-columns.web-bleed.cms-columns--inset-end,
+  .web-article .cms-columns.web-bleed.cms-columns--inset-end,
+  .web-article > div.web-bleed.cms-columns--inset-end {
+    padding-right: var(--web-article-inset, max(var(--web-article-gutter, 24px), calc((100% - var(--web-article-width, 1200px)) / 2))) !important;
+  }
+}
+
+/* ===== 多栏等高铺满（.cms-columns--equal-height）：以最高栏为基准，各栏内容自动铺满全高 ===== */
+.cms-columns--equal-height {
+  align-items: stretch !important;
+}
+
+.cms-columns--equal-height > .cms-column {
+  display: flex !important;
+  flex-direction: column !important;
+  height: auto !important;
+}
+
+.cms-columns--equal-height > .cms-column > :only-child {
+  flex: 1 1 auto !important;
+  min-height: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.cms-columns--equal-height > .cms-column > section,
+.cms-columns--equal-height > .cms-column > div:not(.app-editor-drop-cursor) {
+  flex: 1 1 auto;
+  box-sizing: border-box;
 }
 
 /* 图片：内联已有 max-width，此处双保险（窄屏不溢出）
