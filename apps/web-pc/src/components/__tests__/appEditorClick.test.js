@@ -646,4 +646,38 @@ describe('app-editor 元素检查器', () => {
       wrapper.unmount();
     }
   }, 60000);
+
+  it('带有 flex/分栏样式的段落能够被精确选中而不上浮到容器', async () => {
+    const TARGET_HTML = [
+      '<section style="display: flex; background: #333; padding: 20px;">',
+      '<p style="margin: 0px; flex: 0 0 auto; color: rgb(255, 255, 255); font-size: 32px; line-height: 1.4;"><strong>色彩持久性</strong></p>',
+      '<p style="margin: 0px; flex: 1 1 300px; min-width: 0px; color: rgb(255, 255, 255); font-size: 32px; line-height: 1.4;">精选的高性能无机颜料，确保的色彩持久性</p>',
+      '</section>',
+    ].join('');
+    const wrapper = await mountInspector(TARGET_HTML);
+    try {
+      await settle();
+      await waitForEditorReady();
+
+      const p1 = wrapper.find('strong');
+      expect(p1.exists()).toBe(true);
+      await p1.trigger('mousedown');
+      await p1.trigger('click');
+      await settle();
+
+      expect(wrapper.vm.selectedElementTarget?.node?.type?.name).toBe('paragraph');
+      expect(wrapper.vm.selectedElementTarget?.node?.attrs?.style).toContain('flex: 0 0 auto');
+
+      const p2 = wrapper.findAll('.vben-tiptap-content p')[1];
+      expect(p2.exists()).toBe(true);
+      await p2.trigger('mousedown');
+      await p2.trigger('click');
+      await settle();
+
+      expect(wrapper.vm.selectedElementTarget?.node?.type?.name).toBe('paragraph');
+      expect(wrapper.vm.selectedElementTarget?.node?.attrs?.style).toContain('flex: 1 1 300px');
+    } finally {
+      wrapper.unmount();
+    }
+  }, 60000);
 });

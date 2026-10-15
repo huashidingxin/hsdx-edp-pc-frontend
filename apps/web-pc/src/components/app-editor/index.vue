@@ -565,12 +565,25 @@ provide('appEditor:upload', uploadImage);
 
 function toggleFullscreen() {
   isFullscreen.value = !isFullscreen.value;
+  // 退出全屏或处于非全屏状态时自动关闭双栏模式
+  if (!isFullscreen.value && isSplitView.value) {
+    isSplitView.value = false;
+    sourceAiApi.value?.clearLocate?.();
+  }
   nextTick(() => {
     onScrollOrResize();
   });
 }
 
-/** 双栏开关：左可视化、右源码并排（支持普通视图与全屏） */
+// 退出全屏或非全屏状态时自动关闭双栏模式
+watch(isFullscreen, (val) => {
+  if (!val && isSplitView.value) {
+    isSplitView.value = false;
+    sourceAiApi.value?.clearLocate?.();
+  }
+});
+
+/** 双栏开关：进入=进全屏+挂载右侧源码；退出保留全屏；退出全屏或非全屏时自动关闭双栏模式 */
 function toggleSplitView() {
   if (isSplitView.value) {
     isSplitView.value = false;
@@ -579,6 +592,10 @@ function toggleSplitView() {
       onScrollOrResize();
     });
     return;
+  }
+  // 双栏模式要求全屏：非全屏下开启自动进入全屏
+  if (!isFullscreen.value) {
+    isFullscreen.value = true;
   }
   const currentHtml = editorInstance.value?.getHTML() ?? content.value ?? '';
   sourceCode.value = formatHtml(currentHtml);
@@ -3713,6 +3730,8 @@ function onContentClick(event) {
     target.closest('.app-editor-toolbar') ||
     target.closest('.app-editor-ai-chat') ||
     target.closest('.app-editor-ai-pillwrap') ||
+    target.closest('.app-editor-source') ||
+    target.closest('.app-editor-split-divider') ||
     // Dock 在编辑器根容器内部，其按钮点击不得视为“点空白处”清除选中
     target.closest('.app-editor-dock') ||
     // 状态条 / 弹窗等 chrome 点击保持原样（不触动选中）
@@ -3866,6 +3885,10 @@ function onKeyDown(event) {
   }
   if (event.key === 'Escape' && isFullscreen.value) {
     isFullscreen.value = false;
+    if (isSplitView.value) {
+      isSplitView.value = false;
+      sourceAiApi.value?.clearLocate?.();
+    }
   }
 }
 

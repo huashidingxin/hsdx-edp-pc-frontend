@@ -399,7 +399,7 @@ describe('app-editor 全屏模式工具栏与排版结构', () => {
     expect(wrapper.vm.aiSession).toBeNull();
   });
 
-  it('双栏模式开关与全屏解耦，左右并排且富文本始终可见', async () => {
+  it('双栏模式要求全屏，退出全屏或非全屏时自动关闭双栏模式', async () => {
     const { default: AppEditor } = await import('../app-editor/index.vue');
     const wrapper = mount(AppEditor, {
       props: {
@@ -437,23 +437,34 @@ describe('app-editor 全屏模式工具栏与排版结构', () => {
     expect(wrapper.vm.showSource).toBe(false);
     expect(wrapper.vm.isFullscreen).toBe(false);
 
-    // 切换进入双栏模式：不强制要求全屏
+    // 切换进入双栏模式：自动进入全屏
     wrapper.vm.toggleSplitView();
     await nextTick();
 
     expect(wrapper.vm.isSplitView).toBe(true);
     expect(wrapper.vm.showEditor).toBe(true);
     expect(wrapper.vm.showSource).toBe(true);
-    expect(wrapper.vm.isFullscreen).toBe(false);
+    expect(wrapper.vm.isFullscreen).toBe(true);
 
     const rootEl = wrapper.find('.app-editor-tiptap');
     expect(rootEl.classes()).toContain('app-editor--split');
 
-    // 退出双栏模式
-    wrapper.vm.toggleSplitView();
+    // 退出全屏时自动关闭双栏模式
+    wrapper.vm.toggleFullscreen();
     await nextTick();
+    expect(wrapper.vm.isFullscreen).toBe(false);
     expect(wrapper.vm.isSplitView).toBe(false);
     expect(wrapper.vm.showSource).toBe(false);
+
+    // 再次全屏下进入双栏，测试 isFullscreen 变为 false 时被 watch 自动关闭
+    wrapper.vm.toggleSplitView();
+    await nextTick();
+    expect(wrapper.vm.isSplitView).toBe(true);
+    expect(wrapper.vm.isFullscreen).toBe(true);
+
+    wrapper.vm.isFullscreen = false;
+    await nextTick();
+    expect(wrapper.vm.isSplitView).toBe(false);
   });
 
   it('工具栏已移除独立源码按钮，保留并支持双栏模式按钮', async () => {

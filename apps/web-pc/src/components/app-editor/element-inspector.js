@@ -280,6 +280,48 @@ export function hasFloatTriggerStyles(style) {
 }
 
 /**
+ * 判定叶子节点（段落/标题）是否携带实质性样式声明。
+ * 区别于常见粘贴重置（如单纯的 margin: 0 或 text-align），带有 flex 权重（作为多栏/双栏排版列）、
+ * 背景、边框、内边距等实质性样式的叶子块本身就是独立的分栏排版单元，点击应精确选中自身，不上浮到祖先。
+ */
+export function hasSignificantLeafStyles(style) {
+  if (!style) return false;
+  const decls = parseStyleDecls(style);
+  const keys = new Set(decls.map(([k]) => k.toLowerCase()));
+  // 1. flex 分栏特性：flex / flex-grow / flex-shrink / flex-basis
+  if (
+    keys.has('flex') ||
+    keys.has('flex-grow') ||
+    keys.has('flex-shrink') ||
+    keys.has('flex-basis')
+  ) {
+    return true;
+  }
+  // 2. 独立视觉/排版装饰（排除纯 margin 与 text-align）
+  const SIGNIFICANT_KEYS = [
+    'background',
+    'background-color',
+    'background-image',
+    'border',
+    'border-radius',
+    'border-top',
+    'border-right',
+    'border-bottom',
+    'border-left',
+    'padding',
+    'padding-top',
+    'padding-right',
+    'padding-bottom',
+    'padding-left',
+    'box-shadow',
+    'opacity',
+    'min-width',
+    'max-width',
+  ];
+  return SIGNIFICANT_KEYS.some((k) => keys.has(k));
+}
+
+/**
  * 装饰上浮：自身无触发样式时，向最近的带触发样式的祖先上浮。
  * - 自身有则留守（精确点击优先）；
  * - 中间 plain 节点透明穿过（个数不限，单子/多子不影响结论）；
@@ -306,6 +348,9 @@ export function floatToStyledAncestor(doc, pos, node) {
   try {
     const isLeafText = node.type.name === 'paragraph' || node.type.name === 'heading';
     if (!isLeafText && hasFloatTriggerStyles(node.attrs?.style)) return { pos, node };
+    // 叶子文本块（paragraph/heading）若自身带有 flex 分栏、背景、边框、内边距等实质性样式，
+    // 则说明它自身即为分栏布局的一栏或独立样式块，直接留守，不上浮
+    if (isLeafText && hasSignificantLeafStyles(node.attrs?.style)) return { pos, node };
     const $pos = doc.resolve(pos);
     for (let up = $pos.depth; up >= 0; up -= 1) {
       const parent = $pos.node(up);
@@ -330,6 +375,10 @@ export function floatToStyledAncestor(doc, pos, node) {
         parent.type.name === 'tableCell' ||
         parent.type.name === 'tableHeader'
       ) {
+        break;
+      }
+      // display: flex / inline-flex 弹性容器：其子元素皆为分栏排版列，上浮到此为止（避免吞掉列级点击）
+      if (parent.attrs?.style && /display\s*:\s*(inline-)?flex\b/i.test(parent.attrs.style)) {
         break;
       }
       if (!parent.attrs || !('style' in parent.attrs)) continue;
