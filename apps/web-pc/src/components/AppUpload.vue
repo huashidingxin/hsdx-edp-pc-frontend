@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Ref } from 'vue';
 
-import { h,computed,ref,shallowRef,watch } from 'vue';
+import { computed,h,nextTick,ref,shallowRef,watch } from 'vue';
 import 'vue-cropper/dist/index.css';
 import { VueCropper } from 'vue-cropper/dist/vue-cropper.es.js';
 
@@ -243,6 +243,7 @@ const compressorOption: Ref<CompressorOption> = ref({
 });
 const compressedFile = shallowRef<File | null>(null);
 const compressedFileSize = ref(0);
+const compressing = ref(false);
 
 function gcd(a: number, b: number): number {
   a = Math.abs(a);
@@ -258,6 +259,29 @@ const fixedNumber = computed(() => {
   const g = gcd(w, h);
   return [w / g, h / g];
 });
+
+// 分辨率等比缩放：以原图尺寸为基准，按百分比快速设置目标分辨率
+const scalePresets = [25, 50, 75, 100];
+const scalePercent = computed({
+  get() {
+    const orgWidth = Number(fileOrgInfo.value.width) || 0;
+    const fixedWidth = Number(cropperOption.value.fixedWidth) || 0;
+    if (!orgWidth || !fixedWidth) return 100;
+    return Math.round((fixedWidth / orgWidth) * 100);
+  },
+  set(percent) {
+    applyScalePercent(percent);
+  },
+});
+
+function applyScalePercent(percent: number) {
+  const w = Number(fileOrgInfo.value.width) || 0;
+  const h = Number(fileOrgInfo.value.height) || 0;
+  if (!w || !h) return;
+  const clamped = Math.min(100, Math.max(10, Math.round(percent)));
+  cropperOption.value.fixedWidth = Math.max(1, Math.round((w * clamped) / 100));
+  cropperOption.value.fixedHeight = Math.max(1, Math.round((h * clamped) / 100));
+}
 
 // 视频截图相关
 const videoUrl = ref('');
@@ -286,24 +310,26 @@ watch(
   },
 );
 
+// 参数变化后自动重新压缩预览。
+// 注意：getCropBlob 按组件当前 outputType prop 生成 blob，若在 prop 尚未更新时就调用，
+// 切换输出格式后仍会按旧格式压缩、导致"处理后"信息与视图不更新；
+// 因此先防抖合并连续变更，再等 nextTick（组件完成重渲染）后执行。
+const recompressPreview = debounce(() => {
+  if (cropperDialog.value && cropper.value) {
+    nextTick(() => cropHandler());
+  }
+}, 200);
+
 // 监听裁剪对话框中输出格式变化，重新压缩
-watch(
-  () => cropperOption.value.outputType,
-  () => {
-    if (cropperDialog.value && cropper.value) {
-      cropHandler();
-    }
-  },
-);
+watch(() => cropperOption.value.outputType, recompressPreview);
 
 // 监听裁剪对话框中压缩质量变化，重新压缩
+watch(() => compressorOption.value.quality, recompressPreview);
+
+// 监听目标分辨率（宽高，含等比缩放写入）变化，重新压缩
 watch(
-  () => compressorOption.value.quality,
-  () => {
-    if (cropperDialog.value && cropper.value) {
-      cropHandler();
-    }
-  },
+  [() => cropperOption.value.fixedWidth, () => cropperOption.value.fixedHeight],
+  recompressPreview,
 );
 
 // 处理文件变化
@@ -860,8 +886,17 @@ const realTime = debounce((e: any) => {
 }, 50);
 
 function cropHandler() {
+  runCropCompress();
+}
+
+// 取裁剪结果并压缩；onDone 供提交时获取本次（最新参数）的结果，
+// 避免沿用上一次压缩的旧文件。
+function runCropCompress(onDone?: (file: File | null) => void) {
   cropper.value?.getCropBlob?.((data: Blob) => {
-    if (!data) return;
+    if (!data) {
+      onDone?.(null);
+      return;
+    }
 
     const outputType = cropperOption.value.outputType;
     const typeIndex = mimeTypes.findIndex((v) => v.type === outputType);
@@ -872,12 +907,19 @@ function cropHandler() {
       data,
       outputType,
       `${Date.now()}.${mimeTypes[typeIndex]?.extension || 'jpg'}`,
+      onDone,
     );
   });
 }
 
 // 压缩相关函数
-function compress(blob: Blob, outputType?: string, fileName?: string) {
+function compress(
+  blob: Blob,
+  outputType?: string,
+  fileName?: string,
+  onDone?: (file: File | null) => void,
+) {
+  compressing.value = true;
   new Compressor(blob, {
     quality: (compressorOption.value.quality - 1) / 100,
     mimeType: outputType || blob.type,
@@ -890,24 +932,32 @@ function compress(blob: Blob, outputType?: string, fileName?: string) {
           : new File([result], fileName || 'compressed', { type: result.type });
       compressedFile.value = file;
       compressedFileSize.value = file.size;
+      compressing.value = false;
+      onDone?.(file);
     },
     error: (err: Error) => {
       console.error(err.message);
+      compressing.value = false;
+      onDone?.(null);
     },
   });
 }
 
 function handleSubmit() {
-  cropHandler();
-  cropperDialog.value = false;
-
-  if (fileOrgInfo.value.index !== undefined && compressedFile.value) {
+  if (fileOrgInfo.value.index === undefined) {
+    cropperDialog.value = false;
+    return;
+  }
+  // 提交时重新压缩一次，确保写入列表的是当前参数下的最新结果
+  runCropCompress((file) => {
+    if (!file || fileOrgInfo.value.index === undefined) return;
     list.value[fileOrgInfo.value.index] = {
-      url: createObjectURL(compressedFile.value),
-      file: compressedFile.value,
+      url: createObjectURL(file),
+      file,
     };
     updateModelValue();
-  }
+    cropperDialog.value = false;
+  });
 }
 
 // 视频截图相关函数
@@ -1417,6 +1467,9 @@ defineExpose({
                 {{ cropperOption.fixedHeight }}
               </span>
               <span>大小：{{ formatSize(compressedFileSize) }}</span>
+              <span v-if="compressing" class="ml-2 text-xs text-gray-400">
+                压缩中...
+              </span>
             </div>
           </div>
         </div>
@@ -1469,6 +1522,39 @@ defineExpose({
 
           <Col :span="24">
             <div class="flex flex-col">
+              <span class="mb-2 text-sm">
+                分辨率等比缩放
+                <span class="ml-1 text-xs text-gray-400">
+                  {{ scalePercent }}%（原图
+                  {{ fileOrgInfo.width || '-' }} * {{ fileOrgInfo.height || '-' }}）
+                </span>
+              </span>
+              <div class="flex items-center gap-3">
+                <SpaceCompact>
+                  <Button
+                    v-for="p in scalePresets"
+                    :key="p"
+                    size="small"
+                    :type="scalePercent === p ? 'primary' : 'default'"
+                    @click="applyScalePercent(p)"
+                  >
+                    {{ p }}%
+                  </Button>
+                </SpaceCompact>
+                <Slider
+                  v-model:value="scalePercent"
+                  class="flex-1"
+                  :max="100"
+                  :min="10"
+                  :step="1"
+                  :tooltip="{ formatter: (value) => `${value}%` }"
+                />
+              </div>
+            </div>
+          </Col>
+
+          <Col :span="24">
+            <div class="flex flex-col">
               <span class="mb-2 text-sm">压缩质量</span>
               <Slider
                 v-model:value="compressorOption.quality"
@@ -1481,7 +1567,13 @@ defineExpose({
         </Row>
       </div>
       <div class="mt-4 flex justify-end gap-2">
-        <Button type="primary" @click="handleSubmit">确定处理</Button>
+        <Button
+          type="primary"
+          :loading="compressing"
+          @click="handleSubmit"
+        >
+          确定处理
+        </Button>
         <Button @click="cropperDialog = false">取消</Button>
       </div>
     </Modal>

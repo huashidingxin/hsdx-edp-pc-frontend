@@ -1,5 +1,8 @@
 <script setup>
-import { computed, ref, watch } from 'vue';
+import { computed, ref, shallowRef, watch } from 'vue';
+
+import Compressor from 'compressorjs';
+import { debounce } from 'lodash-es';
 
 import {
   buildThumbnailUrl,
@@ -50,6 +53,176 @@ const jumpPageInput = ref('');
 
 const fileInputRef = ref(null);
 const isUploading = ref(false);
+
+// ---- 图片上传前处理（压缩 / 格式转换 / 等比缩放，交互对齐 AppUpload 裁剪压缩）----
+const IMAGE_FORMAT_OPTIONS = [
+  { label: '原格式', value: 'keep' },
+  { label: 'WebP', value: 'image/webp' },
+  { label: 'JPG', value: 'image/jpeg' },
+  { label: 'PNG', value: 'image/png' },
+];
+const IMAGE_MIME_TO_EXT = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+};
+const SCALE_PRESETS = [25, 50, 75, 100];
+
+const pendingFile = shallowRef(null);
+const pendingPreviewUrl = ref('');
+const pendingInfo = ref({ height: 0, size: 0, width: 0 });
+const processFormat = ref('keep');
+const processQuality = ref(90);
+const processScale = ref(100);
+const processedFile = shallowRef(null);
+const isProcessing = ref(false);
+
+const targetDims = computed(() => {
+  const { height, width } = pendingInfo.value;
+  if (!width || !height) return { height: 0, width: 0 };
+  const scale = processScale.value / 100;
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
+});
+
+const savedPercent = computed(() => {
+  const processedSize = processedFile.value?.size || 0;
+  const originalSize = pendingInfo.value.size || 0;
+  if (!processedSize || !originalSize) return 0;
+  return Math.round((1 - processedSize / originalSize) * 100);
+});
+
+function isProcessableImage(file) {
+  const ext = file.name.split('.').pop()?.toLowerCase() || '';
+  // gif 有动画、svg 为矢量，压缩/转格式会破坏内容，保持原图直传
+  if (['gif', 'svg'].includes(ext)) return false;
+  return detectMediaType(file.type, ext) === 'image';
+}
+
+async function openProcessPanel(file) {
+  // 先重置参数（此时 pendingFile 为空，watch 不会调度预览），再挂载文件
+  processFormat.value = 'keep';
+  processQuality.value = 90;
+  processScale.value = 100;
+  processedFile.value = null;
+  pendingFile.value = file;
+  pendingInfo.value = { height: 0, size: file.size, width: 0 };
+  pendingPreviewUrl.value = URL.createObjectURL(file);
+
+  // 读取真实分辨率，用于展示与等比缩放计算
+  try {
+    const img = new Image();
+    img.src = pendingPreviewUrl.value;
+    await new Promise((resolve, reject) => {
+      img.addEventListener('load', resolve, { once: true });
+      img.addEventListener('error', reject, { once: true });
+    });
+    if (pendingFile.value === file) {
+      pendingInfo.value.width = img.naturalWidth;
+      pendingInfo.value.height = img.naturalHeight;
+    }
+  } catch {
+    // 读取失败不阻塞上传
+  }
+  runProcessPreview();
+}
+
+function closeProcessPanel() {
+  if (pendingPreviewUrl.value) {
+    URL.revokeObjectURL(pendingPreviewUrl.value);
+  }
+  pendingPreviewUrl.value = '';
+  pendingFile.value = null;
+  processedFile.value = null;
+  isProcessing.value = false;
+}
+
+// Compressor 输出是 Blob，这里按实际输出类型包成 File 并修正扩展名，
+// 避免“内容 webp、文件名 jpg”的错位。
+function wrapProcessedFile(blob, originalName) {
+  const base = originalName.replace(/\.[^.]+$/, '') || 'image';
+  const type = blob.type || 'image/jpeg';
+  const ext =
+    IMAGE_MIME_TO_EXT[type] ||
+    originalName.split('.').pop()?.toLowerCase() ||
+    'jpg';
+  return new File([blob], `${base}.${ext}`, { type });
+}
+
+function buildCompressorOptions(onSuccess, onError) {
+  const keepFormat =
+    !processFormat.value || processFormat.value === 'keep';
+  const options = {
+    quality: Math.min(1, Math.max(0.1, processQuality.value / 100)),
+    // 保持原格式时，禁止大 PNG 被默认规则静默转成 JPEG
+    convertSize: Infinity,
+    // 压缩结果反而变大时回退原图；显式转换格式时尊重用户选择
+    strict: keepFormat,
+    success: onSuccess,
+    error: onError,
+  };
+  const format = IMAGE_FORMAT_OPTIONS.find(
+    (o) => o.value === processFormat.value,
+  );
+  if (format && format.value !== 'keep') {
+    options.mimeType = format.value;
+  }
+  if (
+    processScale.value < 100 &&
+    targetDims.value.width &&
+    targetDims.value.height
+  ) {
+    options.width = targetDims.value.width;
+    options.height = targetDims.value.height;
+  }
+  return options;
+}
+
+// 防抖运行一次压缩，刷新“处理后”大小预览
+const runProcessPreview = debounce(() => {
+  const file = pendingFile.value;
+  if (!file) return;
+  isProcessing.value = true;
+  new Compressor(
+    file,
+    buildCompressorOptions(
+      (result) => {
+        processedFile.value = wrapProcessedFile(result, file.name);
+        isProcessing.value = false;
+      },
+      (err) => {
+        console.error('[app-editor] 图片压缩失败:', err);
+        processedFile.value = null;
+        isProcessing.value = false;
+      },
+    ),
+  );
+}, 250);
+
+watch([processFormat, processQuality, processScale], () => {
+  if (pendingFile.value) runProcessPreview();
+});
+
+function confirmProcessedUpload() {
+  const file = pendingFile.value;
+  if (!file) return;
+  isProcessing.value = true;
+  new Compressor(
+    file,
+    buildCompressorOptions(
+      (result) => {
+        isProcessing.value = false;
+        uploadWithProcessing(wrapProcessedFile(result, file.name));
+      },
+      (err) => {
+        console.error('[app-editor] 图片压缩失败:', err);
+        isProcessing.value = false;
+      },
+    ),
+  );
+}
 
 const isInputtingUrl = ref(false);
 const customUrl = ref('');
@@ -234,8 +407,17 @@ function triggerUpload() {
 
 async function onFileSelected(event) {
   const file = event.target?.files?.[0];
+  if (fileInputRef.value) fileInputRef.value.value = '';
   if (!file || !props.uploadFile) return;
 
+  // 图片先进入处理面板，其余文件直接上传
+  const target = isProcessableImage(file)
+    ? openProcessPanel(file)
+    : uploadWithProcessing(file);
+  await target;
+}
+
+async function uploadWithProcessing(file) {
   isUploading.value = true;
   try {
     const url = await props.uploadFile(file);
@@ -261,12 +443,12 @@ async function onFileSelected(event) {
       list.value.unshift(newItem);
       total.value += 1;
       selectedItem.value = newItem;
+      closeProcessPanel();
     }
-  } catch (err) {
-    console.error('[app-editor] 媒体库内直传失败:', err);
+  } catch (error) {
+    console.error('[app-editor] 媒体库内直传失败:', error);
   } finally {
     isUploading.value = false;
-    if (fileInputRef.value) fileInputRef.value.value = '';
   }
 }
 
@@ -311,6 +493,8 @@ watch(
       customUrl.value = '';
       jumpPageInput.value = '';
       loadMedia(1);
+    } else {
+      closeProcessPanel();
     }
   },
 );
@@ -558,9 +742,193 @@ watch(
 
         <!-- 资源内容区 -->
         <div class="relative flex-1 min-h-[340px] max-h-[55vh] overflow-y-auto p-5">
+          <!-- 图片上传前处理面板（压缩 / 格式转换 / 等比缩放） -->
+          <div v-if="pendingFile" class="flex min-h-[300px] flex-col gap-4">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-semibold">图片上传处理</span>
+                <span
+                  class="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                >
+                  可压缩、转格式或等比缩放后再上传
+                </span>
+              </div>
+              <button
+                class="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                title="取消本次上传"
+                type="button"
+                @click="closeProcessPanel"
+              >
+                <svg
+                  class="size-4"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  viewBox="0 0 24 24"
+                >
+                  <line x1="18" x2="6" y1="6" y2="18" />
+                  <line x1="6" x2="18" y1="6" y2="18" />
+                </svg>
+              </button>
+            </div>
+
+            <div class="flex flex-col gap-4 md:flex-row">
+              <!-- 左侧预览 -->
+              <div
+                class="flex flex-col items-center justify-center rounded-lg border border-border bg-muted/30 p-3 md:w-2/5"
+              >
+                <img
+                  :src="pendingPreviewUrl"
+                  alt="待上传图片"
+                  class="max-h-44 max-w-full rounded object-contain"
+                />
+                <div
+                  class="mt-2 w-full text-center text-[11px] text-muted-foreground"
+                >
+                  <div class="truncate" :title="pendingFile.name">
+                    {{ pendingFile.name }}
+                  </div>
+                  <div class="mt-0.5">
+                    原图 {{ pendingInfo.width || '?' }} ×
+                    {{ pendingInfo.height || '?' }} ·
+                    {{ formatBytes(pendingInfo.size) }}
+                  </div>
+                  <div class="mt-0.5 font-medium text-primary">
+                    <template v-if="isProcessing">处理中...</template>
+                    <template v-else-if="processedFile">
+                      处理后 {{ targetDims.width }} ×
+                      {{ targetDims.height }} ·
+                      {{ formatBytes(processedFile.size) }}
+                      <span v-if="savedPercent > 0">
+                        （节省 {{ savedPercent }}%）
+                      </span>
+                      <span v-else-if="savedPercent < 0">
+                        （增大 {{ -savedPercent }}%）
+                      </span>
+                    </template>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 右侧参数 -->
+              <div class="flex flex-1 flex-col justify-between gap-4">
+                <div>
+                  <div class="mb-1.5 text-xs font-medium text-foreground">
+                    输出格式
+                  </div>
+                  <div class="flex flex-wrap gap-1.5">
+                    <button
+                      v-for="opt in IMAGE_FORMAT_OPTIONS"
+                      :key="opt.value"
+                      class="rounded-md border px-2.5 py-1 text-xs font-medium transition-colors"
+                      :class="
+                        processFormat === opt.value
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border text-muted-foreground hover:text-foreground'
+                      "
+                      type="button"
+                      @click="processFormat = opt.value"
+                    >
+                      {{ opt.label }}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <div
+                    class="mb-1.5 flex items-center justify-between text-xs font-medium text-foreground"
+                  >
+                    <span>压缩质量</span>
+                    <span class="font-mono text-muted-foreground">
+                      {{ processQuality }}%
+                    </span>
+                  </div>
+                  <input
+                    v-model.number="processQuality"
+                    class="w-full accent-primary"
+                    max="100"
+                    min="10"
+                    step="1"
+                    type="range"
+                  />
+                </div>
+
+                <div>
+                  <div
+                    class="mb-1.5 flex items-center justify-between text-xs font-medium text-foreground"
+                  >
+                    <span>分辨率等比缩放</span>
+                    <span class="font-mono text-muted-foreground">
+                      {{ processScale }}% → {{ targetDims.width }} ×
+                      {{ targetDims.height }}
+                    </span>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <button
+                      v-for="p in SCALE_PRESETS"
+                      :key="p"
+                      class="rounded-md border px-2 py-0.5 text-[11px] font-medium transition-colors"
+                      :class="
+                        processScale === p
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border text-muted-foreground hover:text-foreground'
+                      "
+                      type="button"
+                      @click="processScale = p"
+                    >
+                      {{ p }}%
+                    </button>
+                    <input
+                      v-model.number="processScale"
+                      class="flex-1 accent-primary"
+                      max="100"
+                      min="10"
+                      step="5"
+                      type="range"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div
+              class="mt-auto flex flex-wrap items-center justify-end gap-2 border-t border-border pt-3"
+            >
+              <button
+                class="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted"
+                type="button"
+                @click="closeProcessPanel"
+              >
+                取消
+              </button>
+              <button
+                class="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                :disabled="isUploading"
+                type="button"
+                @click="uploadWithProcessing(pendingFile)"
+              >
+                直接上传原图
+              </button>
+              <button
+                class="flex items-center gap-1.5 rounded-md bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                :disabled="isUploading"
+                type="button"
+                @click="confirmProcessedUpload"
+              >
+                <span
+                  v-if="isUploading"
+                  class="size-3 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent"
+                ></span>
+                处理并上传
+              </button>
+            </div>
+          </div>
+
           <!-- 加载状态 -->
           <div
-            v-if="loading"
+            v-else-if="loading"
             class="absolute inset-0 z-10 flex flex-col items-center justify-center bg-card/70 backdrop-blur-xs"
           >
             <div
@@ -571,7 +939,7 @@ watch(
 
           <!-- 错误提示 -->
           <div
-            v-if="errorMsg && !loading"
+            v-else-if="errorMsg && !loading"
             class="flex h-64 flex-col items-center justify-center text-center text-muted-foreground"
           >
             <div class="text-xs text-red-500">{{ errorMsg }}</div>
