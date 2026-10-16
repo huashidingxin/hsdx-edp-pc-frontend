@@ -217,3 +217,219 @@ export async function putWechatSettingsApi(
     payload,
   );
 }
+
+// ===== 公众号独立运营管理 =====
+
+/** 账号能力清单（前端据此决定是否展示某个运营 tab） */
+export interface WechatCapability {
+  key: string;
+  label: string;
+  operations: string[];
+}
+
+/** 连接测试 / 账号信息 / 自动回复 均为微信原始响应，前端按字段展示 */
+export async function getWechatCapabilitiesApi() {
+  return requestClient.get<{ configured: boolean; modules: WechatCapability[] }>(
+    '/wechat/capabilities',
+  );
+}
+
+export async function testWechatConnectionApi() {
+  return requestClient.post<{ connected: boolean; checked_at: string }>(
+    '/wechat/test-connection',
+  );
+}
+
+export async function getWechatAccountApi() {
+  return requestClient.get<Record<string, any>>('/wechat/account');
+}
+
+export async function getWechatAutoReplyApi() {
+  return requestClient.get<Record<string, any>>('/wechat/auto-reply');
+}
+
+// 自定义菜单
+
+export interface WechatMenuButton {
+  name: string;
+  type?: string;
+  key?: string;
+  url?: string;
+  appid?: string;
+  pagepath?: string;
+  media_id?: string;
+  article_id?: string;
+  sub_button?: WechatMenuButton[];
+}
+
+export async function getWechatMenuApi() {
+  return requestClient.get<Record<string, any>>('/wechat/menu');
+}
+
+export async function saveWechatMenuApi(button: WechatMenuButton[]) {
+  return requestClient.put<{ button: WechatMenuButton[] }>('/wechat/menu', {
+    button,
+  });
+}
+
+export async function deleteWechatMenuApi() {
+  return requestClient.delete('/wechat/menu');
+}
+
+// 永久素材
+
+export interface WechatMaterialItem {
+  media_id: string;
+  name?: string;
+  url?: string;
+  update_time?: number;
+  content?: { news_item: any[] };
+  [key: string]: any;
+}
+
+export async function getWechatMaterialCountApi() {
+  return requestClient.get<Record<string, number>>('/wechat/materials/count');
+}
+
+export async function getWechatMaterialsApi(params: {
+  type: 'image' | 'video' | 'voice' | 'news';
+  offset?: number;
+  count?: number;
+}) {
+  return requestClient.get<{
+    total_count: number;
+    item_count: number;
+    item: WechatMaterialItem[];
+  }>('/wechat/materials', { params });
+}
+
+export async function deleteWechatMaterialApi(mediaId: string) {
+  return requestClient.delete(
+    `/wechat/materials/${encodeURIComponent(mediaId)}`,
+  );
+}
+
+// 草稿箱
+
+export interface WechatDraftItem {
+  media_id: string;
+  content?: { news_item: any[] };
+  update_time?: number;
+}
+
+export async function getWechatDraftCountApi() {
+  return requestClient.get<{ total_count: number }>('/wechat/drafts/count');
+}
+
+export async function getWechatDraftsApi(params: {
+  offset?: number;
+  count?: number;
+  no_content?: boolean;
+}) {
+  return requestClient.get<{
+    total_count: number;
+    item_count: number;
+    item: WechatDraftItem[];
+  }>('/wechat/drafts', { params });
+}
+
+export async function deleteWechatDraftApi(mediaId: string) {
+  return requestClient.delete(`/wechat/drafts/${encodeURIComponent(mediaId)}`);
+}
+
+// 已发布内容
+
+export interface WechatPublishedItem {
+  article_id: string;
+  content?: { news_item: any[] };
+  update_time?: number;
+  publish_status?: number;
+}
+
+export async function getWechatPublishedApi(params: {
+  offset?: number;
+  count?: number;
+  no_content?: boolean;
+}) {
+  return requestClient.get<{
+    total_count: number;
+    item_count: number;
+    item: WechatPublishedItem[];
+  }>('/wechat/published', { params });
+}
+
+export async function getWechatPublishedArticleApi(articleId: string) {
+  return requestClient.get<Record<string, any>>(
+    `/wechat/published/${encodeURIComponent(articleId)}`,
+  );
+}
+
+export async function deleteWechatPublishedApi(
+  articleId: string,
+  index?: number,
+) {
+  return requestClient.delete(
+    `/wechat/published/${encodeURIComponent(articleId)}`,
+    index !== undefined ? { params: { index } } : undefined,
+  );
+}
+
+// 粉丝用户
+
+export interface WechatUserSummary {
+  total: number;
+  count: number;
+  data: { openid: string[] };
+  next_openid: string;
+}
+
+export async function getWechatUsersApi(params: { next_openid?: string }) {
+  return requestClient.get<WechatUserSummary>('/wechat/users', { params });
+}
+
+export async function getWechatUserApi(openid: string, lang = 'zh_CN') {
+  return requestClient.get<Record<string, any>>(
+    `/wechat/users/${encodeURIComponent(openid)}`,
+    { params: { lang } },
+  );
+}
+
+// 用户标签
+
+export interface WechatTag {
+  id: number;
+  name: string;
+  count: number;
+}
+
+export async function getWechatTagsApi() {
+  return requestClient.get<{ tags: WechatTag[] }>('/wechat/tags');
+}
+
+export async function createWechatTagApi(name: string) {
+  return requestClient.post<{ tag: WechatTag }>('/wechat/tags', { name });
+}
+
+export async function updateWechatTagApi(tagId: number, name: string) {
+  return requestClient.put<{ id: number; name: string }>(
+    `/wechat/tags/${tagId}`,
+    { name },
+  );
+}
+
+export async function deleteWechatTagApi(tagId: number) {
+  return requestClient.delete(`/wechat/tags/${tagId}`);
+}
+
+export async function tagWechatUsersApi(tagId: number, openids: string[]) {
+  return requestClient.post<{ tag_id: number; affected: number }>(
+    `/wechat/tags/${tagId}/users`,
+    { openids },
+  );
+}
+
+export async function untagWechatUsersApi(tagId: number, openids: string[]) {
+  return requestClient.delete(`/wechat/tags/${tagId}/users`, {
+    data: { openids },
+  });
+}
