@@ -4,6 +4,8 @@ import type { ApplicationItem } from '#/store/current-app';
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
+import { preferences } from '@vben/preferences';
+import { useAccessStore, useUserStore } from '@vben/stores';
 import { IconifyIcon as Icon } from '@vben/icons';
 
 import {
@@ -22,6 +24,8 @@ import { useCurrentAppStore } from '#/store/current-app';
 defineOptions({ name: 'AppWorkspaceSelector' });
 
 const currentAppStore = useCurrentAppStore();
+const accessStore = useAccessStore();
+const userStore = useUserStore();
 const router = useRouter();
 const route = useRoute();
 
@@ -32,8 +36,12 @@ const loading = ref(false);
 const typeConfig: Record<number, { color: string; icon: string; label: string }> = {
   1: { label: '官网', color: '#1677ff', icon: 'lucide:globe' },
   2: { label: '小程序', color: '#52c41a', icon: 'lucide:smartphone' },
-  3: { label: '公众号/H5', color: '#722ed1', icon: 'lucide:layout' },
+  3: { label: '公众号', color: '#722ed1', icon: 'lucide:layout' },
+  4: { label: '全景', color: '#fa8c16', icon: 'lucide:globe-2' },
 };
+
+/** 分组顺序：与后端 app_types 的语义一一对应（3=公众号 / 4=全景是类型专属菜单）。 */
+const typeOrder = [1, 2, 3, 4];
 
 function getTypeMeta(type?: number) {
   return (
@@ -59,6 +67,23 @@ const filteredApplications = computed(() => {
   );
 });
 
+/** 按应用类型分组：多应用类型下侧栏菜单按当前应用类型驱动，分组让选择有预期。 */
+const groupedApplications = computed(() => {
+  const groups = typeOrder
+    .map((type) => ({
+      type,
+      apps: filteredApplications.value.filter((app) => (app.type ?? 1) === type),
+    }))
+    .filter((group) => group.apps.length > 0);
+  const rest = filteredApplications.value.filter(
+    (app) => !typeOrder.includes(app.type ?? 1),
+  );
+  if (rest.length > 0) {
+    groups.push({ type: 0, apps: rest });
+  }
+  return groups;
+});
+
 async function refreshApps() {
   loading.value = true;
   try {
@@ -68,7 +93,30 @@ async function refreshApps() {
   }
 }
 
-function handleSelect(app: ApplicationItem) {
+/**
+ * 切换应用后按新应用类型重新生成菜单与路由。
+ *
+ * 后端 auth/menus 按 X-Application-Id 解析出的应用类型过滤（app_types）：
+ * 全景应用才有「全景漫游」组，公众号应用才有「公众号」组。动态 import 避免
+ * 与 access.ts ↔ layouts ↔ 本组件的循环依赖。
+ */
+async function regenerateMenus() {
+  try {
+    const { generateAccess } = await import('#/router/access');
+    const { accessRoutes } = await import('#/router/routes');
+    const { accessibleMenus, accessibleRoutes } = await generateAccess({
+      roles: userStore.userInfo?.roles ?? [],
+      router,
+      routes: accessRoutes,
+    });
+    accessStore.setAccessMenus(accessibleMenus);
+    accessStore.setAccessRoutes(accessibleRoutes);
+  } catch (error) {
+    console.error('切换应用后刷新菜单失败:', error);
+  }
+}
+
+async function handleSelect(app: ApplicationItem) {
   if (currentAppStore.currentAppId === app.id) {
     popoverOpen.value = false;
     return;
@@ -76,6 +124,17 @@ function handleSelect(app: ApplicationItem) {
   currentAppStore.selectApp(app.id);
   popoverOpen.value = false;
   message.success(`已切换应用：${app.name}`);
+
+  await regenerateMenus();
+
+  // 当前页可能已不属于新应用的菜单（如全景应用切到官网应用时停在全景场景页）→ 回落首页
+  const missing = router
+    .resolve(route.path)
+    .matched.some((record) => record.name === 'FallbackNotFound');
+  if (missing) {
+    router.replace(preferences.app.defaultHomePath);
+    return;
+  }
 
   // 如果当前在应用私有页面（页面、菜单、设置、词条），重新导航或触发就地刷新
   const appBoundPaths = [
@@ -194,50 +253,55 @@ onMounted(() => {
             <div class="apps-list">
               <template v-if="filteredApplications.length">
                 <div
-                  v-for="item in filteredApplications"
-                  :key="item.id"
-                  class="app-item"
-                  :class="{ 'is-active': currentAppStore.currentAppId === item.id }"
-                  @click="handleSelect(item)"
+                  v-for="group in groupedApplications"
+                  :key="group.type"
+                  class="app-group"
                 >
-                  <div
-                    class="item-icon"
-                    :style="{ background: getTypeMeta(item.type).color }"
-                  >
+                  <div class="group-label">
                     <Icon
-                      :icon="getTypeMeta(item.type).icon"
-                      class="text-white text-sm"
+                      :icon="group.type ? getTypeMeta(group.type).icon : 'lucide:box'"
+                      class="group-icon"
+                    />
+                    {{ group.type ? getTypeMeta(group.type).label : '其他' }}
+                    <span class="group-count">{{ group.apps.length }}</span>
+                  </div>
+                  <div
+                    v-for="item in group.apps"
+                    :key="item.id"
+                    class="app-item"
+                    :class="{ 'is-active': currentAppStore.currentAppId === item.id }"
+                    @click="handleSelect(item)"
+                  >
+                    <div
+                      class="item-icon"
+                      :style="{ background: getTypeMeta(item.type).color }"
+                    >
+                      <Icon
+                        :icon="getTypeMeta(item.type).icon"
+                        class="text-white text-sm"
+                      />
+                    </div>
+                    <div class="item-body">
+                      <div class="item-title-row">
+                        <span class="item-name">{{ item.name }}</span>
+                      </div>
+                      <div class="item-host-row">
+                        <span class="item-host">{{ primaryHost(item) }}</span>
+                        <Tag
+                          size="small"
+                          :color="item.status === 1 ? 'success' : 'default'"
+                          class="status-tag"
+                        >
+                          {{ item.status === 1 ? '已启用' : '草稿' }}
+                        </Tag>
+                      </div>
+                    </div>
+                    <Icon
+                      v-if="currentAppStore.currentAppId === item.id"
+                      icon="lucide:check"
+                      class="active-check"
                     />
                   </div>
-                  <div class="item-body">
-                    <div class="item-title-row">
-                      <span class="item-name">{{ item.name }}</span>
-                      <span
-                        class="item-type-badge"
-                        :style="{
-                          color: getTypeMeta(item.type).color,
-                          background: getTypeMeta(item.type).color + '15',
-                        }"
-                      >
-                        {{ getTypeMeta(item.type).label }}
-                      </span>
-                    </div>
-                    <div class="item-host-row">
-                      <span class="item-host">{{ primaryHost(item) }}</span>
-                      <Tag
-                        size="small"
-                        :color="item.status === 1 ? 'success' : 'default'"
-                        class="status-tag"
-                      >
-                        {{ item.status === 1 ? '已启用' : '草稿' }}
-                      </Tag>
-                    </div>
-                  </div>
-                  <Icon
-                    v-if="currentAppStore.currentAppId === item.id"
-                    icon="lucide:check"
-                    class="active-check"
-                  />
                 </div>
               </template>
               <Empty
@@ -404,11 +468,36 @@ onMounted(() => {
 }
 
 .apps-list {
-  max-height: 300px;
+  max-height: 320px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
+}
+
+.app-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.group-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 4px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.group-icon {
+  font-size: 12px;
+}
+
+.group-count {
+  font-weight: normal;
+  color: rgba(0, 0, 0, 0.35);
 }
 
 .app-item {

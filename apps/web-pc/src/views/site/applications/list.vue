@@ -41,6 +41,7 @@ import PanoramaScenesList from '../../panorama/scenes/list.vue';
 // 公众号应用的图文同步与设置（仅应用类型=公众号时暴露入口）
 import WechatArticlesList from '../../wechat/articles/list.vue';
 import WechatSettingsIndex from '../../wechat/settings/index.vue';
+import WechatManageIndex from '../../wechat/manage/index.vue';
 import PagesList from '../pages/list.vue';
 // 公共内容模块：也以抽屉打开，传入 appId 自动按应用过滤
 import ArticlesList from '../../content/articles/list.vue';
@@ -133,7 +134,10 @@ function visibleSettingLinks(app) {
 
 /** 应用类型专属入口：全景→场景，公众号→图文同步。 */
 const typeLinks = {
-  3: [{ key: 'wechat-articles', label: '公众号图文' }],
+  3: [
+    { key: 'wechat-articles', label: '公众号图文' },
+    { key: 'wechat-manage', label: '运营管理' },
+  ],
   4: [{ key: 'panorama', label: '全景场景' }],
 };
 function visibleTypeLinks(app) {
@@ -156,6 +160,11 @@ const moduleMap = {
     title: '公众号设置',
     component: WechatSettingsIndex,
     width: 920,
+  },
+  'wechat-manage': {
+    title: '公众号运营管理',
+    component: WechatManageIndex,
+    width: 1180,
   },
   articles: { title: '文章管理', component: ArticlesList, width: 1080 },
   products: { title: '产品管理', component: ProductsList, width: 1080 },
@@ -432,6 +441,22 @@ onMounted(async () => {
             <span class="meta-lang">启用 {{ (app.enabled_locales || []).length }} 种语言</span>
           </div>
 
+          <!-- 能力徽标：挂载到本应用的租户级能力实例（知识库 / 智能客服）+ 内嵌客服开关 -->
+          <div
+            v-if="app.capabilities && (app.capabilities.knowledge_bases || app.capabilities.chat_agents || app.capabilities.ai_chat_enabled)"
+            class="card-meta capability-row"
+          >
+            <Tag v-if="app.capabilities.knowledge_bases" color="geekblue" class="capability-tag">
+              知识库 × {{ app.capabilities.knowledge_bases }}
+            </Tag>
+            <Tag v-if="app.capabilities.chat_agents" color="cyan" class="capability-tag">
+              客服实例 × {{ app.capabilities.chat_agents }}
+            </Tag>
+            <Tag v-if="app.capabilities.ai_chat_enabled" color="green" class="capability-tag">
+              内嵌客服
+            </Tag>
+          </div>
+
           <div v-if="app.type !== 4" class="card-group">
             <span class="group-label">内容</span>
             <Button
@@ -704,6 +729,16 @@ onMounted(async () => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.capability-row {
+  flex-wrap: wrap;
+}
+
+.capability-tag {
+  font-size: 11px;
+  line-height: 18px;
+  margin: 0;
 }
 
 .card-group {
