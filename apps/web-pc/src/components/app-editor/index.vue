@@ -79,6 +79,7 @@ import {
   resolveSpanTarget,
 } from './element-inspector';
 import { createEditorExtensions } from './extensions';
+import ImageCropModal from './image-crop-modal.vue';
 import { DEFAULT_THUMBNAIL_PROCESS, defaultFetchMedia, stripThumbnailParam } from './media-api';
 import MediaLibraryModal from './media-library-modal.vue';
 import ExternalAssetsModal from './external-assets-modal.vue';
@@ -3363,6 +3364,61 @@ function onReplaceImageSelect(item) {
   }
   replaceImageModalOpen.value = false;
   clearSelection();
+}
+
+// ---- 编辑器内图片压缩 / 裁剪 ----
+const cropImageModalOpen = ref(false);
+const cropImageState = ref({ name: 'image', src: '' });
+
+function inferImageFileName(src) {
+  try {
+    const pathname = new URL(src, window.location.origin).pathname;
+    const name = decodeURIComponent(pathname.split('/').pop() || '');
+    return name || 'image';
+  } catch {
+    return 'image';
+  }
+}
+
+function openImageCrop() {
+  const target = selectedTarget.value;
+  if (target?.type !== 'image') return;
+  const src =
+    target.node?.attrs?.src || target.el?.getAttribute('src') || '';
+  if (!src) {
+    message.warning('未获取到图片地址');
+    return;
+  }
+  cropImageState.value = { src, name: inferImageFileName(src) };
+  cropImageModalOpen.value = true;
+}
+
+async function onImageCropConfirm({ file } = {}) {
+  cropImageModalOpen.value = false;
+  if (!file || !selectedTarget.value) return;
+  try {
+    const url = await uploadImage(file);
+    if (!url || !selectedTarget.value) return;
+    const pos = requireFreshMediaPos();
+    if (pos === null) return;
+    const editor = editorInstance.value;
+    const node = editor?.state?.doc?.nodeAt(pos);
+    if (node && editor) {
+      const tr = editor.state.tr.setNodeMarkup(pos, null, {
+        ...node.attrs,
+        src: url,
+      });
+      editor.view.dispatch(tr);
+      selectedTarget.value.node = editor.state.doc.nodeAt(pos);
+      nextTick(() => {
+        updateHandlePosition();
+      });
+      message.success('图片已裁剪压缩并替换');
+    }
+  } catch (error) {
+    console.error('[app-editor] 图片裁剪压缩替换失败:', error);
+    message.error('图片处理失败，请重试');
+  }
 }
 
 function deleteSelectedImage() {
@@ -6967,6 +7023,19 @@ defineExpose({
       >
         <ImagePlus class="size-4" />
       </button>
+
+      <!-- 压缩 / 裁剪此图 -->
+      <button
+        class="app-editor-btn"
+        title="压缩 / 裁剪此图（拖拽裁剪后自动上传替换）"
+        type="button"
+        @click="openImageCrop"
+      >
+        <svg class="size-4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M6 2v14a2 2 0 0 0 2 2h14" />
+          <path d="M18 22V8a2 2 0 0 0-2-2H2" />
+        </svg>
+      </button>
       <span class="app-editor-divider"></span>
 
       <!-- 尺寸调节 -->
@@ -8025,6 +8094,14 @@ defineExpose({
       :upload-file="uploadGeneralFile || uploadImage"
       :thumbnail-process="false"
       @select="onReplaceVideoSelect"
+    />
+    <!-- 编辑器内图片压缩 / 裁剪弹窗 -->
+    <ImageCropModal
+      v-model:visible="cropImageModalOpen"
+      confirm-text="应用并替换"
+      :file-name="cropImageState.name"
+      :src="cropImageState.src"
+      @confirm="onImageCropConfirm"
     />
     <!-- 外链资源检测与转存弹窗 -->
     <ExternalAssetsModal

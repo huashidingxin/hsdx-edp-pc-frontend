@@ -4,6 +4,7 @@ import { computed, ref, shallowRef, watch } from 'vue';
 import Compressor from 'compressorjs';
 import { debounce } from 'lodash-es';
 
+import ImageCropModal from './image-crop-modal.vue';
 import {
   buildThumbnailUrl,
   DEFAULT_THUMBNAIL_PROCESS,
@@ -101,14 +102,11 @@ function isProcessableImage(file) {
   return detectMediaType(file.type, ext) === 'image';
 }
 
-async function openProcessPanel(file) {
-  // 先重置参数（此时 pendingFile 为空，watch 不会调度预览），再挂载文件
-  processFormat.value = 'keep';
-  processQuality.value = 90;
-  processScale.value = 100;
-  processedFile.value = null;
+// 挂载待上传图片：建立本地预览、读取真实分辨率，并刷新压缩预览
+async function mountPendingFile(file) {
   pendingFile.value = file;
   pendingInfo.value = { height: 0, size: file.size, width: 0 };
+  processedFile.value = null;
   pendingPreviewUrl.value = URL.createObjectURL(file);
 
   // 读取真实分辨率，用于展示与等比缩放计算
@@ -127,6 +125,14 @@ async function openProcessPanel(file) {
     // 读取失败不阻塞上传
   }
   runProcessPreview();
+}
+
+async function openProcessPanel(file) {
+  // 先重置参数（此时 pendingFile 为空，watch 不会调度预览），再挂载文件
+  processFormat.value = 'keep';
+  processQuality.value = 90;
+  processScale.value = 100;
+  await mountPendingFile(file);
 }
 
 function closeProcessPanel() {
@@ -222,6 +228,48 @@ function confirmProcessedUpload() {
       },
     ),
   );
+}
+
+// ---- 拖拽裁剪（上传处理面板内的待上传图片 / 媒体库历史图片共用）----
+const cropDialog = shallowRef(null);
+const cropDialogOpen = computed({
+  get() {
+    return Boolean(cropDialog.value);
+  },
+  set(value) {
+    if (!value) cropDialog.value = null;
+  },
+});
+
+function openPendingCrop() {
+  const file = pendingFile.value;
+  if (!file) return;
+  cropDialog.value = {
+    name: file.name,
+    size: file.size || 0,
+    src: pendingPreviewUrl.value,
+  };
+}
+
+// 历史图片裁剪：裁剪结果作为新文件上传（不覆盖原图）
+function openItemCrop(item) {
+  if (!props.uploadFile || item.type !== 'image' || !item.url) return;
+  cropDialog.value = { name: item.name, size: item.size || 0, src: item.url };
+}
+
+function onCropConfirm({ file } = {}) {
+  cropDialog.value = null;
+  if (!file) return;
+  if (pendingFile.value) {
+    // 上传面板内的裁剪：替换待上传文件，继续走格式/质量确认与手动上传
+    if (pendingPreviewUrl.value) {
+      URL.revokeObjectURL(pendingPreviewUrl.value);
+    }
+    mountPendingFile(file);
+    return;
+  }
+  // 媒体库历史图片裁剪：直接上传新文件并选中
+  uploadWithProcessing(file);
 }
 
 const isInputtingUrl = ref(false);
@@ -410,6 +458,9 @@ async function onFileSelected(event) {
   if (fileInputRef.value) fileInputRef.value.value = '';
   if (!file || !props.uploadFile) return;
 
+  // 进入上传流程即清除当前选中，避免底栏"确认插入"被误解为插入待上传文件
+  selectedItem.value = null;
+
   // 图片先进入处理面板，其余文件直接上传
   const target = isProcessableImage(file)
     ? openProcessPanel(file)
@@ -494,6 +545,7 @@ watch(
       jumpPageInput.value = '';
       loadMedia(1);
     } else {
+      cropDialog.value = null;
       closeProcessPanel();
     }
   },
@@ -753,25 +805,47 @@ watch(
                   可压缩、转格式或等比缩放后再上传
                 </span>
               </div>
-              <button
-                class="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                title="取消本次上传"
-                type="button"
-                @click="closeProcessPanel"
-              >
-                <svg
-                  class="size-4"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  viewBox="0 0 24 24"
+              <div class="flex items-center gap-1.5">
+                <button
+                  class="flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted"
+                  title="拖拽选取裁剪区域，应用后继续压缩上传"
+                  type="button"
+                  @click="openPendingCrop"
                 >
-                  <line x1="18" x2="6" y1="6" y2="18" />
-                  <line x1="6" x2="18" y1="6" y2="18" />
-                </svg>
-              </button>
+                  <svg
+                    class="size-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    viewBox="0 0 24 24"
+                  >
+                    <path d="M6 2v14a2 2 0 0 0 2 2h14" />
+                    <path d="M18 22V8a2 2 0 0 0-2-2H2" />
+                  </svg>
+                  拖拽裁剪
+                </button>
+                <button
+                  class="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  title="取消本次上传"
+                  type="button"
+                  @click="closeProcessPanel"
+                >
+                  <svg
+                    class="size-4"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    viewBox="0 0 24 24"
+                  >
+                    <line x1="18" x2="6" y1="6" y2="18" />
+                    <line x1="6" x2="18" y1="6" y2="18" />
+                  </svg>
+                </button>
+              </div>
             </div>
 
             <div class="flex flex-col gap-4 md:flex-row">
@@ -1066,6 +1140,28 @@ watch(
                   </span>
                 </div>
 
+                <!-- 历史图片裁剪入口（结果作为新图片上传，不覆盖原图） -->
+                <button
+                  v-if="item.type === 'image' && props.uploadFile"
+                  class="absolute left-1.5 top-1.5 z-10 flex size-5 items-center justify-center rounded-full bg-black/60 text-white opacity-0 shadow transition-opacity group-hover:opacity-100 hover:!bg-primary"
+                  title="裁剪此图片（结果作为新图片上传）"
+                  type="button"
+                  @click.stop="openItemCrop(item)"
+                >
+                  <svg
+                    class="size-3"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    viewBox="0 0 24 24"
+                  >
+                    <path d="M6 2v14a2 2 0 0 0 2 2h14" />
+                    <path d="M18 22V8a2 2 0 0 0-2-2H2" />
+                  </svg>
+                </button>
+
                 <!-- 选中勾标 -->
                 <div
                   v-if="selectedItem?.id === item.id"
@@ -1259,5 +1355,15 @@ watch(
         </div>
       </div>
     </div>
+
+    <!-- 图片拖拽裁剪弹窗（上传处理面板 / 历史图片共用） -->
+    <ImageCropModal
+      v-model:visible="cropDialogOpen"
+      :confirm-text="pendingFile ? '应用裁剪' : '裁剪并上传'"
+      :file-name="cropDialog?.name || 'image'"
+      :original-size="cropDialog?.size || 0"
+      :src="cropDialog?.src || ''"
+      @confirm="onCropConfirm"
+    />
   </Teleport>
 </template>
