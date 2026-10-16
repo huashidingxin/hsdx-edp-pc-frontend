@@ -19,11 +19,16 @@ const crudRef = ref(null);
 const router = useRouter();
 
 const applications = ref([]);
+const groups = ref([]);
 
 const statusItems = [
   { id: 'active', name: '启用' },
   { id: 'archived', name: '已归档' },
 ];
+
+const groupOptions = computed(() =>
+  groups.value.map((group) => ({ id: group.id, name: group.name })),
+);
 
 const filterFields = ref([
   {
@@ -39,6 +44,13 @@ const filterFields = ref([
     type: 'select',
     span: 8,
     attrs: { options: statusItems, allowClear: true, placeholder: '全部状态' },
+  },
+  {
+    field: 'group_id',
+    label: '分组',
+    type: 'select',
+    span: 8,
+    attrs: { options: groupOptions, allowClear: true, placeholder: '全部分组' },
   },
 ]);
 
@@ -61,6 +73,17 @@ const formFields = ref([
     attrs: { options: statusItems },
   },
   {
+    field: 'group_id',
+    type: 'select',
+    label: '分组',
+    span: 12,
+    attrs: {
+      options: groupOptions,
+      allowClear: true,
+      placeholder: '未分组',
+    },
+  },
+  {
     field: 'settings.top_k',
     type: 'number',
     label: '召回条数 top_k',
@@ -80,6 +103,7 @@ const gridColumns = ref([
   { field: 'id', title: 'ID', width: 70 },
   { field: 'code', title: '编码', minWidth: 130 },
   { field: 'name', title: '名称', minWidth: 160, formatter: emptyText },
+  { field: 'group_name', title: '分组', minWidth: 120, formatter: emptyText },
   {
     field: 'status',
     title: '状态',
@@ -179,8 +203,12 @@ const actionsConfig = ref([
 
 onMounted(async () => {
   try {
-    const { data } = await new Resource('applications').list({ per_page: 100 });
-    applications.value = data || [];
+    const [{ data: apps }, { data: groupRows }] = await Promise.all([
+      new Resource('applications').list({ per_page: 100 }),
+      new Resource('knowledge/groups').list({ per_page: 100 }),
+    ]);
+    applications.value = apps || [];
+    groups.value = groupRows || [];
   } catch (error) {
     console.error(error);
   }
@@ -204,6 +232,7 @@ onMounted(async () => {
       :form-attrs="{ layout: 'vertical', size: 'medium' }"
       :actions-config="actionsConfig"
       :inline-actions="['edit', 'sources', 'delete']"
+      :save-format="(e) => ({ ...e, group_id: e.group_id ?? null })"
       title="知识库"
       class="p-4"
     >
