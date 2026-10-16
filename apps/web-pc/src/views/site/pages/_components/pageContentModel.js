@@ -291,6 +291,7 @@ const MODEL_CONFIG_KEYS = [
   'sort_by',
   'fields',
   'category_slug',
+  'custom_category',
   'limit',
   'related',
   'id',
@@ -352,6 +353,28 @@ function validateProviderConfig(provider, config) {
     }
     if (config.sort_by !== undefined && !Array.isArray(config.sort_by)) {
       errors.push('model.sort_by 必须是数组');
+    }
+    if (config.custom_category !== undefined) {
+      const cc = config.custom_category;
+      if (!isPlainObject(cc)) {
+        errors.push('model.custom_category 必须是对象');
+      } else {
+        if (
+          typeof cc.dimension !== 'string' ||
+          !/^[a-z][a-z0-9_]*$/.test(cc.dimension)
+        ) {
+          errors.push('model.custom_category.dimension 必须匹配 [a-z][a-z0-9_]*');
+        }
+        if (typeof cc.slug !== 'string' || cc.slug.trim() === '') {
+          errors.push('model.custom_category.slug 不能为空');
+        }
+        if (
+          cc.include_children !== undefined &&
+          typeof cc.include_children !== 'boolean'
+        ) {
+          errors.push('model.custom_category.include_children 必须是布尔值');
+        }
+      }
     }
   } else if (provider === 'static_content') {
     const unknown = Object.keys(config).filter(

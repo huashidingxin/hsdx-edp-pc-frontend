@@ -69,6 +69,8 @@ function newRow() {
     pathText: '',
     editorEnabled: false,
     editor: { type: 'card', label: '', fields: [] },
+    // 扩展分类过滤（按品牌/场景等自定义维度过滤关联模型）：{dimension, slug, include_children}
+    customCategory: { dimension: '', slug: '', include_children: false },
   };
 }
 
@@ -108,6 +110,15 @@ function blockToRow(name, block) {
         label: meta?.label ?? '',
       })),
     },
+    // 扩展分类过滤：从 config.custom_category 读回，缺省为空对象（表示不按扩展分类过滤）。
+    customCategory:
+      config.custom_category && typeof config.custom_category === 'object'
+        ? {
+            dimension: config.custom_category.dimension ?? '',
+            slug: config.custom_category.slug ?? '',
+            include_children: config.custom_category.include_children === true,
+          }
+        : { dimension: '', slug: '', include_children: false },
   };
 }
 
@@ -156,6 +167,19 @@ function rowToBlock(row) {
         config.id = Number(cfg.id);
       }
       if (cfg.idParam) config.id_param = cfg.idParam;
+    }
+    const cc = row.customCategory;
+    if (
+      cc &&
+      typeof cc === 'object' &&
+      String(cc.dimension ?? '').trim() !== '' &&
+      String(cc.slug ?? '').trim() !== ''
+    ) {
+      config.custom_category = {
+        dimension: String(cc.dimension).trim(),
+        slug: String(cc.slug).trim(),
+        include_children: cc.include_children === true,
+      };
     }
   } else if (row.provider === 'static_content') {
     config = { content_key: String(cfg.contentKey ?? '').trim() };
@@ -487,6 +511,35 @@ watch(
                 <div class="flex items-center gap-2 pt-6">
                   <Switch v-model:checked="row.cfg.related" />
                   <span class="text-xs text-gray-600">按关联推荐 (related)</span>
+                </div>
+              </div>
+
+              <!-- 扩展分类过滤（按品牌/场景等自定义维度过滤关联模型） -->
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                <div>
+                  <label class="text-xs text-gray-500 block mb-1">
+                    扩展分类维度 (custom_category.dimension)
+                  </label>
+                  <Input
+                    v-model:value="row.customCategory.dimension"
+                    placeholder="如 brand"
+                  />
+                </div>
+                <div>
+                  <label class="text-xs text-gray-500 block mb-1">
+                    分类节点 slug (custom_category.slug)
+                  </label>
+                  <Input
+                    v-model:value="row.customCategory.slug"
+                    placeholder="如 jinghua"
+                  />
+                </div>
+                <div class="flex items-center gap-2 pb-1">
+                  <Switch
+                    v-model:checked="row.customCategory.include_children"
+                    :disabled="!row.customCategory.dimension"
+                  />
+                  <span class="text-xs text-gray-600">含子树 (include_children)</span>
                 </div>
               </div>
             </div>
