@@ -222,7 +222,8 @@ onMounted(async () => {
 </script>
 
 <template>
-  <AppCrudTable
+<div>
+    <AppCrudTable
     ref="crudRef"
     api-url="wechat-articles"
     v-model="formData"
@@ -328,4 +329,5 @@ onMounted(async () => {
   >
     <WechatSettingsIndex :app-id="appIdNum" />
   </Drawer>
+</div>
 </template>
