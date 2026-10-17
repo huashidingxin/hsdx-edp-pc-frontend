@@ -1,9 +1,10 @@
 <script setup>
-import { computed, ref, shallowRef, watch } from 'vue';
+import { computed, nextTick, ref, shallowRef, watch } from 'vue';
 
 import Compressor from 'compressorjs';
 import { debounce } from 'lodash-es';
 
+import { transferRemoteAsset } from './external-assets';
 import ImageCropModal from './image-crop-modal.vue';
 import {
   buildThumbnailUrl,
@@ -136,8 +137,13 @@ async function openProcessPanel(file) {
 }
 
 function closeProcessPanel() {
-  if (pendingPreviewUrl.value) {
-    URL.revokeObjectURL(pendingPreviewUrl.value);
+  // 延迟释放：处理面板/裁剪弹窗的 img 可能还指着该 URL（卸载前的重绘），
+  // 立即撤销会触发 blob ERR_FILE_NOT_FOUND
+  const staleUrl = pendingPreviewUrl.value;
+  if (staleUrl) {
+    nextTick(() => {
+      URL.revokeObjectURL(staleUrl);
+    });
   }
   pendingPreviewUrl.value = '';
   pendingFile.value = null;
@@ -257,15 +263,27 @@ function openItemCrop(item) {
   cropDialog.value = { name: item.name, size: item.size || 0, src: item.url };
 }
 
+// 无 CORS 的远程图：裁剪前先转存为站内地址
+function transferCropSource(url) {
+  return transferRemoteAsset(url, {
+    uploadFileFn: props.uploadFile || undefined,
+  });
+}
+
 function onCropConfirm({ file } = {}) {
   cropDialog.value = null;
   if (!file) return;
   if (pendingFile.value) {
-    // 上传面板内的裁剪：替换待上传文件，继续走格式/质量确认与手动上传
-    if (pendingPreviewUrl.value) {
-      URL.revokeObjectURL(pendingPreviewUrl.value);
-    }
+    // 上传面板内的裁剪：替换待上传文件，继续走格式/质量确认与手动上传。
+    // 旧预览 URL 延迟到裁剪弹窗卸载后再释放——弹窗的 <img :src> 还指着它，
+    // 立即撤销会在其重绘/在途加载时触发 blob ERR_FILE_NOT_FOUND
+    const staleUrl = pendingPreviewUrl.value;
     mountPendingFile(file);
+    if (staleUrl) {
+      nextTick(() => {
+        URL.revokeObjectURL(staleUrl);
+      });
+    }
     return;
   }
   // 媒体库历史图片裁剪：直接上传新文件并选中
@@ -1363,6 +1381,7 @@ watch(
       :file-name="cropDialog?.name || 'image'"
       :original-size="cropDialog?.size || 0"
       :src="cropDialog?.src || ''"
+      :transfer-fn="transferCropSource"
       @confirm="onCropConfirm"
     />
   </Teleport>

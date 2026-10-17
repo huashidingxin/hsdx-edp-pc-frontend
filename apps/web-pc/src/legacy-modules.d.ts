@@ -43,10 +43,6 @@ declare module '#/views/dashboard/index.vue' {
   export default component;
 }
 
-declare module 'vue-cropper/dist/vue-cropper.es.js' {
-  export const VueCropper: import('vue').DefineComponent;
-}
-
 // 通用 .vue 模块声明（路由等 TS 文件 import .vue 时避免 TS7016）
 declare module '*.vue' {
   import type { DefineComponent } from 'vue';

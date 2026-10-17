@@ -1,16 +1,19 @@
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue';
-import 'vue-cropper/dist/index.css';
-import { VueCropper } from 'vue-cropper/dist/vue-cropper.es.js';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 
 import Compressor from 'compressorjs';
+import { createCropper } from 'cropperjs';
 import { debounce } from 'lodash-es';
 
+import { buildCropperTemplate } from './cropper-template';
 import { formatBytes } from './media-api';
+
+import './cropper-theme.css';
 
 /**
  * 通用图片裁剪压缩弹窗（媒体库上传面板 / 媒体库历史图片 / 编辑器内图片共用）。
- * 裁剪区域由 VueCropper 拖拽决定；输出格式、压缩质量、等比缩放由 Compressor 完成。
+ * 裁剪区域由 cropperjs 拖拽决定（支持旋转、滚轮/双指缩放）；
+ * 输出格式、压缩质量、等比缩放由 Compressor 完成。
  * 组件只产出处理后的 File（emit confirm），上传/替换逻辑由调用方决定。
  */
 const props = defineProps({
@@ -41,6 +44,11 @@ const props = defineProps({
     type: Number,
     default: 0,
   },
+  // 远程图无 CORS 时的兜底：服务端转存为站内地址后再裁剪，返回新地址
+  transferFn: {
+    type: Function,
+    default: null,
+  },
 });
 
 const emit = defineEmits(['update:visible', 'confirm']);
@@ -58,17 +66,19 @@ const MIME_TO_EXT = {
 };
 const SCALE_PRESETS = [25, 50, 75, 100];
 
-const cropper = ref(null);
-const cropKey = ref(0);
+const cropImgEl = ref(null);
 const loading = ref(false);
 const loadError = ref('');
+// 实际参与裁剪的源：无 CORS 的远程图会被转存为站内地址后替换
+const workingSrc = ref('');
+// 远程源转换出的本地 blob URL（需手动释放）
+let workingObjectUrl = '';
+// 加载链令牌：防止并发/过期链把已撤销的 URL 写回工作源
+let loadEpoch = 0;
+const stageText = ref('');
 const imgInfo = ref({ height: 0, width: 0 });
-
-const cropperOption = ref({
-  fixed: true,
-  autoCropWidth: 0,
-  autoCropHeight: 0,
-});
+// 是否锁定裁剪比例为原图比例
+const ratioLocked = ref(true);
 
 const format = ref('keep');
 const quality = ref(90);
@@ -78,48 +88,202 @@ const processedSize = ref(0);
 const processedDims = ref({ height: 0, width: 0 });
 const processing = ref(false);
 const confirming = ref(false);
+// 裁剪器就绪标记（cropper-image load 后 $toCanvas() 才可用）
+const cropperReady = ref(false);
+let previewToken = 0;
+// cropperjs 实例（含 canvas 状态，不做响应式代理）
+let cropperInstance = null;
 
 const imgReady = computed(() => Boolean(imgInfo.value.width));
+
+// 远程 http(s) 源加 crossorigin=anonymous 以便 canvas 导出；
+// blob:/data: 与同源不加（blob 源带 crossorigin 在 Chromium 下会加载失败）
+const imgCrossOrigin = computed(() =>
+  /^https?:/i.test(workingSrc.value) ? 'anonymous' : undefined,
+);
 
 const savedPercent = computed(() => {
   if (!props.originalSize || !processedSize.value) return 0;
   return Math.round((1 - processedSize.value / props.originalSize) * 100);
 });
 
-function gcd(a, b) {
-  let x = Math.abs(a);
-  let y = Math.abs(b);
-  while (y) {
-    [x, y] = [y, x % y];
+// 比例锁：跟随原图宽高比；取消后自由裁剪
+const stencilAspectRatio = computed(() => {
+  if (!ratioLocked.value || !imgInfo.value.width || !imgInfo.value.height) {
+    return Number.NaN;
   }
-  return x || 1;
-}
-
-// 裁剪比例锁（跟随原图比例）
-const fixedNumber = computed(() => {
-  const w = imgInfo.value.width || 1;
-  const h = imgInfo.value.height || 1;
-  const divisor = gcd(w, h);
-  return [w / divisor, h / divisor];
+  return imgInfo.value.width / imgInfo.value.height;
 });
 
-// VueCropper 画布输出类型：显式格式按选择；原格式按扩展名推断（画布不支持则回退 png）
-const cropperOutputType = computed(() => {
+// canvas.toBlob 输出类型：显式格式按选择；原格式按扩展名推断（浏览器不支持时 toBlob 回退 png）
+const cropperOutputMime = computed(() => {
   if (format.value !== 'keep') {
-    return format.value.replace('image/', '');
+    return format.value;
   }
   const ext = props.fileName.split('.').pop()?.toLowerCase() || '';
-  return { jpeg: 'jpeg', jpg: 'jpeg', png: 'png', webp: 'webp' }[ext] || 'png';
+  return (
+    { jpeg: 'image/jpeg', jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' }[ext] ||
+    'image/png'
+  );
 });
 
 function closeModal() {
   emit('update:visible', false);
 }
 
-// 预读图片真实尺寸；远程地址带 crossOrigin，跨域不可读时直接给出明确错误
+function revokeWorkingObjectUrl() {
+  if (workingObjectUrl) {
+    URL.revokeObjectURL(workingObjectUrl);
+    workingObjectUrl = '';
+  }
+}
+
+async function fetchSourceBlob(url) {
+  const response = await fetch(url, { credentials: 'omit' });
+  if (!response.ok) {
+    throw new Error(`fetch failed: ${response.status}`);
+  }
+  return response.blob();
+}
+
+function destroyCropper() {
+  if (cropperInstance) {
+    cropperInstance.destroy();
+    cropperInstance = null;
+  }
+  cropperReady.value = false;
+}
+
+function initCropper() {
+  const el = cropImgEl.value;
+  if (!el) {
+    // 不静默返回：否则表现为「空白、无报错、无反应」
+    loadError.value = '裁剪区域初始化失败，请重试';
+    return;
+  }
+  destroyCropper();
+  // 初始选区覆盖整张图，并按当前比例锁注入裁剪比例（NaN 为自由比例）
+  cropperInstance = createCropper(el, {
+    template: buildCropperTemplate(stencilAspectRatio.value),
+  });
+  const image = cropperInstance.getCropperImage();
+  const selection = cropperInstance.getCropperSelection();
+  // 用 $ready() 而非 load 事件：缓存图片会在 createCropper 插入元素时同步加载完，
+  // 之后再挂 load 监听会错过事件；$ready() 在已就绪时立即 resolve。
+  void image?.$ready?.().then(onCropperImageLoad).catch(onCropperImageError);
+  selection?.addEventListener('change', onSelectionChange);
+}
+
+function onCropperImageLoad() {
+  cropperReady.value = true;
+  ensureInitialSelection();
+  schedulePreview();
+}
+
+// 初始选区由库的 initial-coverage + aspect-ratio 计算（图片视觉内接盒、居中）。
+// 兜底：若因时序未生成（width 为 0），按图片视觉盒补一个——
+// 注意选区坐标是画布可视空间，不能用图片自然像素。
+function ensureInitialSelection() {
+  const selection = cropperInstance?.getCropperSelection();
+  if (!selection || selection.width > 0) return;
+  const image = cropperInstance?.getCropperImage();
+  const canvas = cropperInstance?.getCropperCanvas();
+  if (!image || !canvas) return;
+  const canvasRect = canvas.getBoundingClientRect();
+  const imageRect = image.getBoundingClientRect();
+  const x = imageRect.left - canvasRect.left;
+  const y = imageRect.top - canvasRect.top;
+  let width = imageRect.width;
+  let height = imageRect.height;
+  const ratio = selection.aspectRatio;
+  if (Number.isFinite(ratio) && ratio > 0) {
+    if (width / height > ratio) {
+      width = height * ratio;
+    } else {
+      height = width / ratio;
+    }
+  }
+  selection.$change(
+    x + (imageRect.width - width) / 2,
+    y + (imageRect.height - height) / 2,
+    width,
+    height,
+  );
+}
+
+// 取选区画布：选区坐标是画布可视空间，$toCanvas() 默认输出为显示分辨率；
+// 按图片变换矩阵的缩放比换算成自然像素尺寸再出图，保证裁剪输出为原图分辨率
+async function getSelectionCanvas() {
+  const selection = cropperInstance?.getCropperSelection();
+  if (!selection) return null;
+  const image = cropperInstance?.getCropperImage();
+  if (!image) return selection.$toCanvas();
+  const [a, b] = image.$getTransform();
+  const scale = Math.hypot(a, b);
+  if (!Number.isFinite(scale) || scale <= 0) {
+    return selection.$toCanvas();
+  }
+  const width = Math.max(1, Math.round(selection.width / scale));
+  const height = Math.max(1, Math.round(selection.height / scale));
+  return selection.$toCanvas({ width, height });
+}
+
+function onCropperImageError() {
+  destroyCropper();
+  loadError.value = '图片加载失败：图片过大或地址失效，无法在线裁剪';
+}
+
+function onSelectionChange() {
+  if (cropperReady.value) schedulePreview();
+}
+
+function rotateCropper() {
+  // $rotate 的参数是弧度；传 '90deg' 字符串由库内部转换
+  cropperInstance?.getCropperImage()?.$rotate('90deg');
+}
+
+// 加载一个 Image 元素；withCrossOrigin 用于远程图探测 CORS 可读性
+function loadImageElement(src, withCrossOrigin) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    if (withCrossOrigin) {
+      img.crossOrigin = 'anonymous';
+    }
+    img.src = src;
+    img.addEventListener('load', () => resolve(img), { once: true });
+    img.addEventListener(
+      'error',
+      () => reject(new Error(`image load failed: ${src}`)),
+      { once: true },
+    );
+  });
+}
+
+function adoptLoadedImage(img) {
+  if (!img.naturalWidth || !img.naturalHeight) {
+    throw new Error('empty image');
+  }
+  imgInfo.value = {
+    width: img.naturalWidth,
+    height: img.naturalHeight,
+  };
+}
+
+// 预读图片真实尺寸（信息展示 + 比例锁基准），并准备实际参与裁剪的源：
+// - blob:/data: 直接使用
+// - http(s) 先带 crossOrigin 探测（保证 canvas 可导出）；
+//   无 CORS 时若提供 transferFn 则服务端转存为站内地址后重试
 async function loadImage() {
+  const epoch = ++loadEpoch;
   loadError.value = '';
   loading.value = true;
+  stageText.value = '';
+  destroyCropper();
+  // 先清空工作源中断模板 img 的在途加载，再撤销旧 URL；
+  // 否则大图加载途中取消/重开，撤销会令在途请求报 blob ERR_FILE_NOT_FOUND
+  workingSrc.value = '';
+  revokeWorkingObjectUrl();
+  processing.value = false;
   imgInfo.value = { height: 0, width: 0 };
   processedSize.value = 0;
   processedDims.value = { height: 0, width: 0 };
@@ -128,35 +292,76 @@ async function loadImage() {
     loading.value = false;
     return;
   }
+  let source = props.src;
+  const isRemote = /^https?:/i.test(source);
   try {
-    const img = new Image();
-    if (!/^(?:blob:|data:)/i.test(props.src)) {
-      img.crossOrigin = 'anonymous';
+    if (isRemote) {
+      try {
+        const img = await loadImageElement(source, true);
+        if (epoch !== loadEpoch) return;
+        adoptLoadedImage(img);
+      } catch (error) {
+        if (epoch !== loadEpoch) return;
+        console.error('[app-editor] 裁剪图片跨域读取失败:', source, error);
+        if (!props.transferFn) {
+          loadError.value =
+            '该图片所在域名未开放跨域读取（CORS），无法在线裁剪';
+          return;
+        }
+        // 转存为站内地址后重试（无跨域限制，canvas 可正常导出）
+        stageText.value = '跨域图片转存中，请稍候...';
+        const transferred = await props.transferFn(source);
+        if (epoch !== loadEpoch) return;
+        if (!transferred) {
+          throw new Error('transfer returned empty url', { cause: error });
+        }
+        source = transferred;
+        const img = await loadImageElement(source, false);
+        if (epoch !== loadEpoch) return;
+        adoptLoadedImage(img);
+      }
+      // 远程源统一转成本地 blob URL 再交给裁剪器：
+      // ① 全新 URL 在元素连接时不可能 complete，规避 cropper-image 的同步加载竞态
+      //    （缓存图片会在 createCropper 插入时就跑完内部 load：事件错过、canvas 未布局
+      //    导致 contain 适配错误、选区初始化异常）
+      // ② blob 同源，canvas 导出无跨域污染
+      const blob = await fetchSourceBlob(source);
+      // 过期链到此终止：连对象 URL 都不创建，避免把已撤销 URL 写回工作源
+      if (epoch !== loadEpoch) return;
+      // 创建与赋值同步完成，无 await 间隔，不会被其他加载链交错
+      workingObjectUrl = URL.createObjectURL(blob);
+      workingSrc.value = workingObjectUrl;
+    } else {
+      // blob:/data: 源：仍需预检拿真实尺寸（imgReady 依赖它才会渲染 img），
+      // 但不能加 crossOrigin（blob 带 crossorigin 在 Chromium 下会加载失败）
+      const img = await loadImageElement(source, false);
+      if (epoch !== loadEpoch) return;
+      adoptLoadedImage(img);
+      workingSrc.value = source;
     }
-    img.src = props.src;
-    await new Promise((resolve, reject) => {
-      img.addEventListener('load', resolve, { once: true });
-      img.addEventListener('error', () => reject(new Error('load failed')), {
-        once: true,
-      });
-    });
-    if (!img.naturalWidth || !img.naturalHeight) {
-      throw new Error('empty image');
-    }
-    imgInfo.value = {
-      width: img.naturalWidth,
-      height: img.naturalHeight,
-    };
-    cropperOption.value.autoCropWidth = img.naturalWidth;
-    cropperOption.value.autoCropHeight = img.naturalHeight;
-    cropKey.value += 1;
+    // 挂载裁剪用 img，下一帧初始化 cropperjs
     await nextTick();
-    schedulePreview();
-  } catch {
-    loadError.value = '图片加载失败：该图片存在跨域限制，无法在线裁剪';
+    if (epoch !== loadEpoch) return;
+    initCropper();
+  } catch (error) {
+    console.error('[app-editor] 裁剪图片加载失败:', source, error);
+    loadError.value = /^blob:/i.test(source)
+      ? '图片无法加载：源文件可能已被释放或不受支持，请重新选择'
+      : '图片无法加载：地址失效或服务不可达';
   } finally {
-    loading.value = false;
+    // 仅当前链收尾状态，避免过期链把 loading 复位或清空阶段文案
+    if (epoch === loadEpoch) {
+      loading.value = false;
+      stageText.value = '';
+    }
   }
+}
+
+function onImgError() {
+  // 空源占位（工作源尚未就绪）不报错：img 带空 src 会解析为页面 URL 并必然解码失败
+  if (!workingSrc.value) return;
+  destroyCropper();
+  loadError.value = '图片加载失败：图片过大或地址失效，无法在线裁剪';
 }
 
 async function readBlobDims(blob) {
@@ -180,7 +385,20 @@ async function readBlobDims(blob) {
   }
 }
 
-// 组装 Compressor 参数；等比缩放相对裁剪结果（需先读裁剪 blob 宽度）
+function canvasToBlob(canvas, mime) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error('canvas.toBlob failed'));
+      },
+      mime,
+      1,
+    );
+  });
+}
+
+// 组装 Compressor 参数；等比缩放相对裁剪结果（需先读裁剪结果宽度）
 async function buildCompressOptions(blob) {
   const keep = format.value === 'keep';
   const options = {
@@ -196,12 +414,11 @@ async function buildCompressOptions(blob) {
   if (scalePercent.value < 100) {
     try {
       const dims = await readBlobDims(blob);
-      const width = dims.width;
-      if (width) {
+      if (dims.width) {
         // 只传宽，高由 Compressor 按裁剪结果比例自适应，避免拉伸变形
         options.width = Math.max(
           1,
-          Math.round((width * scalePercent.value) / 100),
+          Math.round((dims.width * scalePercent.value) / 100),
         );
       }
     } catch {
@@ -228,67 +445,79 @@ function applyProcessedResult(result) {
     .catch(() => {});
 }
 
-// 防抖预览：裁剪 blob → Compressor → 回显处理后大小与分辨率
+// 防抖预览：选区 → 自然分辨率画布 → toBlob → Compressor → 回显处理后大小与分辨率
 function runPreview() {
-  if (!imgReady.value || !cropper.value) return;
+  if (!imgReady.value || !cropperReady.value) return;
+  const token = ++previewToken;
   processing.value = true;
-  cropper.value.getCropBlob?.(async (data) => {
-    if (!data) {
-      processing.value = false;
-      return;
-    }
-    try {
-      const options = await buildCompressOptions(data);
-      new Compressor(data, {
-        ...options,
-        success: (result) => {
-          applyProcessedResult(result);
-          processing.value = false;
-        },
-        error: (error) => {
-          console.error('[app-editor] 图片压缩失败:', error);
-          processing.value = false;
-        },
-      });
-    } catch (error) {
-      console.error('[app-editor] 图片处理预览失败:', error);
-      processing.value = false;
-    }
-  });
+  // 兜底：极端情况下编码失败不回调，避免"处理中"永久悬挂
+  setTimeout(() => {
+    if (token === previewToken) processing.value = false;
+  }, 30_000);
+  void runPreviewFor(token);
+}
+
+async function runPreviewFor(token) {
+  try {
+    const canvas = await getSelectionCanvas();
+    if (!canvas || token !== previewToken) return;
+    const blob = await canvasToBlob(canvas, cropperOutputMime.value);
+    if (token !== previewToken) return;
+    const options = await buildCompressOptions(blob);
+    new Compressor(blob, {
+      ...options,
+      success: (result) => {
+        if (token !== previewToken) return;
+        applyProcessedResult(result);
+        processing.value = false;
+      },
+      error: (error) => {
+        console.error('[app-editor] 图片压缩失败:', error);
+        if (token === previewToken) processing.value = false;
+      },
+    });
+  } catch (error) {
+    console.error('[app-editor] 图片处理预览失败:', error);
+    if (token === previewToken) processing.value = false;
+  }
 }
 
 const schedulePreview = debounce(() => {
   runPreview();
 }, 250);
 
-// 确认：重新按当前参数压缩一次，回传最新 File
-function handleConfirm() {
-  if (!imgReady.value || confirming.value) return;
+// 确认：按当前参数压缩一次，回传最新 File
+async function confirmCrop() {
+  if (!imgReady.value || !cropperReady.value || confirming.value) return;
   confirming.value = true;
-  cropper.value?.getCropBlob?.(async (data) => {
-    if (!data) {
+  // 兜底：回调异常时不让按钮永久悬挂
+  setTimeout(() => {
+    confirming.value = false;
+  }, 30_000);
+  try {
+    const canvas = await getSelectionCanvas();
+    if (!canvas) {
       confirming.value = false;
       return;
     }
-    try {
-      const options = await buildCompressOptions(data);
-      new Compressor(data, {
-        ...options,
-        success: (result) => {
-          confirming.value = false;
-          emit('confirm', { file: wrapProcessedFile(result) });
-          closeModal();
-        },
-        error: (error) => {
-          console.error('[app-editor] 图片压缩失败:', error);
-          confirming.value = false;
-        },
-      });
-    } catch (error) {
-      console.error('[app-editor] 图片处理失败:', error);
-      confirming.value = false;
-    }
-  });
+    const blob = await canvasToBlob(canvas, cropperOutputMime.value);
+    const options = await buildCompressOptions(blob);
+    new Compressor(blob, {
+      ...options,
+      success: (result) => {
+        confirming.value = false;
+        emit('confirm', { file: wrapProcessedFile(result) });
+        closeModal();
+      },
+      error: (error) => {
+        console.error('[app-editor] 图片压缩失败:', error);
+        confirming.value = false;
+      },
+    });
+  } catch (error) {
+    console.error('[app-editor] 图片处理失败:', error);
+    confirming.value = false;
+  }
 }
 
 watch(
@@ -298,15 +527,34 @@ watch(
       format.value = 'keep';
       quality.value = 90;
       scalePercent.value = 100;
+      ratioLocked.value = true;
       loadImage();
     } else {
+      // 关闭时只停预览、销毁裁剪器并清空工作源（中断在途加载），
+      // 不撤销对象 URL：撤销与仍在加载/重绘的 img 竞速会触发
+      // blob ERR_FILE_NOT_FOUND；URL 会在下次打开（替换）或卸载时释放
       schedulePreview.cancel();
+      destroyCropper();
+      workingSrc.value = '';
     }
   },
 );
 
 watch([format, quality, scalePercent], () => {
   if (imgReady.value) schedulePreview();
+});
+
+watch(ratioLocked, () => {
+  const selection = cropperInstance?.getCropperSelection();
+  if (selection) {
+    selection.aspectRatio = stencilAspectRatio.value || Number.NaN;
+  }
+});
+
+onBeforeUnmount(() => {
+  schedulePreview.cancel();
+  destroyCropper();
+  revokeWorkingObjectUrl();
 });
 </script>
 
@@ -357,34 +605,27 @@ watch([format, quality, scalePercent], () => {
             >
               {{ loadError }}
             </div>
-            <VueCropper
-              v-else-if="imgReady"
-              ref="cropper"
-              :key="cropKey"
-              :img="src"
-              :output-size="1"
-              :output-type="cropperOutputType"
-              :info="true"
-              :full="false"
-              :fixed="cropperOption.fixed"
-              :fixed-number="fixedNumber"
-              :can-move="true"
-              :can-move-box="true"
-              :fixed-box="false"
-              :original="false"
-              :auto-crop="true"
-              :auto-crop-width="cropperOption.autoCropWidth"
-              :auto-crop-height="cropperOption.autoCropHeight"
-              :center-box="true"
-              :high="true"
-              class="h-full w-full"
-              mode="contain"
+            <img
+              v-else-if="imgReady && workingSrc"
+              ref="cropImgEl"
+              :alt="fileName"
+              class="block max-w-full"
+              :crossorigin="imgCrossOrigin"
+              :src="workingSrc"
+              @error="onImgError"
             />
+            <!-- 大图解码遮罩：预检完成但裁剪器尚未就绪 -->
             <div
-              v-else
-              class="flex h-full items-center justify-center text-xs text-muted-foreground"
+              v-if="imgReady && !cropperReady && !loadError"
+              class="absolute inset-0 z-10 flex items-center justify-center bg-card/60 text-xs text-muted-foreground"
             >
-              {{ loading ? '正在加载图片...' : '' }}
+              {{ stageText || '正在加载图片，大图可能需要几秒...' }}
+            </div>
+            <div
+              v-else-if="!imgReady && !loadError"
+              class="absolute inset-0 z-10 flex items-center justify-center bg-card/60 text-xs text-muted-foreground"
+            >
+              {{ loading ? stageText || '正在加载图片...' : '' }}
             </div>
           </div>
 
@@ -486,17 +727,39 @@ watch([format, quality, scalePercent], () => {
               </div>
             </div>
 
-            <div class="md:col-span-2">
+            <div class="flex flex-wrap items-center gap-4 md:col-span-2">
               <label
-                class="flex w-fit cursor-pointer items-center gap-1.5 text-xs text-muted-foreground"
+                class="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground"
               >
                 <input
-                  v-model="cropperOption.fixed"
+                  v-model="ratioLocked"
                   type="checkbox"
                   class="accent-primary"
                 />
-                锁定原图比例（取消后可自由拖拽裁剪框比例）
+                锁定原图比例（取消后可自由调整裁剪框比例）
               </label>
+              <button
+                class="flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-[11px] font-medium text-foreground hover:bg-muted"
+                type="button"
+                @click="rotateCropper"
+              >
+                <svg
+                  class="size-3.5"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  viewBox="0 0 24 24"
+                >
+                  <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+                  <path d="M21 3v5h-5" />
+                </svg>
+                旋转 90°
+              </button>
+              <span class="text-[11px] text-muted-foreground">
+                滚轮 / 双指可缩放图片
+              </span>
             </div>
           </div>
         </div>
@@ -514,9 +777,9 @@ watch([format, quality, scalePercent], () => {
           </button>
           <button
             class="rounded-md bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-            :disabled="!imgReady || confirming"
+            :disabled="!imgReady || !cropperReady || confirming"
             type="button"
-            @click="handleConfirm"
+            @click="confirmCrop"
           >
             <span
               v-if="confirming"

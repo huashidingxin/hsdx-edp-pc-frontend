@@ -1,0 +1,22 @@
+/*
+ * cropperjs 2.x 选区可视化增强。
+ * 库默认：selection 无边框（仅 outlined 属性给 1px 主题色 outline）、
+ * resize 手柄热区 15×15（中心仅 5px 点），边缘难找、难拖动。
+ * 这些宿主元素由 createCropper 动态创建，不在组件模板内，
+ * 因此用全局样式覆盖（外层文档样式优先于 shadow 内的 :host 规则）。
+ */
+cropper-canvas {
+  /* 主题色：与站点主色一致（库默认 #39f） */
+  --theme-color: #00a0e9;
+}
+
+cropper-selection[outlined] {
+  /* 加粗边框：默认 1px 在深色/杂乱图上几乎看不见 */
+  outline-width: 2px;
+}
+
+cropper-handle[action$='-resize'] {
+  /* 放大 8 个 resize 手柄热区：默认 15×15，鼠标/手指难以对准 */
+  height: 28px;
+  width: 28px;
+}

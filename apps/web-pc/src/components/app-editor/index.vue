@@ -3393,6 +3393,11 @@ function openImageCrop() {
   cropImageModalOpen.value = true;
 }
 
+// 无 CORS 的远程图：裁剪前先服务端转存为站内地址
+function transferCropSource(url) {
+  return transferRemoteAsset(url, { uploadFileFn: uploadImage });
+}
+
 async function onImageCropConfirm({ file } = {}) {
   cropImageModalOpen.value = false;
   if (!file || !selectedTarget.value) return;
@@ -8101,6 +8106,7 @@ defineExpose({
       confirm-text="应用并替换"
       :file-name="cropImageState.name"
       :src="cropImageState.src"
+      :transfer-fn="transferCropSource"
       @confirm="onImageCropConfirm"
     />
     <!-- 外链资源检测与转存弹窗 -->

@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import type { Ref } from 'vue';
 
-import { computed,h,nextTick,ref,shallowRef,watch } from 'vue';
-import 'vue-cropper/dist/index.css';
-import { VueCropper } from 'vue-cropper/dist/vue-cropper.es.js';
+import { computed,h,nextTick,onBeforeUnmount,ref,shallowRef,watch } from 'vue';
 
 import {
   Button,
@@ -21,9 +19,11 @@ import {
   Spin,
 } from 'antdv-next';
 import Compressor from 'compressorjs';
+import Cropper, { createCropper } from 'cropperjs';
 import { debounce } from 'lodash-es';
 
 import { upload as uploadFile } from '#/api';
+import { buildCropperTemplate } from '#/components/app-editor/cropper-template';
 import AppOnlyoffice from '#/components/AppOnlyoffice.vue';
 import {
   base64ToFile,
@@ -39,6 +39,8 @@ import {
   fetchFileBytes,
   safeFileName,
 } from '#/utils/render-docx';
+
+import '#/components/app-editor/cropper-theme.css';
 
 interface FileItem {
   url: string;
@@ -61,19 +63,7 @@ interface PreviewInfo {
 }
 
 interface CropperOption {
-  size: number;
-  full: boolean;
   outputType: string;
-  canMove: boolean;
-  fixedBox: boolean;
-  original: boolean;
-  canMoveBox: boolean;
-  autoCrop: boolean;
-  autoCropWidth: number;
-  autoCropHeight: number;
-  centerBox: boolean;
-  high: boolean;
-  max: number;
   fixed: boolean;
   fixedWidth: number;
   fixedHeight: number;
@@ -83,10 +73,6 @@ interface CompressorOption {
   quality: number;
   width: number;
   height: number;
-}
-
-interface CropperInstance {
-  getCropBlob?: (callback: (data: Blob) => void) => void;
 }
 
 const props = defineProps({
@@ -175,7 +161,8 @@ const previewDialog = ref(false);
 const previewLoading = ref(false);
 const officeDocument = ref<null | Record<string, any>>(null);
 let previewSequence = 0;
-const cropper = ref<CropperInstance | null>(null);
+const cropper = shallowRef<Cropper | null>(null);
+const cropImgEl = ref<HTMLImageElement | null>(null);
 const video = ref<HTMLVideoElement | null>(null);
 const videoCanvas = ref<HTMLCanvasElement | null>(null);
 
@@ -212,19 +199,7 @@ const fileOrgInfo = ref<Record<string, any>>({});
 const cropperDialog = ref(false);
 const imageUrl = ref('');
 const cropperOption: Ref<CropperOption> = ref({
-  size: 1,
-  full: true,
   outputType: 'webp',
-  canMove: true,
-  fixedBox: false,
-  original: false,
-  canMoveBox: true,
-  autoCrop: true,
-  autoCropWidth: 750,
-  autoCropHeight: 340,
-  centerBox: true,
-  high: true,
-  max: 99_999,
   fixed: true,
   fixedWidth: 1920,
   fixedHeight: 1080,
@@ -245,20 +220,119 @@ const compressedFile = shallowRef<File | null>(null);
 const compressedFileSize = ref(0);
 const compressing = ref(false);
 
-function gcd(a: number, b: number): number {
-  a = Math.abs(a);
-  b = Math.abs(b);
-  while (b) {
-    [a, b] = [b, a % b];
-  }
-  return a;
-}
-const fixedNumber = computed(() => {
-  const w = cropperOption.value.fixedWidth || 1;
-  const h = cropperOption.value.fixedHeight || 1;
-  const g = gcd(w, h);
-  return [w / g, h / g];
+// 裁剪器就绪标记（cropper-image load 后 $toCanvas() 才可用）
+const cropperReady = ref(false);
+// 锁定比例时裁剪框宽高比跟随输出宽高
+const stencilAspectRatio = computed(() => {
+  if (!cropperOption.value.fixed) return undefined;
+  const w = Number(cropperOption.value.fixedWidth) || 0;
+  const h = Number(cropperOption.value.fixedHeight) || 0;
+  return w && h ? w / h : undefined;
 });
+// 远程 http(s) 源统一转本地 blob URL（见 crop()）；blob:/data: 不加 crossorigin
+const imgCrossOrigin = computed(() =>
+  /^https?:/i.test(imageUrl.value) ? 'anonymous' : undefined,
+);
+// 远程源转换出的本地 blob URL（需手动释放）
+let workingObjectUrl = '';
+
+function revokeWorkingObjectUrl() {
+  if (workingObjectUrl) {
+    URL.revokeObjectURL(workingObjectUrl);
+    workingObjectUrl = '';
+  }
+}
+
+async function fetchSourceBlob(url: string): Promise<Blob> {
+  const response = await fetch(url, { credentials: 'omit' });
+  if (!response.ok) {
+    throw new Error(`fetch failed: ${response.status}`);
+  }
+  return response.blob();
+}
+
+function destroyCropper() {
+  if (cropper.value) {
+    cropper.value.destroy();
+    cropper.value = null;
+  }
+  cropperReady.value = false;
+}
+
+function initCropper() {
+  const el = cropImgEl.value;
+  if (!el) return;
+  destroyCropper();
+  // 初始选区覆盖整张图，并按当前比例锁注入裁剪比例（NaN 为自由比例）
+  const instance = createCropper(el, {
+    template: buildCropperTemplate(stencilAspectRatio.value ?? undefined),
+  });
+  cropper.value = instance;
+  const image = instance.getCropperImage();
+  const selection = instance.getCropperSelection();
+  // 用 $ready() 而非 load 事件：缓存图片会在 createCropper 插入元素时同步加载完，
+  // 之后再挂 load 监听会错过事件；$ready() 在已就绪时立即 resolve。
+  void image?.$ready().then(onCropperImageLoad).catch(onCropperImgError);
+  selection?.addEventListener('change', onSelectionChange);
+}
+
+function onCropperImageLoad() {
+  cropperReady.value = true;
+  ensureInitialSelection();
+  recompressPreview();
+}
+
+// 初始选区由库的 initial-coverage + aspect-ratio 计算（图片视觉内接盒、居中）。
+// 兜底：若因时序未生成（width 为 0），按图片视觉盒补一个——
+// 选区坐标是画布可视空间，不能用图片自然像素。
+function ensureInitialSelection() {
+  const selection = cropper.value?.getCropperSelection();
+  if (!selection || selection.width > 0) return;
+  const image = cropper.value?.getCropperImage();
+  const canvas = cropper.value?.getCropperCanvas();
+  if (!image || !canvas) return;
+  const canvasRect = canvas.getBoundingClientRect();
+  const imageRect = image.getBoundingClientRect();
+  const x = imageRect.left - canvasRect.left;
+  const y = imageRect.top - canvasRect.top;
+  let width = imageRect.width;
+  let height = imageRect.height;
+  const ratio = selection.aspectRatio;
+  if (Number.isFinite(ratio) && ratio > 0) {
+    if (width / height > ratio) {
+      width = height * ratio;
+    } else {
+      height = width / ratio;
+    }
+  }
+  selection.$change(
+    x + (imageRect.width - width) / 2,
+    y + (imageRect.height - height) / 2,
+    width,
+    height,
+  );
+}
+
+// 取选区画布：选区坐标是画布可视空间，$toCanvas() 默认输出为显示分辨率；
+// 按图片变换矩阵的缩放比换算成自然像素尺寸再出图，保证裁剪输出为原图分辨率
+async function getSelectionCanvas(): Promise<HTMLCanvasElement | null> {
+  const selection = cropper.value?.getCropperSelection();
+  if (!selection) return null;
+  const image = cropper.value?.getCropperImage();
+  if (!image) return selection.$toCanvas();
+  const [a = 0, b = 0] = image.$getTransform();
+  const scale = Math.hypot(a, b);
+  if (!Number.isFinite(scale) || scale <= 0) {
+    return selection.$toCanvas();
+  }
+  const width = Math.max(1, Math.round(selection.width / scale));
+  const height = Math.max(1, Math.round(selection.height / scale));
+  return selection.$toCanvas({ width, height });
+}
+
+function onSelectionChange() {
+  if (cropperReady.value) recompressPreview();
+}
 
 // 分辨率等比缩放：以原图尺寸为基准，按百分比快速设置目标分辨率
 const scalePresets = [25, 50, 75, 100];
@@ -310,13 +384,10 @@ watch(
   },
 );
 
-// 参数变化后自动重新压缩预览。
-// 注意：getCropBlob 按组件当前 outputType prop 生成 blob，若在 prop 尚未更新时就调用，
-// 切换输出格式后仍会按旧格式压缩、导致"处理后"信息与视图不更新；
-// 因此先防抖合并连续变更，再等 nextTick（组件完成重渲染）后执行。
+// 参数变化后自动重新压缩预览（裁剪器就绪后才可取结果）
 const recompressPreview = debounce(() => {
-  if (cropperDialog.value && cropper.value) {
-    nextTick(() => cropHandler());
+  if (cropperDialog.value && cropperReady.value) {
+    cropHandler();
   }
 }, 200);
 
@@ -331,6 +402,29 @@ watch(
   [() => cropperOption.value.fixedWidth, () => cropperOption.value.fixedHeight],
   recompressPreview,
 );
+
+// 比例锁切换后同步裁剪框比例（NaN 为自由比例）
+watch(stencilAspectRatio, (val) => {
+  const selection = cropper.value?.getCropperSelection();
+  if (selection) {
+    selection.aspectRatio = val || Number.NaN;
+  }
+});
+
+// 弹窗关闭即销毁裁剪器，释放大图占用的画布。
+// 不在关闭时撤销本地对象 URL：撤销与仍在加载/重绘的 img 竞速会触发
+// blob ERR_FILE_NOT_FOUND；URL 会在下次 crop()（替换）或卸载时释放
+watch(cropperDialog, (val) => {
+  if (!val) {
+    destroyCropper();
+  }
+});
+
+onBeforeUnmount(() => {
+  recompressPreview.cancel();
+  destroyCropper();
+  revokeWorkingObjectUrl();
+});
 
 // 处理文件变化
 watch(files, async (newVal) => {
@@ -826,64 +920,68 @@ async function setCurrent(index: number) {
   return true;
 }
 
-const cropKey = ref(0);
-
 async function crop(index: number) {
   if (!(await setCurrent(index))) return;
-  imageUrl.value = list.value[index]?.url ?? '';
+  const rawUrl = list.value[index]?.url ?? '';
   compressedFile.value = null;
   compressedFileSize.value = 0;
+  cropperReady.value = false;
+
+  // 远程源转成本地 blob URL 再交给裁剪器：全新 URL 连接时不可能 complete，
+  // 规避 cropper-image 同步加载竞态（缓存图片在 createCropper 插入时就跑完内部
+  // load：load 事件错过、canvas 未布局导致 contain 适配错误）；blob 同源亦无跨域污染。
+  // 先清空 imageUrl 中断上一次会话 img 的在途加载，再撤销旧 URL，避免 ERR_FILE_NOT_FOUND
+  imageUrl.value = '';
+  revokeWorkingObjectUrl();
+  if (/^https?:/i.test(rawUrl)) {
+    try {
+      const blob = await fetchSourceBlob(rawUrl);
+      workingObjectUrl = URL.createObjectURL(blob);
+      imageUrl.value = workingObjectUrl;
+    } catch (error) {
+      console.error('图片读取失败:', error);
+      message.error('图片读取失败，无法裁剪');
+      return;
+    }
+  } else {
+    imageUrl.value = rawUrl;
+  }
 
   // 传入裁剪尺寸则使用，但不能超过原图尺寸，同时保持传入比例
   const imgW = fileOrgInfo.value.width || 1920;
   const imgH = fileOrgInfo.value.height || 1080;
 
   if (props.defaultCropWidth && props.defaultCropHeight) {
-    // 裁剪框大小等比缩放至不超出原图范围
+    // 输出分辨率等比缩放至不超出原图范围
     const scaleX = imgW / props.defaultCropWidth;
     const scaleY = imgH / props.defaultCropHeight;
     const scale = Math.min(scaleX, scaleY);
-    cropperOption.value.autoCropWidth = Math.round(
-      props.defaultCropWidth * scale,
+    cropperOption.value.fixedWidth = Math.max(
+      1,
+      Math.round(props.defaultCropWidth * scale),
     );
-    cropperOption.value.autoCropHeight = Math.round(
-      props.defaultCropHeight * scale,
+    cropperOption.value.fixedHeight = Math.max(
+      1,
+      Math.round(props.defaultCropHeight * scale),
     );
-
-    // 固定比例使用传入的原始值，锁定宽高比
-    cropperOption.value.fixedWidth = cropperOption.value.autoCropWidth;
-    cropperOption.value.fixedHeight = cropperOption.value.autoCropHeight;
   } else {
     cropperOption.value.fixedWidth = imgW;
     cropperOption.value.fixedHeight = imgH;
-    cropperOption.value.autoCropWidth = imgW;
-    cropperOption.value.autoCropHeight = imgH;
   }
 
-  cropKey.value++;
   cropperDialog.value = true;
-
-  // 等待 VueCropper 挂载完成后自动执行初始压缩
+  // 等弹窗内 img 挂载后初始化 cropperjs（图片未加载完时由库内部等待）
   nextTick(() => {
-    setTimeout(() => {
-      cropHandler();
-    }, 300);
+    initCropper();
   });
 }
 
-const realTime = debounce((e: any) => {
-  if (!fileOrgInfo.value.width) {
-    fileOrgInfo.value.width = Number(e.img.width.replace('px', ''));
-    fileOrgInfo.value.height = Number(e.img.height.replace('px', ''));
-
-    // 仅当未传入自定义裁剪尺寸时，使用原图尺寸作为固定比例
-    if (!props.defaultCropWidth && !props.defaultCropHeight) {
-      cropperOption.value.fixedWidth = fileOrgInfo.value.width;
-      cropperOption.value.fixedHeight = fileOrgInfo.value.height;
-    }
-  }
-  cropHandler();
-}, 50);
+function onCropperImgError() {
+  // 空源占位（imageUrl 尚未就绪）不报错
+  if (!imageUrl.value) return;
+  destroyCropper();
+  message.error('图片加载失败，无法裁剪');
+}
 
 function cropHandler() {
   runCropCompress();
@@ -892,24 +990,39 @@ function cropHandler() {
 // 取裁剪结果并压缩；onDone 供提交时获取本次（最新参数）的结果，
 // 避免沿用上一次压缩的旧文件。
 function runCropCompress(onDone?: (file: File | null) => void) {
-  cropper.value?.getCropBlob?.((data: Blob) => {
-    if (!data) {
+  if (!cropper.value?.getCropperSelection()) {
+    onDone?.(null);
+    return;
+  }
+
+  const outputType = cropperOption.value.outputType;
+  const typeIndex = mimeTypes.findIndex((v) => v.type === outputType);
+
+  compressorOption.value.width = cropperOption.value.fixedWidth;
+  compressorOption.value.height = cropperOption.value.fixedHeight;
+  void getSelectionCanvas()
+    .then((canvas) => {
+      if (!canvas) {
+        onDone?.(null);
+        return;
+      }
+      canvas.toBlob((data: Blob | null) => {
+        if (!data) {
+          onDone?.(null);
+          return;
+        }
+        compress(
+          data,
+          outputType,
+          `${Date.now()}.${mimeTypes[typeIndex]?.extension || 'jpg'}`,
+          onDone,
+        );
+      }, outputType, 1);
+    })
+    .catch((error: unknown) => {
+      console.error('裁剪结果生成失败:', error);
       onDone?.(null);
-      return;
-    }
-
-    const outputType = cropperOption.value.outputType;
-    const typeIndex = mimeTypes.findIndex((v) => v.type === outputType);
-
-    compressorOption.value.width = cropperOption.value.fixedWidth;
-    compressorOption.value.height = cropperOption.value.fixedHeight;
-    compress(
-      data,
-      outputType,
-      `${Date.now()}.${mimeTypes[typeIndex]?.extension || 'jpg'}`,
-      onDone,
-    );
-  });
+    });
 }
 
 // 压缩相关函数
@@ -1422,28 +1535,14 @@ defineExpose({
       :footer="null"
     >
       <div style="height: 50vh">
-        <VueCropper
-          ref="cropper"
-          :key="cropKey"
-          :img="imageUrl"
-          :output-size="cropperOption.size"
-          :output-type="cropperOption.outputType.replace('image/', '')"
-          :info="true"
-          :full="cropperOption.full"
-          :fixed="cropperOption.fixed"
-          :fixed-number="fixedNumber"
-          :can-move="cropperOption.canMove"
-          :can-move-box="cropperOption.canMoveBox"
-          :fixed-box="cropperOption.fixedBox"
-          :original="cropperOption.original"
-          :auto-crop="cropperOption.autoCrop"
-          :auto-crop-width="cropperOption.autoCropWidth"
-          :auto-crop-height="cropperOption.autoCropHeight"
-          :center-box="cropperOption.centerBox"
-          :high="cropperOption.high"
-          @real-time="realTime"
-          :max-img-size="cropperOption.max"
-          mode="contain"
+        <img
+          v-if="imageUrl"
+          ref="cropImgEl"
+          alt="裁剪原图"
+          class="block max-w-full"
+          :crossorigin="imgCrossOrigin"
+          :src="imageUrl"
+          @error="onCropperImgError"
         />
       </div>
 
