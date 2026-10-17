@@ -970,10 +970,48 @@ async function crop(index: number) {
   }
 
   cropperDialog.value = true;
-  // 等弹窗内 img 挂载后初始化 cropperjs（图片未加载完时由库内部等待）
+  // 等弹窗内容渲染、入场动画结束后再初始化裁剪器（见 initCropperWhenModalSettled）
   nextTick(() => {
-    initCropper();
+    initCropperWhenModalSettled();
   });
+}
+
+// antd Modal 入场动画 antZoomIn 会把弹窗 scale(0.2)→1（0.3s），动画期间
+// 容器 getBoundingClientRect 是缩放后的尺寸：此时若图片 load 回调触发，
+// cropperjs 的 contain 适配与初始选区都会按缩小后的容器计算，动画结束后
+// 图片与选框位置、大小全部错误。首次打开时图片尚未解码、load 正好落在
+// 动画中所以必现；再次打开内存命中、load 早于首帧所以看起来正常。
+// 因此等动画结束（animationend 冒泡到容器）再创建裁剪器。
+function initCropperWhenModalSettled() {
+  const el = cropImgEl.value;
+  if (!el) {
+    initCropper();
+    return;
+  }
+  // 系统减少动态效果时无动画，可直接初始化
+  if (
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  ) {
+    initCropper();
+    return;
+  }
+  let settled = false;
+  const finish = () => {
+    if (settled) return;
+    settled = true;
+    el.removeEventListener('animationend', onAnimationEnd);
+    initCropper();
+  };
+  const onAnimationEnd = (event: AnimationEvent) => {
+    // 只关心弹窗的入场缩放动画（事件从 .ant-modal 冒泡到容器内的 img）
+    if (/zoom/i.test(event.animationName)) {
+      finish();
+    }
+  };
+  el.addEventListener('animationend', onAnimationEnd);
+  // 兜底：动画被抑制或事件缺失时也能初始化
+  setTimeout(finish, 600);
 }
 
 function onCropperImgError() {
@@ -1534,16 +1572,23 @@ defineExpose({
       width="50vw"
       :footer="null"
     >
-      <div style="height: 50vh">
+      <div class="relative" style="height: 50vh">
         <img
           v-if="imageUrl"
           ref="cropImgEl"
           alt="裁剪原图"
           class="block max-w-full"
+          :class="cropperReady ? '' : 'hidden'"
           :crossorigin="imgCrossOrigin"
           :src="imageUrl"
           @error="onCropperImgError"
         />
+        <div
+          v-if="!cropperReady"
+          class="absolute inset-0 flex items-center justify-center text-xs text-gray-400"
+        >
+          正在加载图片...
+        </div>
       </div>
 
       <div class="mt-5">
