@@ -59,8 +59,14 @@ export const Section = Node.create({
           );
           if (hasMediaOrBlockChild) return null;
           const style = element.getAttribute('style') || '';
+          // 仅块级容器（flex/grid/block）升级。行内级盒子（inline-block/inline-flex/
+          // inline-grid，如「图底角标」等行内徽章）必须留在段落行内流里作为
+          // RichTextStyle 行内标记渲染：升级成块级 section 会把它拽出段落，且
+          // RichTextStyle(consuming:false) 会把同一批定位样式重复写到内层文本
+          // span 上——内层绝对定位以外层壳为包含块，壳因无在流内容塌缩成 0 宽，
+          // 文字逐字竖排（编辑器渲染坏、保存还会改写库内结构）。
           if (
-            /(?:^|;|\s)display\s*:\s*(?:inline-)?(?:flex|grid|block)/i.test(style) &&
+            /(?:^|;|\s)display\s*:\s*(?:flex|grid|block)\b/i.test(style) &&
             element.firstElementChild
           ) {
             return null;

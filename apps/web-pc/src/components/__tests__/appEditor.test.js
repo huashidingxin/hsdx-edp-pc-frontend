@@ -1549,3 +1549,48 @@ describe('app-editor column+image round-trip', () => {
     editor.destroy();
   });
 });
+
+describe('app-editor 行内徽章 span 保真验证', () => {
+  it('inline-block 角标 span 不升级为 section，保持段落内单层行内标记', () => {
+    // 库内存量结构：图底角标 = section(position:relative) > p(line-height:0) > span(绝对定位徽章)。
+    // 若被升级为 section 节点，会与 RichTextStyle(consuming:false) 的行内标记形成双壳：
+    // 内层绝对定位 span 以外层壳为包含块，壳因无在流内容塌缩成 0 宽 → 文字逐字竖排。
+    const editor = new Editor({
+      extensions: createEditorExtensions(),
+      content:
+        '<div class="cms-column" style="min-width: 0px; box-sizing: border-box;">'
+        + '<section style="position: relative; margin: 0px;">'
+        + '<img src="https://example.com/car.jpg" style="max-width: 100%;">'
+        + '<p style="margin: 0px; line-height: 0;">'
+        + '<span style="color: rgb(255, 255, 255); background: rgba(0, 0, 0, 0.45); font-size: 18px; line-height: 44px; position: absolute; left: 0px; bottom: 16px; display: inline-block; padding: 0px 22px; font-weight: 700; letter-spacing: 1px;"><strong>汽车行业</strong></span>'
+        + '</p>'
+        + '</section></div>',
+    });
+    const html = editor.getHTML();
+    // 不允许出现徽章壳 section（style 以徽章样式开头的 section）
+    expect(html).not.toMatch(/<section style="color: rgb\(255/);
+    // 徽章仍是段落内的单层 span，定位样式完整保留
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const badge = doc.querySelector(
+      'section[position-relative], section[style*="position: relative"] > p > span',
+    );
+    expect(badge).toBeTruthy();
+    expect(badge?.textContent).toBe('汽车行业');
+    expect(badge?.getAttribute('style') || '').toContain('position: absolute');
+    expect(badge?.getAttribute('style') || '').toContain('display: inline-block');
+    // 父级是 line-height:0 的段落，而非徽章壳
+    expect(badge?.parentElement?.getAttribute('style')).toContain('line-height: 0');
+    editor.destroy();
+  });
+
+  it('flex 块级容器 span 仍升级为 section（保留布局壳）', () => {
+    const editor = new Editor({
+      extensions: createEditorExtensions(),
+      content:
+        '<p><span style="display: flex; align-items: center; gap: 8px;"><strong>布局壳</strong></span></p>',
+    });
+    const html = editor.getHTML();
+    expect(html).toMatch(/<section style="[^"]*display: flex/);
+    editor.destroy();
+  });
+});
