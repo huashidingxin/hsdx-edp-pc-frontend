@@ -1,35 +1,25 @@
 <script setup lang="ts">
 import type { Ref } from 'vue';
 
-import { computed,h,nextTick,onBeforeUnmount,ref,shallowRef,watch } from 'vue';
+import { computed, h, ref, watch } from 'vue';
 
 import {
   Button,
   Card,
-  Col,
   Drawer,
   Image,
-  InputNumber,
   message,
   Modal,
-  Row,
-  Select,
-  Slider,
-  SpaceCompact,
   Spin,
 } from 'antdv-next';
-import Compressor from 'compressorjs';
-import Cropper, { createCropper } from 'cropperjs';
-import { debounce } from 'lodash-es';
 
 import { upload as uploadFile } from '#/api';
-import { buildCropperTemplate } from '#/components/app-editor/cropper-template';
+import ImageCropModal from '#/components/app-editor/image-crop-modal.vue';
 import AppOnlyoffice from '#/components/AppOnlyoffice.vue';
 import {
   base64ToFile,
   blobUrlToFile,
   createObjectURL,
-  formatSize,
   getInfo,
   isBase64,
   videoUrlToBlobUrl,
@@ -39,8 +29,6 @@ import {
   fetchFileBytes,
   safeFileName,
 } from '#/utils/render-docx';
-
-import '#/components/app-editor/cropper-theme.css';
 
 interface FileItem {
   url: string;
@@ -60,19 +48,6 @@ interface PreviewInfo {
   name: string;
   type: string;
   url: string;
-}
-
-interface CropperOption {
-  outputType: string;
-  fixed: boolean;
-  fixedWidth: number;
-  fixedHeight: number;
-}
-
-interface CompressorOption {
-  quality: number;
-  width: number;
-  height: number;
 }
 
 const props = defineProps({
@@ -125,14 +100,6 @@ const props = defineProps({
     default: 1,
     type: Number,
   },
-  defaultCropWidth: {
-    default: 0,
-    type: Number,
-  },
-  defaultCropHeight: {
-    default: 0,
-    type: Number,
-  },
 });
 
 const emit = defineEmits([
@@ -161,8 +128,6 @@ const previewDialog = ref(false);
 const previewLoading = ref(false);
 const officeDocument = ref<null | Record<string, any>>(null);
 let previewSequence = 0;
-const cropper = shallowRef<Cropper | null>(null);
-const cropImgEl = ref<HTMLImageElement | null>(null);
 const video = ref<HTMLVideoElement | null>(null);
 const videoCanvas = ref<HTMLCanvasElement | null>(null);
 
@@ -194,168 +159,16 @@ const typeIcons = [
   },
 ];
 
-// 裁剪相关
+// 裁剪相关：复用编辑器的通用图片裁剪压缩弹窗（拖拽裁剪 + 格式/质量/宽高），
+// 本组件只负责打开弹窗并把处理结果写回列表
 const fileOrgInfo = ref<Record<string, any>>({});
-const cropperDialog = ref(false);
-const imageUrl = ref('');
-const cropperOption: Ref<CropperOption> = ref({
-  outputType: 'webp',
-  fixed: true,
-  fixedWidth: 1920,
-  fixedHeight: 1080,
-});
-
-// 压缩相关
-const mimeTypes = [
-  { type: 'image/webp', extension: 'webp' },
-  { type: 'image/jpeg', extension: 'jpg' },
-  { type: 'image/png', extension: 'png' },
-];
-const compressorOption: Ref<CompressorOption> = ref({
-  quality: 90,
-  width: 0,
-  height: 0,
-});
-const compressedFile = shallowRef<File | null>(null);
-const compressedFileSize = ref(0);
-const compressing = ref(false);
-
-// 裁剪器就绪标记（cropper-image load 后 $toCanvas() 才可用）
-const cropperReady = ref(false);
-// 锁定比例时裁剪框宽高比跟随输出宽高
-const stencilAspectRatio = computed(() => {
-  if (!cropperOption.value.fixed) return undefined;
-  const w = Number(cropperOption.value.fixedWidth) || 0;
-  const h = Number(cropperOption.value.fixedHeight) || 0;
-  return w && h ? w / h : undefined;
-});
-// 远程 http(s) 源统一转本地 blob URL（见 crop()）；blob:/data: 不加 crossorigin
-const imgCrossOrigin = computed(() =>
-  /^https?:/i.test(imageUrl.value) ? 'anonymous' : undefined,
-);
-// 远程源转换出的本地 blob URL（需手动释放）
-let workingObjectUrl = '';
-
-function revokeWorkingObjectUrl() {
-  if (workingObjectUrl) {
-    URL.revokeObjectURL(workingObjectUrl);
-    workingObjectUrl = '';
-  }
-}
-
-async function fetchSourceBlob(url: string): Promise<Blob> {
-  const response = await fetch(url, { credentials: 'omit' });
-  if (!response.ok) {
-    throw new Error(`fetch failed: ${response.status}`);
-  }
-  return response.blob();
-}
-
-function destroyCropper() {
-  if (cropper.value) {
-    cropper.value.destroy();
-    cropper.value = null;
-  }
-  cropperReady.value = false;
-}
-
-function initCropper() {
-  const el = cropImgEl.value;
-  if (!el) return;
-  destroyCropper();
-  // 初始选区覆盖整张图，并按当前比例锁注入裁剪比例（NaN 为自由比例）
-  const instance = createCropper(el, {
-    template: buildCropperTemplate(stencilAspectRatio.value ?? undefined),
-  });
-  cropper.value = instance;
-  const image = instance.getCropperImage();
-  const selection = instance.getCropperSelection();
-  // 用 $ready() 而非 load 事件：缓存图片会在 createCropper 插入元素时同步加载完，
-  // 之后再挂 load 监听会错过事件；$ready() 在已就绪时立即 resolve。
-  void image?.$ready().then(onCropperImageLoad).catch(onCropperImgError);
-  selection?.addEventListener('change', onSelectionChange);
-}
-
-function onCropperImageLoad() {
-  cropperReady.value = true;
-  ensureInitialSelection();
-  recompressPreview();
-}
-
-// 初始选区由库的 initial-coverage + aspect-ratio 计算（图片视觉内接盒、居中）。
-// 兜底：若因时序未生成（width 为 0），按图片视觉盒补一个——
-// 选区坐标是画布可视空间，不能用图片自然像素。
-function ensureInitialSelection() {
-  const selection = cropper.value?.getCropperSelection();
-  if (!selection || selection.width > 0) return;
-  const image = cropper.value?.getCropperImage();
-  const canvas = cropper.value?.getCropperCanvas();
-  if (!image || !canvas) return;
-  const canvasRect = canvas.getBoundingClientRect();
-  const imageRect = image.getBoundingClientRect();
-  const x = imageRect.left - canvasRect.left;
-  const y = imageRect.top - canvasRect.top;
-  let width = imageRect.width;
-  let height = imageRect.height;
-  const ratio = selection.aspectRatio;
-  if (Number.isFinite(ratio) && ratio > 0) {
-    if (width / height > ratio) {
-      width = height * ratio;
-    } else {
-      height = width / ratio;
-    }
-  }
-  selection.$change(
-    x + (imageRect.width - width) / 2,
-    y + (imageRect.height - height) / 2,
-    width,
-    height,
-  );
-}
-
-// 取选区画布：选区坐标是画布可视空间，$toCanvas() 默认输出为显示分辨率；
-// 按图片变换矩阵的缩放比换算成自然像素尺寸再出图，保证裁剪输出为原图分辨率
-async function getSelectionCanvas(): Promise<HTMLCanvasElement | null> {
-  const selection = cropper.value?.getCropperSelection();
-  if (!selection) return null;
-  const image = cropper.value?.getCropperImage();
-  if (!image) return selection.$toCanvas();
-  const [a = 0, b = 0] = image.$getTransform();
-  const scale = Math.hypot(a, b);
-  if (!Number.isFinite(scale) || scale <= 0) {
-    return selection.$toCanvas();
-  }
-  const width = Math.max(1, Math.round(selection.width / scale));
-  const height = Math.max(1, Math.round(selection.height / scale));
-  return selection.$toCanvas({ width, height });
-}
-
-function onSelectionChange() {
-  if (cropperReady.value) recompressPreview();
-}
-
-// 分辨率等比缩放：以原图尺寸为基准，按百分比快速设置目标分辨率
-const scalePresets = [25, 50, 75, 100];
-const scalePercent = computed({
-  get() {
-    const orgWidth = Number(fileOrgInfo.value.width) || 0;
-    const fixedWidth = Number(cropperOption.value.fixedWidth) || 0;
-    if (!orgWidth || !fixedWidth) return 100;
-    return Math.round((fixedWidth / orgWidth) * 100);
-  },
-  set(percent) {
-    applyScalePercent(percent);
-  },
-});
-
-function applyScalePercent(percent: number) {
-  const w = Number(fileOrgInfo.value.width) || 0;
-  const h = Number(fileOrgInfo.value.height) || 0;
-  if (!w || !h) return;
-  const clamped = Math.min(100, Math.max(10, Math.round(percent)));
-  cropperOption.value.fixedWidth = Math.max(1, Math.round((w * clamped) / 100));
-  cropperOption.value.fixedHeight = Math.max(1, Math.round((h * clamped) / 100));
-}
+const cropModalOpen = ref(false);
+const cropTarget = ref<null | {
+  fileName: string;
+  index: number;
+  originalSize: number;
+  src: string;
+}>(null);
 
 // 视频截图相关
 const videoUrl = ref('');
@@ -383,48 +196,6 @@ watch(
     acceptValue.value = accepts[val] || '*';
   },
 );
-
-// 参数变化后自动重新压缩预览（裁剪器就绪后才可取结果）
-const recompressPreview = debounce(() => {
-  if (cropperDialog.value && cropperReady.value) {
-    cropHandler();
-  }
-}, 200);
-
-// 监听裁剪对话框中输出格式变化，重新压缩
-watch(() => cropperOption.value.outputType, recompressPreview);
-
-// 监听裁剪对话框中压缩质量变化，重新压缩
-watch(() => compressorOption.value.quality, recompressPreview);
-
-// 监听目标分辨率（宽高，含等比缩放写入）变化，重新压缩
-watch(
-  [() => cropperOption.value.fixedWidth, () => cropperOption.value.fixedHeight],
-  recompressPreview,
-);
-
-// 比例锁切换后同步裁剪框比例（NaN 为自由比例）
-watch(stencilAspectRatio, (val) => {
-  const selection = cropper.value?.getCropperSelection();
-  if (selection) {
-    selection.aspectRatio = val || Number.NaN;
-  }
-});
-
-// 弹窗关闭即销毁裁剪器，释放大图占用的画布。
-// 不在关闭时撤销本地对象 URL：撤销与仍在加载/重绘的 img 竞速会触发
-// blob ERR_FILE_NOT_FOUND；URL 会在下次 crop()（替换）或卸载时释放
-watch(cropperDialog, (val) => {
-  if (!val) {
-    destroyCropper();
-  }
-});
-
-onBeforeUnmount(() => {
-  recompressPreview.cancel();
-  destroyCropper();
-  revokeWorkingObjectUrl();
-});
 
 // 处理文件变化
 watch(files, async (newVal) => {
@@ -920,195 +691,40 @@ async function setCurrent(index: number) {
   return true;
 }
 
+// 从 URL 兜底推断文件名（保留扩展名，供弹窗"原格式"输出推断类型）
+function guessFileName(url: string) {
+  try {
+    const pathname = new URL(url, window.location.origin).pathname;
+    return decodeURIComponent(pathname.split('/').pop() || '');
+  } catch {
+    return '';
+  }
+}
+
+// 打开通用裁剪压缩弹窗：远程地址由弹窗内部处理（CORS 探测 / 转存 / 转 blob），
+// 本地文件直接传 blob: URL；处理结果经 onCropResult 写回列表
 async function crop(index: number) {
   if (!(await setCurrent(index))) return;
-  const rawUrl = list.value[index]?.url ?? '';
-  compressedFile.value = null;
-  compressedFileSize.value = 0;
-  cropperReady.value = false;
-
-  // 远程源转成本地 blob URL 再交给裁剪器：全新 URL 连接时不可能 complete，
-  // 规避 cropper-image 同步加载竞态（缓存图片在 createCropper 插入时就跑完内部
-  // load：load 事件错过、canvas 未布局导致 contain 适配错误）；blob 同源亦无跨域污染。
-  // 先清空 imageUrl 中断上一次会话 img 的在途加载，再撤销旧 URL，避免 ERR_FILE_NOT_FOUND
-  imageUrl.value = '';
-  revokeWorkingObjectUrl();
-  if (/^https?:/i.test(rawUrl)) {
-    try {
-      const blob = await fetchSourceBlob(rawUrl);
-      workingObjectUrl = URL.createObjectURL(blob);
-      imageUrl.value = workingObjectUrl;
-    } catch (error) {
-      console.error('图片读取失败:', error);
-      message.error('图片读取失败，无法裁剪');
-      return;
-    }
-  } else {
-    imageUrl.value = rawUrl;
-  }
-
-  // 传入裁剪尺寸则使用，但不能超过原图尺寸，同时保持传入比例
-  const imgW = fileOrgInfo.value.width || 1920;
-  const imgH = fileOrgInfo.value.height || 1080;
-
-  if (props.defaultCropWidth && props.defaultCropHeight) {
-    // 输出分辨率等比缩放至不超出原图范围
-    const scaleX = imgW / props.defaultCropWidth;
-    const scaleY = imgH / props.defaultCropHeight;
-    const scale = Math.min(scaleX, scaleY);
-    cropperOption.value.fixedWidth = Math.max(
-      1,
-      Math.round(props.defaultCropWidth * scale),
-    );
-    cropperOption.value.fixedHeight = Math.max(
-      1,
-      Math.round(props.defaultCropHeight * scale),
-    );
-  } else {
-    cropperOption.value.fixedWidth = imgW;
-    cropperOption.value.fixedHeight = imgH;
-  }
-
-  cropperDialog.value = true;
-  // 等弹窗内容渲染、入场动画结束后再初始化裁剪器（见 initCropperWhenModalSettled）
-  nextTick(() => {
-    initCropperWhenModalSettled();
-  });
-}
-
-// antd Modal 入场动画 antZoomIn 会把弹窗 scale(0.2)→1（0.3s），动画期间
-// 容器 getBoundingClientRect 是缩放后的尺寸：此时若图片 load 回调触发，
-// cropperjs 的 contain 适配与初始选区都会按缩小后的容器计算，动画结束后
-// 图片与选框位置、大小全部错误。首次打开时图片尚未解码、load 正好落在
-// 动画中所以必现；再次打开内存命中、load 早于首帧所以看起来正常。
-// 因此等动画结束（animationend 冒泡到容器）再创建裁剪器。
-function initCropperWhenModalSettled() {
-  const el = cropImgEl.value;
-  if (!el) {
-    initCropper();
-    return;
-  }
-  // 系统减少动态效果时无动画，可直接初始化
-  if (
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  ) {
-    initCropper();
-    return;
-  }
-  let settled = false;
-  const finish = () => {
-    if (settled) return;
-    settled = true;
-    el.removeEventListener('animationend', onAnimationEnd);
-    initCropper();
+  const url = list.value[index]?.url ?? '';
+  if (!url) return;
+  cropTarget.value = {
+    fileName: fileOrgInfo.value.name || guessFileName(url) || 'image',
+    index,
+    originalSize: Number(fileOrgInfo.value.size) || 0,
+    src: url,
   };
-  const onAnimationEnd = (event: AnimationEvent) => {
-    // 只关心弹窗的入场缩放动画（事件从 .ant-modal 冒泡到容器内的 img）
-    if (/zoom/i.test(event.animationName)) {
-      finish();
-    }
+  cropModalOpen.value = true;
+}
+
+// 处理完成：用新文件替换列表项（保留排序位置），并同步外部值
+function onCropResult({ file }: { file: File }) {
+  const target = cropTarget.value;
+  if (!target || !list.value[target.index]) return;
+  list.value[target.index] = {
+    url: createObjectURL(file),
+    file,
   };
-  el.addEventListener('animationend', onAnimationEnd);
-  // 兜底：动画被抑制或事件缺失时也能初始化
-  setTimeout(finish, 600);
-}
-
-function onCropperImgError() {
-  // 空源占位（imageUrl 尚未就绪）不报错
-  if (!imageUrl.value) return;
-  destroyCropper();
-  message.error('图片加载失败，无法裁剪');
-}
-
-function cropHandler() {
-  runCropCompress();
-}
-
-// 取裁剪结果并压缩；onDone 供提交时获取本次（最新参数）的结果，
-// 避免沿用上一次压缩的旧文件。
-function runCropCompress(onDone?: (file: File | null) => void) {
-  if (!cropper.value?.getCropperSelection()) {
-    onDone?.(null);
-    return;
-  }
-
-  const outputType = cropperOption.value.outputType;
-  const typeIndex = mimeTypes.findIndex((v) => v.type === outputType);
-
-  compressorOption.value.width = cropperOption.value.fixedWidth;
-  compressorOption.value.height = cropperOption.value.fixedHeight;
-  void getSelectionCanvas()
-    .then((canvas) => {
-      if (!canvas) {
-        onDone?.(null);
-        return;
-      }
-      canvas.toBlob((data: Blob | null) => {
-        if (!data) {
-          onDone?.(null);
-          return;
-        }
-        compress(
-          data,
-          outputType,
-          `${Date.now()}.${mimeTypes[typeIndex]?.extension || 'jpg'}`,
-          onDone,
-        );
-      }, outputType, 1);
-    })
-    .catch((error: unknown) => {
-      console.error('裁剪结果生成失败:', error);
-      onDone?.(null);
-    });
-}
-
-// 压缩相关函数
-function compress(
-  blob: Blob,
-  outputType?: string,
-  fileName?: string,
-  onDone?: (file: File | null) => void,
-) {
-  compressing.value = true;
-  new Compressor(blob, {
-    quality: (compressorOption.value.quality - 1) / 100,
-    mimeType: outputType || blob.type,
-    width: compressorOption.value.width,
-    height: compressorOption.value.height,
-    success: (result: Blob | File) => {
-      const file =
-        result instanceof File && !fileName
-          ? result
-          : new File([result], fileName || 'compressed', { type: result.type });
-      compressedFile.value = file;
-      compressedFileSize.value = file.size;
-      compressing.value = false;
-      onDone?.(file);
-    },
-    error: (err: Error) => {
-      console.error(err.message);
-      compressing.value = false;
-      onDone?.(null);
-    },
-  });
-}
-
-function handleSubmit() {
-  if (fileOrgInfo.value.index === undefined) {
-    cropperDialog.value = false;
-    return;
-  }
-  // 提交时重新压缩一次，确保写入列表的是当前参数下的最新结果
-  runCropCompress((file) => {
-    if (!file || fileOrgInfo.value.index === undefined) return;
-    list.value[fileOrgInfo.value.index] = {
-      url: createObjectURL(file),
-      file,
-    };
-    updateModelValue();
-    cropperDialog.value = false;
-  });
+  updateModelValue();
 }
 
 // 视频截图相关函数
@@ -1565,162 +1181,15 @@ defineExpose({
       </div>
     </Modal>
 
-    <!-- 图片裁剪对话框 -->
-    <Modal
-      v-model:open="cropperDialog"
-      title="图片裁剪压缩"
-      width="50vw"
-      :footer="null"
-    >
-      <div class="relative" style="height: 50vh">
-        <img
-          v-if="imageUrl"
-          ref="cropImgEl"
-          alt="裁剪原图"
-          class="block max-w-full"
-          :class="cropperReady ? '' : 'hidden'"
-          :crossorigin="imgCrossOrigin"
-          :src="imageUrl"
-          @error="onCropperImgError"
-        />
-        <div
-          v-if="!cropperReady"
-          class="absolute inset-0 flex items-center justify-center text-xs text-gray-400"
-        >
-          正在加载图片...
-        </div>
-      </div>
-
-      <div class="mt-5">
-        <div v-if="fileOrgInfo" class="mb-4" type="info">
-          <div class="flex flex-col gap-2">
-            <div>
-              <span class="mr-3 font-bold">处理前</span>
-              <span>类型：{{ fileOrgInfo.type.replace('image/', '') }}</span>
-              <span class="mx-2">
-                分辨率：{{ fileOrgInfo.width }} * {{ fileOrgInfo.height }}
-              </span>
-              <span>大小：{{ formatSize(fileOrgInfo.size) }}</span>
-            </div>
-
-            <div v-if="compressedFileSize" class="text-red-500">
-              <span class="mr-3 font-bold">处理后</span>
-              <span>类型：{{ cropperOption.outputType }}</span>
-              <span class="mx-2">
-                分辨率：{{ cropperOption.fixedWidth }} *
-                {{ cropperOption.fixedHeight }}
-              </span>
-              <span>大小：{{ formatSize(compressedFileSize) }}</span>
-              <span v-if="compressing" class="ml-2 text-xs text-gray-400">
-                压缩中...
-              </span>
-            </div>
-          </div>
-        </div>
-        <Row :gutter="[16, 16]">
-          <Col :span="4">
-            <div class="flex flex-col">
-              <span class="mb-2 text-sm">输出格式</span>
-              <Select
-                v-model:value="cropperOption.outputType"
-                :options="
-                  mimeTypes.map((item) => ({
-                    label: item.extension,
-                    value: item.type,
-                  }))
-                "
-              />
-            </div>
-          </Col>
-
-          <Col :span="8">
-            <div class="flex flex-col">
-              <span class="mb-2 text-sm">宽高</span>
-              <SpaceCompact>
-                <InputNumber
-                  v-model:value="cropperOption.fixedWidth"
-                  :disabled="cropperOption.fixed"
-                  type="number"
-                  suffix="px"
-                />
-                <InputNumber
-                  v-model:value="cropperOption.fixedHeight"
-                  :disabled="cropperOption.fixed"
-                  type="number"
-                  suffix="px"
-                />
-                <Button>
-                  <span
-                    @click="cropperOption.fixed = !cropperOption.fixed"
-                    class="text-black"
-                    :class="
-                      cropperOption.fixed
-                        ? 'icon-[mdi--lock-outline]'
-                        : 'icon-[mdi--lock-open-variant-outline]'
-                    "
-                  ></span>
-                </Button>
-              </SpaceCompact>
-            </div>
-          </Col>
-
-          <Col :span="24">
-            <div class="flex flex-col">
-              <span class="mb-2 text-sm">
-                分辨率等比缩放
-                <span class="ml-1 text-xs text-gray-400">
-                  {{ scalePercent }}%（原图
-                  {{ fileOrgInfo.width || '-' }} * {{ fileOrgInfo.height || '-' }}）
-                </span>
-              </span>
-              <div class="flex items-center gap-3">
-                <SpaceCompact>
-                  <Button
-                    v-for="p in scalePresets"
-                    :key="p"
-                    size="small"
-                    :type="scalePercent === p ? 'primary' : 'default'"
-                    @click="applyScalePercent(p)"
-                  >
-                    {{ p }}%
-                  </Button>
-                </SpaceCompact>
-                <Slider
-                  v-model:value="scalePercent"
-                  class="flex-1"
-                  :max="100"
-                  :min="10"
-                  :step="1"
-                  :tooltip="{ formatter: (value) => `${value}%` }"
-                />
-              </div>
-            </div>
-          </Col>
-
-          <Col :span="24">
-            <div class="flex flex-col">
-              <span class="mb-2 text-sm">压缩质量</span>
-              <Slider
-                v-model:value="compressorOption.quality"
-                :max="100"
-                :min="1"
-                :tooltip="{ formatter: (value) => `${value}%` }"
-              />
-            </div>
-          </Col>
-        </Row>
-      </div>
-      <div class="mt-4 flex justify-end gap-2">
-        <Button
-          type="primary"
-          :loading="compressing"
-          @click="handleSubmit"
-        >
-          确定处理
-        </Button>
-        <Button @click="cropperDialog = false">取消</Button>
-      </div>
-    </Modal>
+    <!-- 图片裁剪压缩：复用编辑器的通用弹窗（拖拽裁剪 + 格式/质量/输出宽高） -->
+    <ImageCropModal
+      v-model:visible="cropModalOpen"
+      confirm-text="确定处理"
+      :file-name="cropTarget?.fileName || 'image'"
+      :original-size="cropTarget?.originalSize || 0"
+      :src="cropTarget?.src || ''"
+      @confirm="onCropResult"
+    />
 
     <Drawer
       v-model:open="previewDialog"

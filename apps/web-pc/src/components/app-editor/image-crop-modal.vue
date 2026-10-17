@@ -13,6 +13,7 @@ import './cropper-theme.css';
 /**
  * 通用图片裁剪压缩弹窗（媒体库上传面板 / 媒体库历史图片 / 编辑器内图片共用）。
  * 裁剪区域由 cropperjs 拖拽决定（支持旋转、滚轮/双指缩放）；
+ * 宽高输入框实时驱动选区（锁定比例时联动另一值，自由比例时独立输入）；
  * 输出格式、压缩质量、等比缩放由 Compressor 完成。
  * 组件只产出处理后的 File（emit confirm），上传/替换逻辑由调用方决定。
  */
@@ -49,6 +50,21 @@ const props = defineProps({
     type: Function,
     default: null,
   },
+  // 固定裁剪比例（宽/高，如 16/9、1）；>0 时默认按该比例锁定
+  aspectRatio: {
+    type: Number,
+    default: 0,
+  },
+  // 是否允许用户调整比例（勾选/取消锁定开关）；固定比例场景可关闭
+  allowRatioAdjust: {
+    type: Boolean,
+    default: true,
+  },
+  // 是否允许裁剪框拖出图片范围；默认不允许（只裁图片本身，越界会被拉回图内）
+  allowDragOut: {
+    type: Boolean,
+    default: false,
+  },
 });
 
 const emit = defineEmits(['update:visible', 'confirm']);
@@ -83,6 +99,13 @@ const ratioLocked = ref(true);
 const format = ref('keep');
 const quality = ref(90);
 const scalePercent = ref(100);
+// 裁剪结果的自然像素尺寸（选区可视尺寸按图片自然比例换算）
+const cropDims = ref({ height: 0, width: 0 });
+// 宽高输入框（自然像素）：键入即实时改选区，锁定比例时自动联动另一值
+const inputWidthText = ref('');
+const inputHeightText = ref('');
+const inputWidthFocused = ref(false);
+const inputHeightFocused = ref(false);
 
 const processedSize = ref(0);
 const processedDims = ref({ height: 0, width: 0 });
@@ -107,12 +130,40 @@ const savedPercent = computed(() => {
   return Math.round((1 - processedSize.value / props.originalSize) * 100);
 });
 
-// 比例锁：跟随原图宽高比；取消后自由裁剪
+// 用户是否可调整比例；不允许时恒锁定
+const ratioLockedEffective = computed(() =>
+  props.allowRatioAdjust ? ratioLocked.value : true,
+);
+
+// 裁剪比例：固定比例 > 原图比例；解锁后为自由比例（NaN）
 const stencilAspectRatio = computed(() => {
-  if (!ratioLocked.value || !imgInfo.value.width || !imgInfo.value.height) {
+  if (!ratioLockedEffective.value) {
+    return Number.NaN;
+  }
+  if (props.aspectRatio > 0) {
+    return props.aspectRatio;
+  }
+  if (!imgInfo.value.width || !imgInfo.value.height) {
     return Number.NaN;
   }
   return imgInfo.value.width / imgInfo.value.height;
+});
+
+// 等比缩放滑块仅在比例锁定时有意义；自由比例直接输入宽高
+const scaleSliderVisible = computed(() => ratioLockedEffective.value);
+
+// 实时输出尺寸（只读）：裁剪结果自然像素按缩放比例换算；
+// 选区拖动（cropDims 变化）或滑杆拖动（scalePercent 变化）都会即时刷新
+const displayDims = computed(() => {
+  const { height, width } = cropDims.value;
+  if (!width || !height) {
+    return { height: 0, width: 0 };
+  }
+  const scale = scalePercent.value / 100;
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
 });
 
 // canvas.toBlob 输出类型：显式格式按选择；原格式按扩展名推断（浏览器不支持时 toBlob 回退 png）
@@ -172,11 +223,15 @@ function initCropper() {
   // 之后再挂 load 监听会错过事件；$ready() 在已就绪时立即 resolve。
   void image?.$ready?.().then(onCropperImageLoad).catch(onCropperImageError);
   selection?.addEventListener('change', onSelectionChange);
+  // 滚轮/双指缩放与图片滑动经 canvas 的 action 事件派发：
+  // 图片变换后选区可能越出图片（或裁剪尺寸变化），统一在此约束与重测
+  cropperInstance.getCropperCanvas()?.addEventListener('action', onCanvasAction);
 }
 
 function onCropperImageLoad() {
   cropperReady.value = true;
   ensureInitialSelection();
+  updateCropDims();
   schedulePreview();
 }
 
@@ -211,21 +266,227 @@ function ensureInitialSelection() {
   );
 }
 
-// 取选区画布：选区坐标是画布可视空间，$toCanvas() 默认输出为显示分辨率；
-// 按图片变换矩阵的缩放比换算成自然像素尺寸再出图，保证裁剪输出为原图分辨率
+// 裁剪选区的自然像素尺寸。
+// 选区盒子的 getBoundingClientRect 是未取整的实时渲染宽（可避开库在 $initSelection
+// 里 Math.round 选区宽高造成的二次取整→全图裁剪偶发少 1px）；但它是页面像素，
+// 含模态/CSS 缩放。故用画布元素的“视觉宽 / 布局宽”比值（getBoundingClientRect
+// 含变换、offsetWidth 不含）把选区宽高换算回画布内部坐标，再除以图片变换矩阵的
+// 缩放比（Math.hypot(a,b)，旋转不变）得到原图像素。
+// 注意：cropper-image 宿主盒子尺寸为 0（图片靠内部 shadow <img> 的 transform 显示），
+// 故不能读图片宿主的 rect，缩放比统一取图片变换矩阵。
+// 兜底：布局未就绪（rect 为 0）时回落到选区对象的取整宽高 ÷ 变换缩放比。
+function getCropNaturalDims() {
+  const selection = cropperInstance?.getCropperSelection();
+  if (!selection) return null;
+  const imageEl = cropperInstance?.getCropperImage();
+  if (!imageEl) return null;
+  const [a = 0, b = 0] = imageEl.$getTransform();
+  const scale = Math.hypot(a, b);
+  if (!Number.isFinite(scale) || scale <= 0) return null;
+
+  const selRect = selection.getBoundingClientRect();
+  let selW = selRect.width;
+  let selH = selRect.height;
+  const canvasEl = cropperInstance?.getCropperCanvas();
+  if (canvasEl && selRect.width > 0) {
+    const cr = canvasEl.getBoundingClientRect();
+    if (cr.width > 0 && canvasEl.offsetWidth > 0) {
+      const pageScale = cr.width / canvasEl.offsetWidth;
+      if (pageScale > 0) {
+        selW /= pageScale;
+        selH /= pageScale;
+      }
+    }
+  }
+  if (!selW || !selH) {
+    selW = selection.width;
+    selH = selection.height;
+  }
+  if (!selW || !selH) return null;
+  return {
+    width: Math.max(1, Math.round(selW / scale)),
+    height: Math.max(1, Math.round(selH / scale)),
+  };
+}
+
+function updateCropDims() {
+  const dims = getCropNaturalDims();
+  if (dims) {
+    cropDims.value = dims;
+  }
+  syncInputFields();
+}
+
+// 图片在画布可视空间的轴对齐包围盒（选区越界约束用）。
+// cropper-image 宿主盒子尺寸为 0，不能读其 rect；改用图片变换矩阵
+// （CSS matrix(a,b,c,d,e,f)：x'=a·x+c·y+e，y'=b·x+d·y+f）把自然尺寸
+// 四角映射到画布坐标后取 min/max，天然兼容旋转后的图片。
+function getImageAABBInCanvas() {
+  const imageEl = cropperInstance?.getCropperImage();
+  if (!imageEl || !imgInfo.value.width || !imgInfo.value.height) return null;
+  const matrix = imageEl.$getTransform?.();
+  if (!Array.isArray(matrix) || matrix.length < 6) return null;
+  const [a, b, c, d, e, f] = matrix;
+  const { height, width } = imgInfo.value;
+  const xs = [];
+  const ys = [];
+  for (const [u, v] of [[0, 0], [width, 0], [0, height], [width, height]]) {
+    xs.push(a * u + c * v + e);
+    ys.push(b * u + d * v + f);
+  }
+  return {
+    x0: Math.min(...xs),
+    x1: Math.max(...xs),
+    y0: Math.min(...ys),
+    y1: Math.max(...ys),
+  };
+}
+
+// 把选区约束回图片范围（allowDragOut=false 时）：
+// 先按比例（如有）等比缩到能放进图片，再把位置夹回图片包围盒内
+function clampSelectionToImage() {
+  if (props.allowDragOut) return;
+  const selection = cropperInstance?.getCropperSelection();
+  if (!selection || !selection.width || !selection.height) return;
+  const box = getImageAABBInCanvas();
+  if (!box) return;
+  const maxWidth = box.x1 - box.x0;
+  const maxHeight = box.y1 - box.y0;
+  if (!(maxWidth > 0) || !(maxHeight > 0)) return;
+  const ratio =
+    Number.isFinite(selection.aspectRatio) && selection.aspectRatio > 0
+      ? selection.aspectRatio
+      : 0;
+  let width = selection.width;
+  let height = selection.height;
+  if (ratio > 0) {
+    const factor = Math.min(1, maxWidth / width, maxHeight / height);
+    if (factor < 1) {
+      width *= factor;
+      height *= factor;
+    }
+  } else {
+    width = Math.min(width, maxWidth);
+    height = Math.min(height, maxHeight);
+  }
+  const x = Math.min(Math.max(selection.x, box.x0), box.x1 - width);
+  const y = Math.min(Math.max(selection.y, box.y0), box.y1 - height);
+  if (
+    width === selection.width &&
+    height === selection.height &&
+    x === selection.x &&
+    y === selection.y
+  ) {
+    return;
+  }
+  selection.$change(x, y, width, height, ratio > 0 ? ratio : Number.NaN);
+}
+
+// 滚轮/双指缩放与图片滑动后同步约束与重测（微任务确保图片矩阵已更新）
+function onCanvasAction(event) {
+  const action = event?.detail?.action;
+  if (action === 'scale' || action === 'move') {
+    queueMicrotask(() => {
+      clampSelectionToImage();
+      updateCropDims();
+    });
+  }
+}
+
+// 把输入的自然像素宽高应用到选区：视觉尺寸 = 自然尺寸 × 图片变换缩放比，
+// 以选区中心为锚扩展/收缩；比例锁定时库会按 aspectRatio 校正视觉比例
+function applyDimsToSelection(width, height) {
+  const selection = cropperInstance?.getCropperSelection();
+  const imageEl = cropperInstance?.getCropperImage();
+  if (!selection || !imageEl || !width || !height) return;
+  const [a = 0, b = 0] = imageEl.$getTransform();
+  const scale = Math.hypot(a, b);
+  if (!Number.isFinite(scale) || scale <= 0) return;
+  const centerX = selection.x + selection.width / 2;
+  const centerY = selection.y + selection.height / 2;
+  selection.$change(
+    centerX - (width * scale) / 2,
+    centerY - (height * scale) / 2,
+    width * scale,
+    height * scale,
+    selection.aspectRatio,
+  );
+}
+
+// 宽高输入 → 选区（键入即生效）。锁定比例时输入一个值按比例联动另一个；
+// 自由比例时另一个值维持不变
+function applyInputDims(which) {
+  if (!cropperReady.value) return;
+  const ratio = stencilAspectRatio.value;
+  const locked = Number.isFinite(ratio) && ratio > 0;
+  if (which === 'width') {
+    const width = Math.round(Number(inputWidthText.value));
+    if (!Number.isFinite(width) || width <= 0) return;
+    const height = locked
+      ? Math.max(1, Math.round(width / ratio))
+      : Math.round(Number(inputHeightText.value));
+    if (!Number.isFinite(height) || height <= 0) return;
+    applyDimsToSelection(width, height);
+  } else {
+    const height = Math.round(Number(inputHeightText.value));
+    if (!Number.isFinite(height) || height <= 0) return;
+    const width = locked
+      ? Math.max(1, Math.round(height * ratio))
+      : Math.round(Number(inputWidthText.value));
+    if (!Number.isFinite(width) || width <= 0) return;
+    applyDimsToSelection(width, height);
+  }
+}
+
+function onSizeFieldInput(which, event) {
+  const { value } = event.target;
+  if (which === 'width') {
+    inputWidthText.value = value;
+  } else {
+    inputHeightText.value = value;
+  }
+  applyInputDims(which);
+}
+
+function onSizeFieldBlur(which) {
+  if (which === 'width') {
+    inputWidthFocused.value = false;
+  } else {
+    inputHeightFocused.value = false;
+  }
+  // 失焦时用实际裁剪尺寸回填（清掉无效/半截输入）
+  syncInputFields(true);
+}
+
+// 把 cropDims 回写输入框：聚焦中的字段仅在实际值变化（如越界被约束回图片）
+// 时改写，避免打断输入；另一字段按联动结果实时刷新
+function syncInputFields(force = false) {
+  const { height, width } = cropDims.value;
+  if (!width || !height) return;
+  if (
+    force ||
+    !inputWidthFocused.value ||
+    Math.round(Number(inputWidthText.value)) !== width
+  ) {
+    inputWidthText.value = String(width);
+  }
+  if (
+    force ||
+    !inputHeightFocused.value ||
+    Math.round(Number(inputHeightText.value)) !== height
+  ) {
+    inputHeightText.value = String(height);
+  }
+}
+
+// 取选区画布：$toCanvas() 默认输出为显示分辨率，换算成自然像素尺寸再出图，
+// 保证裁剪输出为原图分辨率
 async function getSelectionCanvas() {
   const selection = cropperInstance?.getCropperSelection();
   if (!selection) return null;
-  const image = cropperInstance?.getCropperImage();
-  if (!image) return selection.$toCanvas();
-  const [a, b] = image.$getTransform();
-  const scale = Math.hypot(a, b);
-  if (!Number.isFinite(scale) || scale <= 0) {
-    return selection.$toCanvas();
-  }
-  const width = Math.max(1, Math.round(selection.width / scale));
-  const height = Math.max(1, Math.round(selection.height / scale));
-  return selection.$toCanvas({ width, height });
+  const dims = getCropNaturalDims();
+  if (!dims) return selection.$toCanvas();
+  return selection.$toCanvas({ width: dims.width, height: dims.height });
 }
 
 function onCropperImageError() {
@@ -233,13 +494,22 @@ function onCropperImageError() {
   loadError.value = '图片加载失败：图片过大或地址失效，无法在线裁剪';
 }
 
+// change 事件在库赋值新坐标前同步派发，监听器里读到的是上一次状态；
+// 延迟到微任务：等库赋值/渲染完成后再约束与测量，保证实时尺寸精确
 function onSelectionChange() {
-  if (cropperReady.value) schedulePreview();
+  queueMicrotask(() => {
+    clampSelectionToImage();
+    updateCropDims();
+    if (cropperReady.value) schedulePreview();
+  });
 }
 
 function rotateCropper() {
   // $rotate 的参数是弧度；传 '90deg' 字符串由库内部转换
   cropperInstance?.getCropperImage()?.$rotate('90deg');
+  // 旋转改变图片变换矩阵，选区可能越出图片且自然像素映射随之改变
+  clampSelectionToImage();
+  updateCropDims();
 }
 
 // 加载一个 Image 元素；withCrossOrigin 用于远程图探测 CORS 可读性
@@ -398,8 +668,9 @@ function canvasToBlob(canvas, mime) {
   });
 }
 
-// 组装 Compressor 参数；等比缩放相对裁剪结果（需先读裁剪结果宽度）
-async function buildCompressOptions(blob) {
+// 组装 Compressor 参数：等比缩放下只传宽，高由 Compressor 按裁剪结果比例自适应，
+// 避免拉伸变形。cropWidth 为裁剪结果的自然像素宽度（取自画布）
+function buildCompressOptions(cropWidth) {
   const keep = format.value === 'keep';
   const options = {
     quality: Math.min(1, Math.max(0.1, quality.value / 100)),
@@ -411,19 +682,11 @@ async function buildCompressOptions(blob) {
   if (!keep) {
     options.mimeType = format.value;
   }
-  if (scalePercent.value < 100) {
-    try {
-      const dims = await readBlobDims(blob);
-      if (dims.width) {
-        // 只传宽，高由 Compressor 按裁剪结果比例自适应，避免拉伸变形
-        options.width = Math.max(
-          1,
-          Math.round((dims.width * scalePercent.value) / 100),
-        );
-      }
-    } catch {
-      // 读不到宽度则保持裁剪结果原始尺寸
-    }
+  if (scalePercent.value < 100 && cropWidth > 0) {
+    options.width = Math.max(
+      1,
+      Math.round((cropWidth * scalePercent.value) / 100),
+    );
   }
   return options;
 }
@@ -463,7 +726,7 @@ async function runPreviewFor(token) {
     if (!canvas || token !== previewToken) return;
     const blob = await canvasToBlob(canvas, cropperOutputMime.value);
     if (token !== previewToken) return;
-    const options = await buildCompressOptions(blob);
+    const options = buildCompressOptions(canvas.width);
     new Compressor(blob, {
       ...options,
       success: (result) => {
@@ -501,7 +764,7 @@ async function confirmCrop() {
       return;
     }
     const blob = await canvasToBlob(canvas, cropperOutputMime.value);
-    const options = await buildCompressOptions(blob);
+    const options = buildCompressOptions(canvas.width);
     new Compressor(blob, {
       ...options,
       success: (result) => {
@@ -528,6 +791,10 @@ watch(
       quality.value = 90;
       scalePercent.value = 100;
       ratioLocked.value = true;
+      // 清空裁剪结果尺寸（选区就绪后由实时测量重新填充）
+      cropDims.value = { height: 0, width: 0 };
+      inputWidthText.value = '';
+      inputHeightText.value = '';
       loadImage();
     } else {
       // 关闭时只停预览、销毁裁剪器并清空工作源（中断在途加载），
@@ -544,11 +811,20 @@ watch([format, quality, scalePercent], () => {
   if (imgReady.value) schedulePreview();
 });
 
-watch(ratioLocked, () => {
+// 解锁后等比缩放无意义（宽高已可独立输入），固定回 100%
+watch(ratioLockedEffective, (locked) => {
+  if (!locked) {
+    scalePercent.value = 100;
+  }
+});
+
+// 比例变化同步给选区（触发选区按新比例重置），下一帧再取尺寸
+watch(stencilAspectRatio, () => {
   const selection = cropperInstance?.getCropperSelection();
   if (selection) {
     selection.aspectRatio = stencilAspectRatio.value || Number.NaN;
   }
+  nextTick(updateCropDims);
 });
 
 onBeforeUnmount(() => {
@@ -692,7 +968,7 @@ onBeforeUnmount(() => {
               />
             </div>
 
-            <div class="md:col-span-2">
+            <div v-if="scaleSliderVisible" class="md:col-span-2">
               <div
                 class="mb-1.5 flex items-center justify-between text-xs font-medium text-foreground"
               >
@@ -727,8 +1003,52 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
+            <div class="md:col-span-2">
+              <div
+                class="mb-1.5 flex items-center justify-between text-xs font-medium text-foreground"
+              >
+                <span>输出尺寸</span>
+                <span class="text-[11px] font-normal text-muted-foreground">
+                  输入宽高，实时调整裁剪框
+                </span>
+              </div>
+              <div class="flex flex-wrap items-center gap-2 text-xs">
+                <input
+                  class="w-24 rounded-md border border-border bg-transparent px-2 py-1 text-right font-mono text-foreground outline-none transition-colors [appearance:textfield] focus:border-primary [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                  min="1"
+                  step="1"
+                  type="number"
+                  :value="inputWidthText"
+                  @blur="onSizeFieldBlur('width')"
+                  @focus="inputWidthFocused = true"
+                  @input="onSizeFieldInput('width', $event)"
+                />
+                <span class="text-muted-foreground">×</span>
+                <input
+                  class="w-24 rounded-md border border-border bg-transparent px-2 py-1 text-right font-mono text-foreground outline-none transition-colors [appearance:textfield] focus:border-primary [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                  min="1"
+                  step="1"
+                  type="number"
+                  :value="inputHeightText"
+                  @blur="onSizeFieldBlur('height')"
+                  @focus="inputHeightFocused = true"
+                  @input="onSizeFieldInput('height', $event)"
+                />
+                <span class="text-muted-foreground">px</span>
+                <template v-if="scaleSliderVisible">
+                  <span class="ml-auto font-mono text-muted-foreground">
+                    缩放 {{ scalePercent }}% →
+                  </span>
+                  <span class="font-mono text-foreground">
+                    {{ displayDims.width || '?' }} × {{ displayDims.height || '?' }} px
+                  </span>
+                </template>
+              </div>
+            </div>
+
             <div class="flex flex-wrap items-center gap-4 md:col-span-2">
               <label
+                v-if="allowRatioAdjust"
                 class="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground"
               >
                 <input
@@ -736,8 +1056,18 @@ onBeforeUnmount(() => {
                   type="checkbox"
                   class="accent-primary"
                 />
-                锁定原图比例（取消后可自由调整裁剪框比例）
+                {{
+                  aspectRatio > 0
+                    ? '锁定比例（取消后可自由调整裁剪框比例）'
+                    : '锁定原图比例（取消后可自由调整裁剪框比例）'
+                }}
               </label>
+              <span
+                v-else-if="aspectRatio > 0"
+                class="text-[11px] text-muted-foreground"
+              >
+                已按固定比例裁剪
+              </span>
               <button
                 class="flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-[11px] font-medium text-foreground hover:bg-muted"
                 type="button"
